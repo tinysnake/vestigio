@@ -1,0 +1,22 @@
+{
+  "name": "@vestigio/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vestigio core contracts. PR-01 source-only; no runtime dependencies.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "exports": {
+    ".": "./src/contracts/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
