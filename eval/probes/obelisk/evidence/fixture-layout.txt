@@ -1,0 +1,3 @@
+fixture home: /tmp/obelisk-probe/home
+/tmp/obelisk-probe/home/.pi/agent/sessions/projA/sessA.jsonl
+/tmp/obelisk-probe/home/.pi/agent/sessions/projB/sessB.jsonl

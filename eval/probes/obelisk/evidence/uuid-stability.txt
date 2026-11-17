@@ -1,0 +1,14 @@
+wrote /Users/snake/workspace/vestigio/eval/probes/obelisk/evidence/uuid-stability/step1_build.json
+wrote /Users/snake/workspace/vestigio/eval/probes/obelisk/evidence/uuid-stability/step2_rebuild.json
+wrote /Users/snake/workspace/vestigio/eval/probes/obelisk/evidence/uuid-stability/step3_moved_dir.json
+wrote /Users/snake/workspace/vestigio/eval/probes/obelisk/evidence/uuid-stability/step4_renamed.json
+wrote /Users/snake/workspace/vestigio/eval/probes/obelisk/evidence/uuid-stability/step5_inserted.json
+step2_rebuild: uuid_set_identical=True count=7 same_uuid_new_text=0 lost=0 gained=0
+    session paths: {'pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projA/sessA.jsonl', 'pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projB/sessB.jsonl'}
+step3_moved_dir: uuid_set_identical=True count=7 same_uuid_new_text=0 lost=0 gained=0
+    session paths: {'pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projC/sessA.jsonl', 'pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projB/sessB.jsonl'}
+step4_renamed: uuid_set_identical=True count=7 same_uuid_new_text=0 lost=0 gained=0
+    session paths: {'pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projC/sessA-renamed.jsonl', 'pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projB/sessB.jsonl'}
+step5_inserted: uuid_set_identical=False count=8 same_uuid_new_text=1 lost=0 gained=1
+    sessB 000001: 'zqleak beta message in another project' -> 'zqleak beta prepended entry'
+    session paths: {'pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projC/sessA-renamed.jsonl', 'pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032': '/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projB/sessB.jsonl'}

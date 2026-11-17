@@ -1,0 +1,45 @@
+{
+  "projectPath_A": [
+    "-tmp-x_a",
+    "-tmp-x_a",
+    "-tmp-x_a"
+  ],
+  "projectPath_B": [
+    "-tmp-x-a"
+  ],
+  "contextLimit_0": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "contextLimit_default": [
+    2,
+    2,
+    2,
+    0
+  ],
+  "snippetTokens_4": [
+    {
+      "text": "zqleak alpha first user…",
+      "isSnippet": true,
+      "textLength": 31
+    },
+    {
+      "text": "zqleak alpha first assistant…",
+      "isSnippet": true,
+      "textLength": 34
+    },
+    {
+      "text": "zqleak alpha second user…",
+      "isSnippet": true,
+      "textLength": 32
+    },
+    {
+      "text": "zqleak beta message in…",
+      "isSnippet": true,
+      "textLength": 38
+    }
+  ],
+  "contextLimit_7_threw": "search() contextLimit must be an integer from 0 to 6"
+}

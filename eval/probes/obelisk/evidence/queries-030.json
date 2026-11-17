@@ -1,0 +1,473 @@
+{
+  "all_rows": [
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000001:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "is_meta": 0,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000002:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "is_meta": 0,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000003:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "is_meta": 0,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000004:message:block:0000",
+      "text": "zqleak alpha abandoned branch message",
+      "visibility": "inactive",
+      "is_meta": 0,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000005:message:block:0000",
+      "text": "zqleak alpha meta envelope",
+      "visibility": "visible",
+      "is_meta": 1,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000006:message:block:0000",
+      "text": "zqleak alpha hidden marker",
+      "visibility": "hidden",
+      "is_meta": 1,
+      "cwd": "/tmp/x_a",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f"
+    },
+    {
+      "uuid": "pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032:entry:000001:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "is_meta": 0,
+      "cwd": "/tmp/x-a",
+      "session_id": "pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032"
+    }
+  ],
+  "anchor_uuids": {
+    "a3": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000003:message:block:0000",
+    "hidden": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000006:message:block:0000",
+    "inactive": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000004:message:block:0000",
+    "meta": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000005:message:block:0000"
+  },
+  "anchor_visibilities": {
+    "a3": "visible",
+    "hidden": "hidden",
+    "inactive": "inactive",
+    "meta_is_meta": 1
+  },
+  "search_default": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "search_limit_1": 1,
+  "search_sessionId": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    }
+  ],
+  "search_source_pi": 4,
+  "search_source_claude": 0,
+  "search_after": [
+    "2026-01-01T00:00:03.000Z",
+    "2026-01-01T00:01:01.000Z"
+  ],
+  "search_before": [
+    "2026-01-01T00:00:01.000Z",
+    "2026-01-01T00:00:02.000Z"
+  ],
+  "search_includeMeta_false": 4,
+  "search_includeMeta_true": 5,
+  "search_includeInactive_false": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "search_includeInactive_true": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 3
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 3
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 3
+    },
+    {
+      "uuid_tail": "4:message:block:0000",
+      "text": "zqleak alpha abandoned branch message",
+      "visibility": "inactive",
+      "project": "-tmp-x_a",
+      "context_len": 3
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "search_fallback_default": 0,
+  "search_fallback_or": 4,
+  "search_projectPath_ignored": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "search_contextLimit_ignored": [
+    2,
+    2,
+    2,
+    0
+  ],
+  "search_snippetTokens_ignored": [
+    "zqleak alpha first user message",
+    "zqleak alpha first assistant reply",
+    "zqleak alpha second user message",
+    "zqleak beta message in another project"
+  ],
+  "search_unknown_option_ignored": 4,
+  "project_exact": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "project_exact_hit_beta": true,
+  "cwd_like": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "cwd_like_hit_other_cwd": true,
+  "project_pct_wildcard": [
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak alpha first user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "2:message:block:0000",
+      "text": "zqleak alpha first assistant reply",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "project": "-tmp-x_a",
+      "context_len": 2
+    },
+    {
+      "uuid_tail": "1:message:block:0000",
+      "text": "zqleak beta message in another project",
+      "visibility": "visible",
+      "project": "-tmp-x-a",
+      "context_len": 0
+    }
+  ],
+  "project_pct_count": 4,
+  "search_inline_context_lens": [
+    2,
+    2,
+    2,
+    0
+  ],
+  "messages_uuid": {
+    "anchor": {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "is_meta": 0
+    },
+    "messages": [
+      {
+        "uuid_tail": "3:message:block:0000",
+        "text": "zqleak alpha second user message",
+        "visibility": "visible",
+        "is_meta": 0
+      }
+    ],
+    "hasMore": false
+  },
+  "messages_around_timeline": {
+    "anchor": {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "is_meta": 0
+    },
+    "messages": [
+      {
+        "uuid_tail": "2:message:block:0000",
+        "text": "zqleak alpha first assistant reply",
+        "visibility": "visible",
+        "is_meta": 0
+      },
+      {
+        "uuid_tail": "3:message:block:0000",
+        "text": "zqleak alpha second user message",
+        "visibility": "visible",
+        "is_meta": 0
+      }
+    ],
+    "hasMore": true
+  },
+  "messages_around_parents": {
+    "anchor": {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "is_meta": 0
+    },
+    "messages": [
+      {
+        "uuid_tail": "1:message:block:0000",
+        "text": "zqleak alpha first user message",
+        "visibility": "visible",
+        "is_meta": 0
+      },
+      {
+        "uuid_tail": "2:message:block:0000",
+        "text": "zqleak alpha first assistant reply",
+        "visibility": "visible",
+        "is_meta": 0
+      },
+      {
+        "uuid_tail": "3:message:block:0000",
+        "text": "zqleak alpha second user message",
+        "visibility": "visible",
+        "is_meta": 0
+      }
+    ],
+    "hasMore": false
+  },
+  "messages_around_default": {
+    "anchor": {
+      "uuid_tail": "3:message:block:0000",
+      "text": "zqleak alpha second user message",
+      "visibility": "visible",
+      "is_meta": 0
+    },
+    "messages": [
+      {
+        "uuid_tail": "1:message:block:0000",
+        "text": "zqleak alpha first user message",
+        "visibility": "visible",
+        "is_meta": 0
+      },
+      {
+        "uuid_tail": "2:message:block:0000",
+        "text": "zqleak alpha first assistant reply",
+        "visibility": "visible",
+        "is_meta": 0
+      },
+      {
+        "uuid_tail": "3:message:block:0000",
+        "text": "zqleak alpha second user message",
+        "visibility": "visible",
+        "is_meta": 0
+      }
+    ],
+    "hasMore": false
+  },
+  "messages_parents_with_after_threw": "messages() parents relation requires afterCount: 0",
+  "messages_over_500_cap_threw": "messages() window must contain at most 500 messages including the anchor",
+  "search_default_visibilities": [
+    "visible"
+  ],
+  "messages_hidden_default": null,
+  "messages_hidden_includeInactive": null,
+  "messages_inactive_default": null,
+  "messages_inactive_includeInactive": {
+    "anchor": {
+      "uuid_tail": "4:message:block:0000",
+      "text": "zqleak alpha abandoned branch message",
+      "visibility": "inactive",
+      "is_meta": 0
+    },
+    "messages": [
+      {
+        "uuid_tail": "4:message:block:0000",
+        "text": "zqleak alpha abandoned branch message",
+        "visibility": "inactive",
+        "is_meta": 0
+      }
+    ],
+    "hasMore": false
+  },
+  "messages_unknown_option_threw": "messages() does not support option totallyUnknownOption"
+}

@@ -241,9 +241,15 @@ Obelisk 路径采用“检索即形成记忆”的闭环。
 - [ ] 单元验证。支持能力与缺失能力、未知字段、取消、超时、CLI 失败、路径转义和缺失 Session 的契约。
 - [ ] 真实验证。用真实 CLI 与隔离的 Obelisk 索引运行 fixture。覆盖项目精确范围、失效分支、同时间戳消息、父路径、索引重建及来源文件移动。
 - [ ] 性能验证。以直接 CLI 查询为基线，记录整个子进程调用耗时、索引刷新耗时及返回字节数。适配器额外处理 p95 暂定不超过 100 ms。锁等待和刷新计入总预算。
-- [ ] 失败条件。项目过滤被静默忽略、隐藏记录泄漏、无限上下文、错误拼接因果分支或来源标识无法复核为硬失败。
+- [ ] 失败条件。项目过滤被静默忽略、隐藏记录泄漏、无限上下文、错误拼接因果分支、来源标识无法复核，或固定版本破坏全局 0.3.0 的索引为硬失败。
 
-本机 0.3.0 尚不支持上游文档中的 `projectPath`、`snippetTokens` 和 `contextLimit` 搜索选项。优先选择并固定支持这些能力的发行物。若没有可用发行物，使用经过契约测试的有界只读查询。不得先全库取 Top K 再用客户端过滤项目。此选择由原型结果决定，不需要使用者判断 API 细节。
+探针实测见 [obelisk-adapter-findings.md](probes/obelisk-adapter-findings.md)。本机 0.3.0 会静默忽略 `projectPath`、`snippetTokens` 与 `contextLimit`，而 `project` 和 `cwd` 走 SQL `LIKE`，`-tmp-x_a` 会命中 `-tmp-x-a`。因此固定 **`@obelisk-apps/cli@0.3.2`**（npm latest）：它按 `project_path` 精确等值匹配，并对 `contextLimit > 6` 报错。0.3.2 作为本包依赖安装，不改动使用者全局的 0.3.0。不得先全库取 Top K 再在客户端过滤项目。
+
+合并前必须验证共享索引的兼容性。真实索引由全局 0.3.0 建立，仓库内的 0.3.2 会打开同一个 `~/.obelisk/obelisk.sqlite`（本机约 6.97 GiB）。要确认 0.3.2 查询时是否触发 schema 迁移，以及迁移后全局 0.3.0 是否仍可用。会破坏全局安装的迁移是硬失败，先在隔离 fixture 上验证，涉及真实索引前先报告。
+
+适配契约按实测锁定。`search` 和 `query` 都会触发 `refreshQueryIndex`，这是该工具的常规行为；但 `--query` 每次固定多付约 4 秒 invocation nonce 轮询，只有 `--search` 不需要，所以常规检索走 `--search`。`messages()` 是同步的，窗口上限 500，`relation:'parents'` 需要 `afterCount:0`。隐藏记录在任何情况下都不返回，`includeInactive` 只影响非隐藏的非活动行。消息 UUID 在重建、移动和改名后稳定，但会话文件前置插入会重排行号并改变 UUID，因此 `SourceRef` 必须靠 `content_hash` 与 `locator` 复核，不能只靠行号。
+
+已知边界：真实索引上的冷检索约 19 秒（PR-01 基线实测，含索引刷新），本机约 6.97 GiB。热缓存的 fixture 与 10k 消息合成语料在 0.2 至 0.3 秒量级，二者不可互相外推。
 
 Obelisk 源码声明 AGPL-3.0-only。发布前记录依赖方式与许可证要求。暂不复制其源码，也不将其私有内部模块作为稳定依赖。
 

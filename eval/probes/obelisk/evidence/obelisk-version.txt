@@ -1,0 +1,2 @@
+0.3.0
+{"ok":true,"db":"/tmp/obelisk-probe/home/.obelisk/obelisk.sqlite"}

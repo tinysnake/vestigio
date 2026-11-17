@@ -1,0 +1,28 @@
+# npm dist-tags / versions
+{
+  "latest": "0.3.2",
+  "rc": "0.2.6-rc.0"
+}
+  "0.2.6-rc.0",
+  "0.2.6",
+  "0.3.0",
+  "0.3.1",
+  "0.3.2"
+]
+
+# GitHub release tags (API)
+    "name": "v0.2.5",
+    "name": "v0.2.4",
+    "name": "v0.2.3",
+    "name": "v0.2.2",
+    "name": "v0.2.1",
+    "name": "v0.2.0",
+    "name": "v0.1.0",
+
+# api-reference.md on main advertises:
+113:| `opts.projectPath` | `string` | Exact match on `sessions.project_path` |
+114:| `opts.contextLimit` | `number` | Temporal neighbors per hit, integer 0–6; default 6. Zero skips neighbor lookup |
+115:| `opts.snippetTokens` | `number` | Return a matched FTS excerpt instead of the full hit text, integer 1–64; omitted by default |
+145:For a compact first pass, use `search(topic, { projectPath, limit: 30,
+146:snippetTokens: 16, contextLimit: 0 })`; promising hits retain their UUID and
+147:session ID. When `snippetTokens` is set, `message.text` is a matched excerpt and

@@ -1,0 +1,139 @@
+[
+  {
+    "machine": "Mac16,12",
+    "cpu": "Apple M4",
+    "cpu_cores": "10",
+    "mem_bytes": "17179869184",
+    "macos": "27.0.1",
+    "node": "v26.13.0",
+    "obelisk": "0.3.0",
+    "python": "Python 3.15.2",
+    "operator_real_db_bytes_not_measured": 6971248640,
+    "label": "big",
+    "corpus_jsonl_files": 202,
+    "corpus_bytes": 2139234,
+    "indexed_messages": 10008
+  },
+  {
+    "name": "version_startup_floor",
+    "repeats": 5,
+    "wall_s": [
+      0.4611,
+      0.4584,
+      0.2566,
+      0.4342,
+      0.3587
+    ],
+    "median_s": 0.4342,
+    "min_s": 0.2566,
+    "max_s": 0.4611,
+    "exit_codes": [
+      0
+    ]
+  },
+  {
+    "name": "noop_query_includes_invocation_nonce_poll",
+    "repeats": 5,
+    "wall_s": [
+      4.3396,
+      4.3153,
+      4.3732,
+      4.2672,
+      4.3287
+    ],
+    "median_s": 4.3287,
+    "min_s": 4.2672,
+    "max_s": 4.3732,
+    "exit_codes": [
+      0
+    ]
+  },
+  {
+    "name": "explicit_build",
+    "repeats": 5,
+    "wall_s": [
+      3.6742,
+      4.1754,
+      2.3882,
+      2.7334,
+      2.4169
+    ],
+    "median_s": 2.7334,
+    "min_s": 2.3882,
+    "max_s": 4.1754,
+    "exit_codes": [
+      0
+    ],
+    "bytes": [
+      71,
+      71,
+      71,
+      71,
+      71
+    ]
+  },
+  {
+    "name": "warm_search_refresh_skipped",
+    "repeats": 5,
+    "wall_s": [
+      0.2789,
+      0.2692,
+      0.4847,
+      0.3059,
+      0.2791
+    ],
+    "median_s": 0.2791,
+    "min_s": 0.2692,
+    "max_s": 0.4847,
+    "exit_codes": [
+      0
+    ],
+    "stdout_bytes": [
+      57611,
+      57611,
+      57611,
+      57611,
+      57611
+    ]
+  },
+  {
+    "name": "cold_search_refresh_runs",
+    "repeats": 5,
+    "wall_s": [
+      0.6518,
+      0.3339,
+      0.2868,
+      0.2923,
+      0.4143
+    ],
+    "median_s": 0.3339,
+    "min_s": 0.2868,
+    "max_s": 0.6518,
+    "exit_codes": [
+      0
+    ],
+    "stdout_bytes": [
+      57611,
+      57611,
+      57611,
+      57611,
+      57611
+    ]
+  },
+  {
+    "name": "cold_search_after_one_file_changed",
+    "repeats": 1,
+    "wall_s": [
+      0.7808
+    ],
+    "median_s": 0.7808,
+    "min_s": 0.7808,
+    "max_s": 0.7808,
+    "exit_codes": [
+      0
+    ],
+    "stdout_bytes": [
+      55113
+    ]
+  }
+]

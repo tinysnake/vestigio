@@ -1,0 +1,55 @@
+{
+  "messages": [
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000001:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha first user message"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000002:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha first assistant reply"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000003:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha second user message"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000004:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha abandoned branch message"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000005:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha meta envelope"
+    },
+    {
+      "uuid": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f:entry:000006:message:block:0000",
+      "session_id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "text": "zqleak alpha hidden marker"
+    },
+    {
+      "uuid": "pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032:entry:000001:message:block:0000",
+      "session_id": "pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032",
+      "text": "zqleak beta message in another project"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "pi:sessA:d5765ae09bd6ad3b259b953f1a4038d86b399dedcb629282113396bbe24d186f",
+      "title": "zqleak alpha first user message",
+      "project": "-tmp-x_a",
+      "project_path": "/tmp/x_a",
+      "jsonl_path": "/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projC/sessA-renamed.jsonl"
+    },
+    {
+      "id": "pi:sessB:4070a8e08d4428b47dc0e579ea3e9cfcfb08ba94ad6af599c774822fca111032",
+      "title": "zqleak beta message in another project",
+      "project": "-tmp-x-a",
+      "project_path": "/tmp/x-a",
+      "jsonl_path": "/tmp/obelisk-probe/uuid-home/.pi/agent/sessions/projB/sessB.jsonl"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# A cold --search (refresh would run) with the writer lease already held.
+lock held
+search_wall_s=0.536 exit=0 stdout_bytes=5421
+lock released
+stderr: 

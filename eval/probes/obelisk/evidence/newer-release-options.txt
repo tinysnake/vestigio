@@ -1,0 +1,10 @@
+# 0.3.1: option names present in dist/query.js?
+0
+# 0.3.2: option names present in dist/query.js?
+12
+# 0.3.1 dist search() option destructure:
+249:        const { limit = 20, sessionId, project, after, before, cwd, source, includeMeta = false, includeInactive = false, fallback, } = opts;
+640:        const { limit = 200, after, before, source, includeInactive = false } = opts;
+# 0.3.2 dist search() option destructure:
+273:        const { limit = 20, sessionId, project, projectPath, after, before, cwd, source, includeMeta = false, includeInactive = false, contextLimit = 6, snippetTokens, fallback, } = opts;
+667:        const { limit = 200, after, before, source, includeInactive = false } = opts;
