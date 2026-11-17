@@ -1,0 +1,18 @@
+PTY transcript chars: 20515
+
+===== WIRE REQUESTS =====
+  [system] You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.
+
+<tools>
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+Additional tools may be available.
+</tool
+  [user] [{"type": "text", "text": "PTY_TYPED hello\n\n[VESTIGIO_PROBE_MARKER]"}]
+
+===== INPUT EVENTS =====
+{"ts":"2026-11-17T08:29:50.150Z","source":"interactive","textIn":"PTY_TYPED hello","action":"transform"}
+

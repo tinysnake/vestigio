@@ -1,0 +1,71 @@
+
+===== WIRE REQUESTS =====
+--- 2026-11-17T08:29:36.724Z model=mock-1
+  [system] You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.
+
+<tools>
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+Additional tools may be available.
+</tools>
+
+<rules>
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed.
+- You can inspect PI_* environment variables for current model and session details.
+- Us
+  [user] [{"type": "text", "text": "COMPACT_ONE\n\n[VESTIGIO_PROBE_MARKER]"}]  <<< MARKER PRESENT
+--- 2026-11-17T08:29:40.131Z model=mock-1
+  [system] You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.
+
+<tools>
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+Additional tools may be available.
+</tools>
+
+<rules>
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed.
+- You can inspect PI_* environment variables for current model and session details.
+- Us
+  [user] [{"type": "text", "text": "COMPACT_ONE\n\n[VESTIGIO_PROBE_MARKER]"}]  <<< MARKER PRESENT
+  [assistant] OK
+  [user] [{"type": "text", "text": "COMPACT_TWO\n\n[VESTIGIO_PROBE_MARKER]"}]  <<< MARKER PRESENT
+--- 2026-11-17T08:29:40.445Z model=mock-1
+  [system] You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
+
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.
+  [user] [{"type": "text", "text": "<conversation>\n[User]: COMPACT_ONE\n\n[VESTIGIO_PROBE_MARKER]\n\n[Assistant]: OK\n</conversation>\n\nThe messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.\n\nUse this EXACT format:\n\n## Goal\n[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]\n\n## Constraints & Preferences\n- [Any constraints, preferences, or requirements mentioned by user]\n- [Or \"(none)\" if none were mentioned]\n\n## Progress\n### Done\n- [x] [Complete  <<< MARKER PRESENT
+--- 2026-11-17T08:29:44.021Z model=mock-1
+  [system] You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.
+
+<tools>
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+Additional tools may be available.
+</tools>
+
+<rules>
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed.
+- You can inspect PI_* environment variables for current model and session details.
+- Us
+  [user] [{"type": "text", "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nOK\n</summary>"}]
+  [user] [{"type": "text", "text": "COMPACT_TWO\n\n[VESTIGIO_PROBE_MARKER]"}]  <<< MARKER PRESENT
+  [user] [{"type": "text", "text": "COMPACT_POST three\n\n[VESTIGIO_PROBE_MARKER]"}]  <<< MARKER PRESENT
+
+===== INPUT EVENTS =====
+{"ts":"2026-11-17T08:29:36.688Z","source":"rpc","textIn":"COMPACT_ONE","action":"transform"}
+{"ts":"2026-11-17T08:29:40.126Z","source":"rpc","textIn":"COMPACT_TWO","action":"transform"}
+{"ts":"2026-11-17T08:29:44.016Z","source":"rpc","textIn":"COMPACT_POST three","action":"transform"}
+

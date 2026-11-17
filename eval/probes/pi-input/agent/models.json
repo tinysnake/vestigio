@@ -1,0 +1,20 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "mock": {
+      "name": "Mock",
+      "baseUrl": "http://127.0.0.1:8799/v1",
+      "api": "openai-completions",
+      "apiKey": "mock-key",
+      "models": [
+        {
+          "id": "mock-1",
+          "name": "Mock One",
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+          "contextWindow": 128000,
+          "maxTokens": 1024
+        }
+      ]
+    }
+  }
+}
