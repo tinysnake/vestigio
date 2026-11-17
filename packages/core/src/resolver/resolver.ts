@@ -9,11 +9,13 @@
  * model's `sufficient=false` continues the descent.
  *
  * What this module deliberately does not do:
- * - It never saves anything. The forced medium summary, the save and the
- *   short-summary derivation are PR-07; the contract and the budget slot are
- *   reserved here (`persistence_status: "not_attempted"`), nothing more.
+ * - It never saves on a reuse-only answer. The forced medium summary and the
+ *   save happen only when the walk ended `resolved` on evidence that includes
+ *   raw history (PR-07, `persist.ts`); an Active/Archived answer alone writes
+ *   nothing because it is reuse, not new history.
  * - It never records usage events for the cards it reads. Access accounting is
- *   the caller's (PR-07/PR-08) decision.
+ *   the caller's (PR-08) decision; the one exception is the delivery access for
+ *   a body this request wrote, which is part of the write's own contract.
  * - It never widens scope. Every candidate comes from a store search scoped to
  *   the caller's project or from a history hit the port marked
  *   `project_resolved`, and the judge reader rejects any evidence id that is not
@@ -36,6 +38,7 @@ import {
   type Scope,
   type SourceRef,
 } from "../contracts/index.js";
+import { hasRawHistoryEvidence, persistResolvedMemory, replaySavedRequest } from "./persist.js";
 import {
   layeredSearch,
   readMemoryResult,
@@ -253,6 +256,9 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   let cold = false;
   let retryUsed = false;
   let reused = false;
+  let summaryMs = 0;
+  let persistMs = 0;
+  let persistence: ResolveOutcome["persistence"] = null;
 
   const controller = new AbortController();
   const userSignal = input.signal;
@@ -567,12 +573,15 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       layers: assembly.layers,
       history,
       calls,
+      persistence,
       continuation,
       measured: {
         elapsed_ms: mono() - started,
         gather_ms: gatherMs,
         model_ms: modelMs,
         history_read_ms: historyReadMs,
+        summary_ms: summaryMs,
+        persist_ms: persistMs,
         model_calls: ledger.model_calls,
         tokens_in: ledger.tokens_in,
         tokens_out: ledger.tokens_out,
@@ -633,6 +642,54 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   }
   if (controller.signal.aborted) {
     return finish(stopAssembly("cancelled", emptyBundle()), null, false);
+  }
+
+  // ---- replay of an already-saved request -----------------------------------
+  //
+  // The same scope + question already produced a stored revision: return that
+  // exact body. This is the repeat path and the recovery path after a crash
+  // between save and return; it searches nothing and calls no model.
+  const replay = replaySavedRequest({
+    store: input.store,
+    scope,
+    question,
+    request_id: input.request_id,
+    session_id: input.session_id,
+    mono_now: mono,
+    wall_now: wall,
+  });
+  if (replay !== null) {
+    persistence = replay.persistence;
+    summaryMs = 0;
+    persistMs = replay.persistence.persist_ms;
+    const read = readMemoryResult({
+      store: input.store,
+      uri: replay.memory.uri,
+      revision: replay.memory.revision,
+    });
+    const replayResult = parseRetrievalResult({
+      status: "resolved",
+      cards: read.result.cards,
+      answer: replay.answer,
+      memory_summary: replay.memory.medium.body,
+      memory_uri: replay.memory.uri,
+      revision: replay.memory.revision,
+      persistence_status: "saved",
+      navigation_status: replay.memory.nav === null ? "pending" : "ready",
+      evidence: replay.memory.medium.sources,
+      missing: [],
+      conflicts: [],
+      next_action: null,
+      continuation_id: null,
+      budget_used: {
+        elapsed_ms: mono() - started,
+        model_calls: ledger.model_calls,
+        tokens_in: ledger.tokens_in,
+        tokens_out: ledger.tokens_out,
+        cost_usd: ledger.cost_usd,
+      },
+    });
+    return finish({ result: replayResult, layers: [] }, null, false);
   }
 
   // ---- continuation reuse --------------------------------------------------
@@ -727,6 +784,44 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
         next_action: null,
         continuation_id: null,
       });
+      if (input.model !== null && input.model !== undefined && hasRawHistoryEvidence(evidence, bundle.excerpts)) {
+        const persisted = await persistResolvedMemory({
+          store: input.store,
+          question,
+          scope,
+          answer,
+          evidence,
+          excerpts: bundle.excerpts,
+          cards: bundle.cards,
+          model: input.model,
+          model_id: input.model_id,
+          ledger,
+          signal: controller.signal,
+          remaining_ms: remaining,
+          request_id: input.request_id,
+          session_id: input.session_id,
+          wall_now: wall,
+          mono_now: mono,
+          call_index: calls.length,
+        });
+        summaryMs = persisted.persistence.summary_ms;
+        persistMs = persisted.persistence.persist_ms;
+        if (persisted.call !== null) calls.push(persisted.call);
+        persistence = persisted.persistence;
+        const patched = parseRetrievalResult({
+          ...assembled.result,
+          ...persisted.patch,
+          missing: [...new Set([...assembled.result.missing, ...persisted.missing])],
+          budget_used: {
+            elapsed_ms: mono() - started,
+            model_calls: ledger.model_calls,
+            tokens_in: ledger.tokens_in,
+            tokens_out: ledger.tokens_out,
+            cost_usd: ledger.cost_usd,
+          },
+        });
+        return finish({ ...assembled, result: patched }, continuationFor(bundle, layer), false, bundle.excerpts);
+      }
       return finish(assembled, continuationFor(bundle, layer), false, bundle.excerpts);
     }
 

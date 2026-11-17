@@ -80,10 +80,16 @@ export type HistoryPort = {
     project_path: string;
     limit: number;
   }): Promise<HistoryResult<HistorySearchOutput>>;
-  /** One bounded causal chain around `anchor`; `before` is 0..N. */
+  /**
+   * One bounded window around `anchor`. `parents` walks the causal chain (the
+   * chain evidence is built from); `timeline` walks the conversation, which is
+   * where the reply to a user message lives.
+   */
   readByAnchor(input: {
     anchor: string;
     before: number;
+    relation?: "parents" | "timeline" | undefined;
+    after?: number | undefined;
   }): Promise<HistoryResult<HistoryReadOutput>>;
 };
 

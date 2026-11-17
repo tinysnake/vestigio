@@ -6,6 +6,17 @@
  */
 
 export { resolveMemory } from "./resolver.js";
+export {
+  deliveryDedupKey,
+  evidenceVersionKey,
+  hasRawHistoryEvidence,
+  persistResolvedMemory,
+  readEvidenceVersion,
+  replaySavedRequest,
+  requestKeyOf,
+  RESOLVE_REPLAY_MAX_AGE_MS,
+} from "./persist.js";
+export type { EvidenceVersion, PersistResolveInput, PersistResolveOutcome, ReplayOutcome } from "./persist.js";
 export { JUDGE_SYSTEM_PROMPT, buildJudgeUserMessage, judgeAllowList, parseJudgeDecision } from "./judge.js";
 export type { JudgeAllowList, JudgeCandidateInput, JudgeDecision, JudgeParse } from "./judge.js";
 export {
@@ -22,6 +33,9 @@ export {
   RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL,
   RESOLVE_MAX_QUERY_VARIANTS,
   RESOLVE_MAX_SESSION_RESOLVES,
+  RESOLVE_NAV_MAX_OUTPUT_TOKENS,
+  RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS,
+  RESOLVE_SUMMARY_MODEL_CALLS,
   RESOLVE_TOKEN_ESTIMATE_BYTES_PER_TOKEN,
   RESOLVE_WARM_DEADLINE_MS,
   ResolveBudgetLedger,
@@ -40,6 +54,9 @@ export type {
   ModelRole,
   ModelThinking,
   ModelUsage,
+  PersistenceOutcome,
+  PersistenceStage,
+  PersistenceTarget,
   ResolveBudgetOptions,
   ResolveCallRecord,
   ResolveContinuation,

@@ -106,8 +106,22 @@ export type HotspotMembership = {
 };
 
 export type RetrievalStatus = "resolved" | "partial" | "conflicted" | "not_found";
-export type PersistenceStatus = "saved" | "failed" | "not_attempted";
+/**
+ * `insufficient_evidence` and `budget_exhausted` are PR-07 additions: the
+ * retrieval succeeded but no medium summary was written, and the reason is a
+ * property of the retrieval, not a save failure. `saved` still means the row is
+ * readable at `memory_uri`/`revision` right now.
+ */
+export type PersistenceStatus =
+  | "saved"
+  | "failed"
+  | "not_attempted"
+  | "insufficient_evidence"
+  | "budget_exhausted";
 export type NavigationStatus = "pending" | "ready" | "failed";
+
+/** A phase of the PR-07 resolve pipeline, checkpointed once a revision is saved. */
+export type PersistenceStage = "searched" | "summarized" | "saved" | "returned";
 
 export type MemoryCard = {
   memory_id: MemoryId;

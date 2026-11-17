@@ -83,7 +83,7 @@ const SCENARIOS = {
       id: "mem-archived-rollback",
       title: "迁移失败的回滚步骤",
       keywords: ["回滚", "迁移"],
-      nav: "归档：迁移失败的回滚步骤。",
+      nav: "归档：迁移失败时先停写入，再按第五步回滚，不能重跑迁移。",
       prefix: "迁移失败时先停写入，再按第五步回滚，不要重跑迁移。",
     }),
   ],

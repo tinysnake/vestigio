@@ -13,12 +13,18 @@
 
 import type {
   MemoryCard,
+  MemoryId,
   MemoryUri,
+  NavigationStatus,
+  PersistenceStatus,
   RetrievalResult,
+  Revision,
   Scope,
   SourceRef,
 } from "../contracts/index.js";
 import type { HistoryExcerpt, HistoryPort, LayerOutcome, LayerName } from "../retrieval/types.js";
+import type { PersistenceStage } from "../contracts/index.js";
+export type { PersistenceStage };
 import type { MemoryStore } from "../storage/store.js";
 
 export type ModelRole = "system" | "user" | "assistant";
@@ -87,13 +93,13 @@ export type ResolveCallRecord = {
   index: number;
   /** The zero-LLM layer this call was judging. */
   layer: LayerName;
-  purpose: "judge_expand";
+  purpose: "judge_expand" | "medium_summary";
   model: string;
   tokens_in: number;
   tokens_out: number;
   cost_usd: number | null;
   elapsed_ms: number;
-  outcome: "ok" | "malformed" | "failed" | "cancelled";
+  outcome: "ok" | "malformed" | "invalid" | "failed" | "cancelled";
 };
 
 /**
@@ -122,6 +128,10 @@ export type ResolveMeasured = {
   model_ms: number;
   /** Port-reported time for the history search/read calls, summed. */
   history_read_ms: number;
+  /** PR-07: wall time spent generating the forced medium summary. */
+  summary_ms: number;
+  /** PR-07: wall time spent in the save, job enqueue and delivery accounting. */
+  persist_ms: number;
   model_calls: number;
   tokens_in: number;
   tokens_out: number;
@@ -137,11 +147,42 @@ export type ResolveMeasured = {
   layers: LayerOutcome[];
 };
 
+/** The body and the saved revision; present only when `status` is `saved`. */
+export type PersistenceTarget = {
+  memory_id: MemoryId;
+  memory_uri: MemoryUri;
+  revision: Revision;
+};
+
+/**
+ * PR-07's account of the medium-summary write. Separate from
+ * `RetrievalResult` because it also carries the checkpoint stage and the call's
+ * cost, which no retrieval consumer should have to parse out of prose.
+ */
+export type PersistenceOutcome = {
+  status: PersistenceStatus;
+  stage: PersistenceStage;
+  target: PersistenceTarget | null;
+  /** Stable across retries of one logical request. */
+  dedup_key: string | null;
+  /** True when the same evidence version was found and reused, no model call. */
+  reused: boolean;
+  navigation_status: NavigationStatus;
+  summary_ms: number;
+  persist_ms: number;
+  /** Exactly one access is recorded for the first delivery of a revision. */
+  delivery_recorded: boolean;
+  missing: string[];
+  call: ResolveCallRecord | null;
+};
+
 export type ResolveOutcome = {
   result: RetrievalResult;
   layers: LayerOutcome[];
   history: HistoryExcerpt[];
   calls: ResolveCallRecord[];
+  /** PR-07 medium-summary write, or `null` when the walk never reached it. */
+  persistence: PersistenceOutcome | null;
   /** Candidates a later call may reuse, or `null` when there is nothing to reuse. */
   continuation: ResolveContinuation | null;
   measured: ResolveMeasured;
@@ -172,6 +213,18 @@ export type ResolveInput = {
   budget?: Partial<ResolveBudgetOptions> | undefined;
   /** Recorded on every call; informational. */
   model_id?: string | undefined;
+  /**
+   * Session identity recorded on the delivery access event. Defaults to
+   * `resolve:<hash>` so a caller without a Session still produces one row.
+   */
+  session_id?: string | undefined;
+  /**
+   * Opaque id for this logical retrieval. The delivery dedup key is derived
+   * from it, so a retry of the same request records one access, not two.
+   * Defaults to a hash of scope and question (the same identity the
+   * continuation uses).
+   */
+  request_id?: string | undefined;
 };
 
 export type { HistoryExcerpt, HistoryPort, LayerOutcome, LayerName, MemoryCard, MemoryUri, MemoryStore, RetrievalResult, Scope, SourceRef };

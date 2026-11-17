@@ -245,12 +245,62 @@ describe("history layer: byte ceiling and the one bounded read", () => {
       history: fake.port,
     });
 
-    expect(fake.calls.readByAnchor).toBe(1);
-    expect(fake.calls.last_read).toEqual({ anchor: "h-1", before: 2 });
+    // Two windows: the causal chain, then the conversation forward from the
+    // anchor because the top hit is a user message whose answer is its child.
+    expect(fake.calls.readByAnchor).toBe(2);
+    expect(fake.calls.last_read).toEqual({ anchor: "h-1", before: 0, relation: "timeline", after: 2 });
     const read = outcome.history.filter((entry) => entry.via === "read");
     expect(read.map((entry) => entry.source_ref.message_id)).toEqual(["h-0"]);
     expect(outcome.layers.find((layer) => layer.layer === "history")?.read).toBe(true);
     expect(outcome.result.evidence.map((ref) => ref.message_id)).toEqual(["m-1", "h-1", "h-2", "h-0"]);
+  });
+
+  it("reads the reply that follows a user message instead of only its parents", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });
+    const question = hit("部署脚本的默认端口是多少？", "u-1");
+    const answer = historyMessage("默认端口是 8787，回滚要同时改配置和镜像。", {
+      source_ref: makeSourceRef({ message_id: "a-1", project_id: PROJECT_A }),
+      role: "assistant",
+    });
+    const fake = makeHistoryPort({ hits: [question], messages: [], timeline_messages: [answer] });
+
+    const outcome = await layeredSearch({
+      store,
+      query: "部署脚本的默认端口是多少？",
+      scope: projectA,
+      include_history: true,
+      include_history_read: true,
+      history: fake.port,
+    });
+
+    const read = outcome.history.filter((entry) => entry.via === "read");
+    expect(read.map((entry) => entry.source_ref.message_id)).toEqual(["a-1"]);
+    expect(read[0]?.excerpt).toContain("8787");
+    expect(outcome.result.evidence.map((ref) => ref.message_id)).toContain("a-1");
+  });
+
+  it("skips the forward window when the top hit is not a user message", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });
+    const fake = makeHistoryPort({
+      hits: [historyHit("zqleak assistant message", { role: "assistant", source_ref: makeSourceRef({ message_id: "h-9", project_id: PROJECT_A }) })],
+      messages: [historyMessage("zqleak parent message", { source_ref: makeSourceRef({ message_id: "h-8", project_id: PROJECT_A }) })],
+      timeline_messages: [historyMessage("zqleak later message", { source_ref: makeSourceRef({ message_id: "h-10", project_id: PROJECT_A }) })],
+    });
+
+    const outcome = await layeredSearch({
+      store,
+      query: "端口",
+      scope: projectA,
+      include_history: true,
+      include_history_read: true,
+      history: fake.port,
+    });
+
+    expect(fake.calls.readByAnchor).toBe(1);
+    expect(fake.calls.last_read).toEqual({ anchor: "h-9", before: 2, relation: "parents", after: 0 });
+    expect(outcome.history.filter((entry) => entry.via === "read").map((entry) => entry.source_ref.message_id)).toEqual(["h-8"]);
   });
 
   it("does not read when the search found nothing", async () => {

@@ -380,6 +380,59 @@ export class MemoryStore {
       .map((row) => num(row, "revision"));
   }
 
+  /**
+   * Every memory head in a scope. Used by the PR-07 subject-collision check,
+   * which must see a memory the current query never matched; the FTS ranking
+   * alone would miss it and silently create a duplicate subject.
+   */
+  listHeads(scope?: Scope): Memory[] {
+    this.assertOpen();
+    if (scope === undefined) {
+      return this.db
+        .prepare(
+          `SELECT memories.* FROM memories
+             JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                             AND memory_heads.revision = memories.revision
+            ORDER BY memories.memory_id ASC`,
+        )
+        .all()
+        .map((row) => this.rowToMemory(row));
+    }
+    if (scope.kind === "global") {
+      return this.db
+        .prepare(
+          `SELECT memories.* FROM memories
+             JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                             AND memory_heads.revision = memories.revision
+            WHERE memories.scope_kind = 'global'
+            ORDER BY memories.memory_id ASC`,
+        )
+        .all()
+        .map((row) => this.rowToMemory(row));
+    }
+    return this.db
+      .prepare(
+        `SELECT memories.* FROM memories
+           JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                           AND memory_heads.revision = memories.revision
+          WHERE memories.scope_kind = 'project' AND memories.project_id = ?
+          ORDER BY memories.memory_id ASC`,
+      )
+      .all(scope.project_id)
+      .map((row) => this.rowToMemory(row));
+  }
+
+  /**
+   * The store's own connection. Only for modules that own their own tables
+   * (PR-07 `summary_jobs` / `resolve_versions`) and must write inside the
+   * store's transaction, e.g. the job enqueued by `saveMemory`'s `beforeCommit`.
+   * Ordinary callers keep using the typed methods above and never touch SQL.
+   */
+  database(): DatabaseSync {
+    this.assertOpen();
+    return this.db;
+  }
+
   /** Default (Active) ranking. Archived rows live in a different index and cannot appear. */
   searchActive(query: string, options: SearchOptions = {}): SearchHit[] {
     return this.searchIndex("active", query, options);

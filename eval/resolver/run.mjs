@@ -39,6 +39,57 @@ const PROJECT = "/tmp/x_a";
 const EVAL_PROJECT = "/tmp/resolver-eval";
 const DEFAULT_MODEL = "auto/deepseek-v4.1-flash";
 
+/**
+ * A corpus that actually answers a question, so PR-07's save path is exercised
+ * on honest evidence instead of the probe's filler text. Long enough that a
+ * 500-1000 character body never exceeds the material it summarizes.
+ */
+const PERSIST_TURNS = [
+  ["user", "部署脚本的默认端口是多少？"],
+  [
+    "assistant",
+    "默认端口统一成 8787，写在部署仓库的 README 和环境对照表里。之前三套环境各写一个端口，出过两次连错服务的事故，所以现在把端口提到配置文件顶层，由部署脚本按环境注入，不再散落在各个启动脚本里。灰度环境单独用 8788，本地调试继续用 8080，避免和本机其他服务抢端口。端口值只在这张表里出现一次，启动脚本、容器编排文件和监控探针都从它派生，改一处就能保持一致。配置和镜像分开发布，配置先行，向后兼容至少保留一个版本，这样镜像回滚不需要同步改配置。健康检查改成先探测端口可达，再跑业务探针，两次探测间隔两秒，连续三次失败才判定不可用，避免启动阶段的误判。缓存配置走同一份模板，键前缀带环境名，避免灰度和生产共用一份缓存时互相污染。监控给端口切换加了一次性告警，切换后五分钟内出现连接拒绝就通知值班同学，同时把旧端口的连接数打到面板上，方便确认没有残留流量。端口变更需要两个人复核，一个人改表，一个人核对发布单和探针地址，复核记录挂在发布单下面。文档只保留一份，其他地方的端口说明都删掉了，避免几份说明互相矛盾。上线节奏是灰度先跑一周，没有异常再推生产，推之前留一条评审记录。环境对照表里的健康检查地址必须跟着端口一起改，漏改会让探针打到旧端口，出现假离线。端口表和发布单一起归档，事后排查只看归档记录，不再翻聊天记录。",
+  ],
+  ["user", "那回滚的时候具体要注意什么？"],
+  [
+    "assistant",
+    "回滚要注意三点。第一，回滚必须同时覆盖配置和镜像，只回滚镜像会留下新端口的配置，健康检查会在启动阶段直接失败，这是上次事故的直接原因。第二，回滚顺序是镜像先、配置后，因为新镜像只认新端口，配置先回滚会让旧镜像连不上。第三，回滚之后要盯五分钟的告警和旧端口的连接数，确认没有残留流量再收尾。另外回滚前先把环境对照表里的端口和健康检查地址核对一遍，改动的唯一来源就是这张表，不要在启动脚本里临时改常量。回滚过程要留记录，写清楚时间点、回滚了哪一部分、结果如何，方便复盘。",
+  ],
+];
+
+/** Write one substantive session and build its index with the pinned CLI. */
+function buildPersistFixture(home, project) {
+  const sessions = join(home, ".pi", "agent", "sessions", "projPersist");
+  mkdirSync(sessions, { recursive: true });
+  const entries = [
+    { type: "session", version: 3, id: "sessPersist", timestamp: "2026-03-01T00:00:00.000Z", cwd: project },
+  ];
+  let parent = null;
+  PERSIST_TURNS.forEach(([role, text], index) => {
+    const id = `p${index + 1}`;
+    const stamp = `2026-03-01T00:0${index}:0${index}.000Z`;
+    entries.push({
+      id,
+      parentId: parent,
+      type: "message",
+      timestamp: stamp,
+      message: { role, content: [{ type: "text", text }], ...(role === "assistant" ? { model: "fixture" } : {}) },
+    });
+    parent = id;
+  });
+  entries.push({ id: "leafP", parentId: parent, type: "leaf", timestamp: "2026-03-01T00:09:00.000Z", targetId: parent });
+  writeFileSync(join(sessions, "persist.jsonl"), `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+  const cli = join(ROOT, "packages/source-obelisk/node_modules/@obelisk-apps/cli/dist/cli/src/obelisk.js");
+  const build = spawnSync("node", [cli, "--build"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: "1" },
+  });
+  return build.status === 0
+    ? { ok: true }
+    : { ok: false, reason: `build exited ${build.status}: ${build.stdout}${build.stderr}` };
+}
+
 function readGateway() {
   let parsed;
   try {
@@ -100,6 +151,15 @@ function parseJson(text) {
   return JSON.parse(text);
 }
 
+/** For checks that must report a failure instead of throwing on bad output. */
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 function median(values) {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -144,6 +204,16 @@ function main() {
     VESTIGIO_MODEL_COST_INPUT: String(gateway.cost.input),
     VESTIGIO_MODEL_COST_OUTPUT: String(gateway.cost.output),
   };
+  const modelArgs = [
+    "--model-base-url",
+    gateway.baseUrl,
+    "--model-id",
+    gateway.model,
+    "--cost-input",
+    String(gateway.cost.input),
+    "--cost-output",
+    String(gateway.cost.output),
+  ];
   const baseArgs = (store, project, question) => [
     "resolve",
     "--db",
@@ -153,14 +223,7 @@ function main() {
     "--question",
     question,
     "--json",
-    "--model-base-url",
-    gateway.baseUrl,
-    "--model-id",
-    gateway.model,
-    "--cost-input",
-    String(gateway.cost.input),
-    "--cost-output",
-    String(gateway.cost.output),
+    ...modelArgs,
   ];
 
   const result = { checks: ledger.checks };
@@ -235,6 +298,95 @@ function main() {
       check("c.history_excerpts_surfaced", excerpts.length >= 1, excerpts.length);
       check("c.not_resolved_from_decoy", payload?.result?.status !== "not_found", payload?.result?.status);
       check("c.history_index_after", fileStat(fixtureIndex) !== null, { before: indexBefore, after: fileStat(fixtureIndex) });
+
+      // (c2) PR-07 refuses to invent a body: this corpus holds about 150
+      // characters of filler, so no honest 500-character summary exists and no
+      // memory may be written, whatever the judge decides about sufficiency.
+      check("c.no_fabricated_memory", payload?.result?.memory_uri === null, {
+        persistence: payload?.result?.persistence_status ?? null,
+        summary_chars: [...(payload?.result?.memory_summary ?? "")].length,
+      });
+      check(
+        "c.no_padding_reason",
+        payload?.result?.persistence_status !== "insufficient_evidence" ||
+          (payload?.result?.missing ?? []).some((entry) => entry.startsWith("medium_")),
+        payload?.result?.missing ?? null,
+      );
+    }
+
+    // (g) A corpus that holds the answer: the resolved history answer is saved
+    // as one medium summary, the job publishes its nav, and the repeat request
+    // replays the stored body and answer with no model call.
+    {
+      const home = join(root, "persist-home");
+      const project = "/tmp/resolver-persist";
+      const built = buildPersistFixture(home, project);
+      if (!built.ok) ledger.reason = built.reason;
+      const store = join(root, "store-persist.sqlite");
+      const question = "部署脚本的默认端口是多少？";
+      const args = baseArgs(store, project, question).concat(["--obelisk-home", home]);
+      const first = runCli(args, childEnv);
+      const payload = first.code === 0 ? safeJson(first.out) : null;
+      const uri = payload?.result?.memory_uri ?? null;
+      const revision = payload?.result?.revision ?? null;
+      ledger.scenarios.push({
+        id: "g_history_saved",
+        code: first.code,
+        status: payload?.result?.status ?? null,
+        persistence: payload?.result?.persistence_status ?? null,
+        model_calls: payload?.measured?.model_calls ?? null,
+        tokens_out: payload?.measured?.tokens_out ?? null,
+        missing: payload?.result?.missing ?? null,
+      });
+      check("g.resolved", payload?.result?.status === "resolved", payload?.result?.status ?? null);
+      check(
+        "g.saved",
+        payload?.result?.persistence_status === "saved" && uri !== null && revision !== null,
+        { status: payload?.result?.persistence_status ?? null, uri, revision },
+      );
+      check("g.nav_pending", payload?.result?.navigation_status === "pending", payload?.result?.navigation_status ?? null);
+      if (uri !== null && revision !== null) {
+        const body = payload?.result?.memory_summary ?? "";
+        const bodyChars = [...body].filter((point) => !/\s/u.test(point)).length;
+        check("g.body_length", bodyChars >= 500 && bodyChars <= 1000, bodyChars);
+
+        const readArgs = ["read", "--db", store, "--uri", uri, "--revision", String(revision), "--json"];
+        const stored = safeJson(runCli(readArgs, childEnv).out);
+        check("g.body_identity", stored?.result?.memory_summary === body, {
+          stored_chars: [...(stored?.result?.memory_summary ?? "")].length,
+          returned_chars: [...body].length,
+        });
+
+        const jobs = safeJson(
+          runCli(["jobs", "run", "--db", store, "--limit", "3", "--json", ...modelArgs], childEnv).out,
+        );
+        check("g.job_completed", (jobs?.completed ?? 0) >= 1, {
+          completed: jobs?.completed ?? null,
+          failed: jobs?.failed ?? null,
+        });
+
+        const published = safeJson(runCli(readArgs, childEnv).out);
+        const navText = published?.result?.cards?.[0]?.nav_text ?? null;
+        check(
+          "g.nav_published",
+          published?.result?.navigation_status === "ready" &&
+            typeof navText === "string" &&
+            [...navText].length <= 200,
+          { status: published?.result?.navigation_status ?? null, nav_chars: navText === null ? null : [...navText].length },
+        );
+
+        const repeat = safeJson(runCli(args, childEnv).out);
+        check(
+          "g.replay_reuses_revision",
+          repeat?.result?.memory_uri === uri && repeat?.result?.revision === revision,
+          { uri: repeat?.result?.memory_uri ?? null, revision: repeat?.result?.revision ?? null },
+        );
+        check("g.replay_no_model_call", (repeat?.measured?.model_calls ?? 99) === 0, repeat?.measured?.model_calls ?? null);
+        check("g.replay_answer_identical", repeat?.result?.answer === payload?.result?.answer, {
+          first: payload?.result?.answer ?? null,
+          replay: repeat?.result?.answer ?? null,
+        });
+      }
     }
 
     // (d) No evidence anywhere: an honest gap, never prose.

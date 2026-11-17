@@ -95,3 +95,40 @@ export function formatReadHuman(outcome: MemoryReadOutcome): string {
   );
   return `${lines.join("\n")}\n`;
 }
+
+export type JobsModelInfo = {
+  base_url: string | null;
+  model_id: string;
+  thinking: string;
+  skip_reason: string | null;
+};
+
+export function formatJobsHuman(
+  outcome: import("@vestigio/core/jobs").RunDueJobsOutcome,
+  info: JobsModelInfo,
+): string {
+  const lines: string[] = [];
+  lines.push(
+    `jobs run -> claimed=${outcome.claimed} done=${outcome.completed} retried=${outcome.retried} failed=${outcome.failed}`,
+  );
+  lines.push(
+    `model: ${info.base_url === null ? `not configured (${info.skip_reason ?? "no base url"})` : `${info.model_id} thinking=${info.thinking}`}`,
+  );
+  lines.push(`elapsed_ms: ${round(outcome.elapsed_ms)}`);
+  if (outcome.missing.length > 0) {
+    lines.push(`missing: ${outcome.missing.join(", ")}`);
+  }
+  for (const result of outcome.results) {
+    const navChars = result.nav === null ? 0 : [...result.nav].length;
+    lines.push(
+      `- ${result.job_id} ${result.memory_id} r${result.revision} ${result.state}` +
+        ` nav_chars=${navChars} admitted=${result.admitted === null ? "no" : result.admitted.admitted}` +
+        ` tokens_in=${result.tokens_in} tokens_out=${result.tokens_out}` +
+        ` cost=${result.cost_usd === null ? "null" : round(result.cost_usd)}` +
+        ` elapsed_ms=${round(result.elapsed_ms)}` +
+        `${result.reason === null ? "" : ` reason=${result.reason}`}` +
+        `${result.admit_error === null ? "" : ` admit_error=${result.admit_error}`}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}

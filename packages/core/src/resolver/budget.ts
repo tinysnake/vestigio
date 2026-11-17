@@ -18,9 +18,29 @@ export const RESOLVE_COLD_DEADLINE_MS = 120_000;
 /** A history search this slow is a refresh, not a warm lookup. */
 export const RESOLVE_COLD_REFRESH_THRESHOLD_MS = 5_000;
 export const RESOLVE_MAX_MODEL_CALLS = 3;
+/**
+ * PR-07 reserves one call for the forced medium summary, outside the judgment
+ * ceiling above. The judgment walk can still spend its three calls (including
+ * one correction/retry) and the summary stage is never starved by it; the
+ * summary call is refused when the request deadline or the token ceilings are
+ * already gone, and that refusal is reported as `budget_exhausted`.
+ */
+export const RESOLVE_SUMMARY_MODEL_CALLS = 1;
+/**
+ * Output ceiling for the summary call; the body itself is capped at 1000.
+ *
+ * Measured on the configured gateway (`auto/deepseek-v4.1-flash`): the route
+ * spends ~1900 output tokens on internal reasoning before it emits any body, so
+ * a 1200/2500 total ceiling turned the mandatory 500-character body into a
+ * truncated JSON object and then a 502 ("whole output spent on reasoning"). The
+ * structure stays bounded; the numbers are what this backend needs.
+ */
+export const RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS = 4000;
+/** Stage-2 navigation call: a short JSON object, never a full summary. */
+export const RESOLVE_NAV_MAX_OUTPUT_TOKENS = 400;
 export const RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL = 1200;
 export const RESOLVE_MAX_INPUT_TOKENS = 20_000;
-export const RESOLVE_MAX_OUTPUT_TOKENS = 2500;
+export const RESOLVE_MAX_OUTPUT_TOKENS = 6000;
 export const RESOLVE_MAX_EVIDENCE_BYTES = 24 * 1024;
 export const RESOLVE_MAX_EVIDENCE_MESSAGES = 6;
 export const RESOLVE_MAX_SESSION_RESOLVES = 40;
@@ -105,6 +125,12 @@ export class ResolveBudgetLedger {
   evidence_messages = 0;
   evidence_capped = false;
 
+  /**
+   * Judgement calls allowed before the reserved summary call. The ledger counts
+   * every call in `model_calls`; this ceiling keeps the summary slot free.
+   */
+  judgment_calls = 0;
+
   constructor(options: ResolveBudgetOptions) {
     this.options = options;
   }
@@ -114,23 +140,55 @@ export class ResolveBudgetLedger {
     return Math.max(1, Math.min(this.options.max_output_tokens_per_call, this.options.max_output_tokens - this.tokens_out));
   }
 
-  /** Whether one more model call fits the call, input and output ceilings. */
+  /** The summary call's own output ceiling, still bounded by the remaining total. */
+  nextSummaryOutputCap(): number {
+    return Math.max(
+      1,
+      Math.min(RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS, this.options.max_output_tokens - this.tokens_out),
+    );
+  }
+
+  /** Whether one more judgment call fits the call, input and output ceilings. */
   canCallModel(estimated_input_tokens = 0): boolean {
-    if (this.model_calls >= this.options.max_model_calls) return false;
+    if (this.judgment_calls >= this.options.max_model_calls) return false;
+    if (this.model_calls >= this.options.max_model_calls + RESOLVE_SUMMARY_MODEL_CALLS) return false;
     if (this.tokens_out >= this.options.max_output_tokens) return false;
     if (this.tokens_in + estimated_input_tokens > this.options.max_input_tokens) return false;
     return true;
   }
 
   stopReason(estimated_input_tokens = 0): LedgerStop {
-    if (this.model_calls >= this.options.max_model_calls) return "model_call_cap";
+    if (this.judgment_calls >= this.options.max_model_calls) return "model_call_cap";
     if (this.tokens_out >= this.options.max_output_tokens) return "output_token_cap";
     if (this.tokens_in + estimated_input_tokens > this.options.max_input_tokens) return "input_token_cap";
     return null;
   }
 
-  recordModelCall(usage: { tokens_in: number; tokens_out: number; cost_usd: number | null }): void {
+  /**
+   * Whether the reserved medium-summary call fits. It may use the one slot past
+   * the judgment ceiling, and the same input/output token ceilings.
+   */
+  canCallSummaryModel(estimated_input_tokens = 0): boolean {
+    if (this.model_calls >= this.options.max_model_calls + RESOLVE_SUMMARY_MODEL_CALLS) return false;
+    if (this.tokens_out >= this.options.max_output_tokens) return false;
+    if (this.tokens_in + estimated_input_tokens > this.options.max_input_tokens) return false;
+    return true;
+  }
+
+  /** Why the summary call cannot run, or `null` when it fits. */
+  summaryStopReason(estimated_input_tokens = 0): LedgerStop {
+    if (this.model_calls >= this.options.max_model_calls + RESOLVE_SUMMARY_MODEL_CALLS) return "model_call_cap";
+    if (this.tokens_out >= this.options.max_output_tokens) return "output_token_cap";
+    if (this.tokens_in + estimated_input_tokens > this.options.max_input_tokens) return "input_token_cap";
+    return null;
+  }
+
+  recordModelCall(
+    usage: { tokens_in: number; tokens_out: number; cost_usd: number | null },
+    role: "judgment" | "summary" = "judgment",
+  ): void {
     this.model_calls += 1;
+    if (role === "judgment") this.judgment_calls += 1;
     this.tokens_in += Math.max(0, usage.tokens_in);
     this.tokens_out += Math.max(0, usage.tokens_out);
     if (usage.cost_usd !== null) {

@@ -101,6 +101,8 @@ export type FakeHistoryOptions = {
   hits?: HistoryHit[];
   evidence?: HistorySearchOutput["evidence"];
   messages?: HistoryMessage[];
+  /** What a `timeline` read returns, i.e. the replies after the anchor. */
+  timeline_messages?: HistoryMessage[];
   has_more?: boolean;
   probe_throws?: string;
   search_throws?: string;
@@ -116,7 +118,7 @@ export type FakeHistory = {
     search: number;
     readByAnchor: number;
     last_search: { text: string; project_path: string; limit: number } | null;
-    last_read: { anchor: string; before: number } | null;
+    last_read: { anchor: string; before: number; relation?: "parents" | "timeline" | undefined; after?: number | undefined } | null;
   };
 };
 
@@ -169,7 +171,7 @@ export function makeHistoryPort(options: FakeHistoryOptions = {}): FakeHistory {
         ok: true,
         value: {
           anchor,
-          messages: options.messages ?? [],
+          messages: input.relation === "timeline" ? (options.timeline_messages ?? []) : (options.messages ?? []),
           has_more: options.has_more ?? false,
           elapsed_ms: 1,
         },
@@ -178,3 +180,30 @@ export function makeHistoryPort(options: FakeHistoryOptions = {}): FakeHistory {
   };
   return { port, calls };
 }
+
+/**
+ * A history excerpt long enough to honestly support a 500-character body.
+ * PR-07 refuses to summarize fewer than `MEDIUM_BODY_MIN` characters of
+ * evidence, so a two-sentence excerpt would exercise the refusal path instead
+ * of the save path.
+ */
+export const HISTORY_DECISION_TEXT = [
+  "这次把部署脚本的默认端口统一成 8787。之前三套环境各写一个端口，出过两次连错服务的事故，所以端口提到配置文件的顶层，由部署脚本按环境注入，不再散落在各个启动脚本里。",
+  "灰度环境的端口单独保留 8788，避免和本地调试常用的 8080 冲突。回滚路径必须同时覆盖配置和镜像两部分，只回滚镜像会留下新端口的配置，健康检查会在启动阶段直接失败，这是上次事故的直接原因。",
+  "健康检查改成先探测端口可达再跑业务探针，两次探测间隔两秒，连续三次失败才算不可用。缓存配置继续走同一份模板，键前缀加上环境名，避免灰度与生产共用一份缓存时互相污染。",
+  "上线顺序是配置先行、镜像随后，配置向后兼容至少保留一个版本，这样镜像回滚不需要同步改配置。监控给端口切换加一次性告警，切换后五分钟内出现连接拒绝就通知值班同学，同时把旧端口的连接数打到面板上，确认没有残留流量。",
+  "文档只保留一份，写在部署仓库的 README 里，其他地方的端口说明一律删掉，避免再出现几份互相矛盾的说明。推进节奏是先在灰度验证一周，没有异常再推生产，推之前留一条评审记录。",
+  "端口、环境名和健康检查地址统一写进一张环境对照表，部署、回滚和排查都只查这张表，不再各处翻启动脚本，改动的唯一来源就是它，对照表本身也进版本库并且需要评审。",
+].join("\n");
+
+/** The follow-up excerpt: the same discussion, with the port decision changed. */
+export const HISTORY_PORT_CHANGE_TEXT = [
+  "复核之后决定把默认端口从 8787 改成 9090。原因是 8787 在几台新开发机上已经被别的服务占用，启动时报地址已占用，排查成本很高。",
+  "改动范围仍然是配置文件顶层加部署脚本注入，灰度单独保留 9091，本地调试继续用 8080。健康检查、缓存键前缀和环境名隔离这些约束都不变。",
+  "回滚仍然要同时覆盖配置和镜像，但这次先回滚镜像再回滚配置，因为新镜像只认 9090，配置先回滚会让健康检查在启动阶段失败。",
+  "监控告警同步改到 9090，切换后五分钟内出现连接拒绝就通知值班同学，旧端口 8787 的连接数保留一周便于确认没有残留流量。",
+  "文档同样只保留一份，写在部署仓库的 README 里，同时把这次变更的原因和复核结论补进评审记录，方便下次别人问起为什么改端口时有据可查。",
+  "环境对照表同步改到 9090 和 9091，部署、回滚和排查仍然只查这张表，改动的唯一来源就是它。这一轮先在灰度跑一周，观察连接拒绝告警和旧端口残留流量，没有问题再推生产。",
+  "另外约定：以后新增环境必须先在这张对照表里登记端口和健康检查地址，不允许在启动脚本里直接写常量，这一条写进评审清单，评审时逐项确认。",
+  "这次改端口也顺势把对照表补全，把每一套环境的端口、健康检查地址和负责人都写清楚，后续新增环境先登记再动启动脚本，避免又回到散落多处的状态。",
+].join("\n");

@@ -50,7 +50,13 @@ export const MEMORY_STATES = ["medium_ready", "published", "archived"] as const;
 export const USAGE_EVENT_KINDS = ["hit", "access"] as const;
 export const USAGE_CHANNELS = ["hotspot", "search", "read"] as const;
 export const RETRIEVAL_STATUSES = ["resolved", "partial", "conflicted", "not_found"] as const;
-export const PERSISTENCE_STATUSES = ["saved", "failed", "not_attempted"] as const;
+export const PERSISTENCE_STATUSES = [
+  "saved",
+  "failed",
+  "not_attempted",
+  "insufficient_evidence",
+  "budget_exhausted",
+] as const;
 export const NAVIGATION_STATUSES = ["pending", "ready", "failed"] as const;
 
 export function parseMemoryState(value: unknown, path = "$"): MemoryState {

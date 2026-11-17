@@ -319,3 +319,36 @@ A concurrent sibling commit `38b9f1d` ("feat(core): freeze PR-01 memory contract
 and baseline harness") swept these probe scripts into git while this probe was running. **No
 `git add`/`commit`/`push` was run by this probe**; `eval/probes/obelisk/evidence/` and
 `eval/probes/obelisk/run_all.sh` remain untracked.
+
+## Chinese text is indexed as punctuation-bounded runs (measured 2026-11-17)
+
+PR-07's live run needed a Chinese question to find its own answer in raw history and failed; this
+section records why, because it bounds every later "search the transcripts in Chinese" claim.
+
+Method: an isolated fixture home (`HOME=/tmp/vg-home`) holding one four-message session
+(`cwd=/tmp/resolver-persist`) whose assistant replies state the port decision, then
+`obelisk --search <q> --limit 10 --project-path /tmp/resolver-persist --context-limit 0`.
+
+| query | hits |
+|---|---|
+| `回滚` | 0 |
+| `默认端口` | 0 |
+| `部署脚本的默认端口` | 0 |
+| `回滚要注意什么` | 1 |
+
+The corpus contains `回滚要注意什么` as a whole question and `默认端口统一成 8787` inside a longer
+sentence. Substrings of a longer Chinese run match nothing, and the exact punctuation-bounded run
+matches. So 0.3.2 tokenizes Chinese by splitting on punctuation and whitespace only: no word, no
+sub-word, no n-gram segmentation, no prefix matching inside a run.
+
+Consequences for the adapter users:
+
+- A natural Chinese question searches raw history almost never. It works only when a previous
+  message contains that exact run, which is why PR-07's fixture question had to be asked verbatim
+  before.
+- `@vestigio/core`'s memory index is unaffected: it indexes CJK unigrams plus bigrams
+  (`packages/core/src/storage/tokenize.ts`), so `端口` regains recall from Active and Archived.
+- PR-09 must report memory-layer recall and raw-history recall as separate numbers. Combining them
+  would hide this limit behind the memory layer's numbers.
+- Query expansion by the judge (`next_queries`) can help only when the expansion happens to be a
+  punctuation-bounded run of the target text; it is not a reliable fix.

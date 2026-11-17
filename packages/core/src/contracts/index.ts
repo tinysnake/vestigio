@@ -10,6 +10,7 @@ export type {
   MemoryUri,
   NavSummary,
   NavigationStatus,
+  PersistenceStage,
   PersistenceStatus,
   ProjectActivity,
   RetrievalResult,

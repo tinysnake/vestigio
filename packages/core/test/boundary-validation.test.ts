@@ -77,6 +77,8 @@ describe("union exhaustiveness", () => {
       saved: true,
       failed: true,
       not_attempted: true,
+      insufficient_evidence: true,
+      budget_exhausted: true,
     };
     const navigation: Record<NavigationStatus, true> = {
       pending: true,

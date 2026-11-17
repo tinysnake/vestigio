@@ -148,7 +148,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		name: "memory_resolve",
 		label: "Memory resolve",
 		description:
-			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. Returns evidence and a stated gap or conflict; it never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
+			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-1000 character medium summary, returns that exact body with its URI and revision, and queues the short nav for `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
 		parameters: resolveParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
@@ -223,6 +223,12 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					history_note: historyNote,
 					hits_recorded: recorded,
 					resolve_budget: RESOLVE_MAX_SESSION_RESOLVES,
+					persistence: outcome.persistence,
+					memory_summary: outcome.result.memory_summary,
+					memory_uri: outcome.result.memory_uri,
+					revision: outcome.result.revision,
+					persistence_status: outcome.result.persistence_status,
+					navigation_status: outcome.result.navigation_status,
 				},
 			};
 		},
@@ -383,6 +389,20 @@ export function renderResolve(
 	}
 	if (result.evidence.length > 0) {
 		lines.push(`evidence: ${result.evidence.map((ref) => `${ref.provider}/${ref.source_instance}`).join(", ")}`);
+	}
+	if (outcome.persistence !== null) {
+		const persistence = outcome.persistence;
+		lines.push(
+			`persistence: ${persistence.status} stage=${persistence.stage} nav=${persistence.navigation_status}` +
+				`${persistence.target === null ? "" : ` target=${persistence.target.memory_uri} r${persistence.target.revision}`}` +
+				`${persistence.reused ? " (reused existing revision)" : ""}` +
+				`${persistence.delivery_recorded ? " access_recorded" : ""}`,
+		);
+	}
+	if (result.memory_summary !== null && result.memory_uri !== null) {
+		lines.push(`memory: ${result.memory_uri} revision ${result.revision ?? "?"}`);
+		lines.push("long summary:");
+		lines.push(result.memory_summary);
 	}
 	if (result.answer !== null) lines.push(`answer: ${result.answer}`);
 	if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);

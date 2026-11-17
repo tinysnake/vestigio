@@ -59,6 +59,12 @@ export const DEFAULT_MAX_HISTORY_BYTES = 8 * 1024;
 export const DEFAULT_MAX_RESULT_BYTES = 64 * 1024;
 /** Causal predecessors fetched by the one optional read-by-anchor call. */
 export const DEFAULT_HISTORY_READ_BEFORE = 2;
+/**
+ * Replies after the anchor, not before it. A user message is frequently the
+ * best lexical hit for its own question while the answer sits in the child
+ * message, so reading backwards alone would hand the model the question back.
+ */
+export const DEFAULT_HISTORY_READ_AFTER = 2;
 /** Same estimator PR-01's baseline harness uses, so the numbers compare. */
 export const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
 
@@ -212,6 +218,7 @@ async function runHistoryLayer(input: {
   max_bytes: number;
   include_read: boolean;
   read_before: number;
+  read_after: number;
 }): Promise<HistoryRun> {
   const layer: LayerOutcome = {
     layer: "history",
@@ -265,6 +272,7 @@ async function runHistoryLayer(input: {
   let bytes = 0;
   let byteCapped = false;
   let topAnchor: string | null = null;
+  let topRole: string | null = null;
 
   const accept = (entry: {
     source_ref: SourceRef;
@@ -331,6 +339,7 @@ async function runHistoryLayer(input: {
       }
       if (topAnchor === null && outcome === "added") {
         topAnchor = hit.source_ref.message_id;
+        topRole = hit.role;
       }
     }
   } catch (error) {
@@ -345,11 +354,26 @@ async function runHistoryLayer(input: {
 
   if (input.include_read && topAnchor !== null) {
     layer.read = true;
-    try {
-      const read = await input.port.readByAnchor({ anchor: topAnchor, before: input.read_before });
-      if (!read.ok) {
-        missing.push(`history:read_${read.status}:${read.reason}`);
-      } else {
+    const windows: { relation: "parents" | "timeline"; before: number; after: number }[] = [
+      { relation: "parents", before: input.read_before, after: 0 },
+    ];
+    // A user message is the usual lexical winner for its own question, and the
+    // answer is its child. Parents alone would return the question to the model.
+    if (topRole === "user" && input.read_after > 0) {
+      windows.push({ relation: "timeline", before: 0, after: input.read_after });
+    }
+    for (const window of windows) {
+      try {
+        const read = await input.port.readByAnchor({
+          anchor: topAnchor,
+          before: window.before,
+          relation: window.relation,
+          after: window.after,
+        });
+        if (!read.ok) {
+          missing.push(`history:read_${read.status}:${read.reason}`);
+          continue;
+        }
         for (const entry of read.value.messages) {
           const outcome = accept({
             source_ref: entry.source_ref,
@@ -363,9 +387,12 @@ async function runHistoryLayer(input: {
             break;
           }
         }
+      } catch (error) {
+        missing.push(`history:read_failed:${messageOf(error)}`);
       }
-    } catch (error) {
-      missing.push(`history:read_failed:${messageOf(error)}`);
+      if (byteCapped) {
+        break;
+      }
     }
     layer.emitted = excerpts.length;
   }
@@ -506,6 +533,7 @@ export async function layeredSearch(input: LayeredSearchInput): Promise<LayeredS
     max_bytes: maxHistoryBytes,
     include_read: input.include_history_read === true,
     read_before: DEFAULT_HISTORY_READ_BEFORE,
+    read_after: DEFAULT_HISTORY_READ_AFTER,
   });
 
   const cards = [...activeBuild.cards, ...archivedBuild.cards];

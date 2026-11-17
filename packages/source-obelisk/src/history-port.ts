@@ -95,15 +95,16 @@ export function createObeliskHistoryPort(options: ObeliskHistoryOptions): Histor
     },
 
     /**
-     * The causal chain, one bounded window. `parents` cannot take an `after`
-     * window, so this pays exactly one script invocation.
+     * One bounded window. `parents` walks the causal chain; `timeline` walks the
+     * conversation, which is where a reply to the anchor lives.
      */
     async readByAnchor(input) {
       try {
         const page = await source.read({
           anchor: input.anchor,
-          relation: "parents",
+          relation: input.relation ?? "parents",
           before: input.before,
+          after: input.after ?? 0,
         });
         return {
           ok: true,

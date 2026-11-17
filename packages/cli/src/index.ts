@@ -14,12 +14,13 @@
 
 import { isAbsolute, normalize, sep } from "node:path";
 import type { MemoryUri, Scope } from "@vestigio/core";
+import { runDueJobs } from "@vestigio/core/jobs";
 import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/core/retrieval";
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
-import { formatReadHuman, formatSearchHuman } from "./format.js";
+import { formatJobsHuman, formatReadHuman, formatSearchHuman } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 
 /** The plan's one configured backend; never upgraded automatically. */
@@ -32,6 +33,7 @@ Usage:
   vestigio read   --db <path> --uri <memory://store/id> [--revision <n>] [--json]
   vestigio probe  --db <path> --obelisk-home <dir> [--json]
   vestigio resolve --db <path> (--project <abs path> | --global) --question <text> [options]
+  vestigio jobs run --db <path> [--limit <1..20>] [options]
   vestigio --help
 
 Search options:
@@ -58,6 +60,16 @@ Resolve options:
   --cost-input <usd-per-1m>     Input price used to report cost; omit for null.
   --cost-output <usd-per-1m>    Output price used to report cost; omit for null.
   --obelisk-home <dir>          Optional raw history layer for the descent.
+
+Jobs options:
+  --limit <1..20>          Jobs to attempt in this batch (default 3).
+  --model-base-url <url>   Required to generate navs; without it every job stays
+                           pending and the run says model_not_configured.
+  --model-id <id>          Model id (default auto/deepseek-v4.1-flash).
+  --model-api-key <key>    Bearer key (default: VESTIGIO_MODEL_API_KEY).
+  --model-thinking <level> off|low|medium|high (default low).
+  --cost-input <usd-per-1m>     Input price used to report cost; omit for null.
+  --cost-output <usd-per-1m>    Output price used to report cost; omit for null.
 
 --project must be a normalised absolute path: it is used verbatim as the store
 scope and as Obelisk's project_path, so a typo is a different project, not a
@@ -342,6 +354,38 @@ function runRead(context: CommandContext): number {
   }
 }
 
+/**
+ * Stage two as a separate trigger: generate the short nav for jobs the resolve
+ * path already persisted, publish, and admit. It never sees raw history and
+ * never touches the medium body.
+ */
+async function runJobs(context: CommandContext): Promise<number> {
+  const sub = context.parsed.positionals[0];
+  if (sub !== "run" || context.parsed.positionals.length !== 1) {
+    throw new UsageError("jobs needs exactly one subcommand: run");
+  }
+  const store = openDatabase(context);
+  try {
+    const wiring = wireModel(context);
+    const limit = integerFlag(context.parsed, "limit", 1, 20);
+    const outcome = await runDueJobs({
+      store,
+      model: wiring.model,
+      model_id: wiring.info.model_id,
+      ...(limit === undefined ? {} : { limit }),
+    });
+    emit(
+      context.io,
+      context.parsed,
+      { ...outcome, model_info: wiring.info, db: store.path },
+      formatJobsHuman(outcome, wiring.info),
+    );
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
 async function runProbe(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "probe");
   const store = openDatabase(context);
@@ -401,34 +445,63 @@ function thinkingFlag(parsed: ParsedArgs): ModelThinking {
  * is exactly the unconfigured-backend behaviour. The cost table is optional
  * and, when given, is the only source of `cost_usd` — a price is never guessed.
  */
+type ModelWiring = {
+  model: ModelPort | null;
+  info: {
+    base_url: string | null;
+    model_id: string;
+    thinking: ModelThinking;
+    cost_table: { input: number; output: number } | null;
+    skip_reason: string | null;
+  };
+};
+
+/**
+ * One wiring for both model-backed commands: a base URL is the switch, the key
+ * comes from the flag or the environment, and a cost is reported only from an
+ * explicit price table. Never prints the key.
+ */
+function wireModel(context: CommandContext): ModelWiring {
+  const baseUrl =
+    stringFlag(context.parsed, "model-base-url") ?? process.env["VESTIGIO_MODEL_BASE_URL"] ?? null;
+  const modelId =
+    stringFlag(context.parsed, "model-id") ?? process.env["VESTIGIO_MODEL_ID"] ?? DEFAULT_RESOLVE_MODEL_ID;
+  const apiKey = stringFlag(context.parsed, "model-api-key") ?? process.env["VESTIGIO_MODEL_API_KEY"];
+  const thinking = thinkingFlag(context.parsed);
+  const costInput = numberFlag(context.parsed, "cost-input");
+  const costOutput = numberFlag(context.parsed, "cost-output");
+  const cost =
+    costInput === undefined && costOutput === undefined ? null : { input: costInput ?? 0, output: costOutput ?? 0 };
+  const model =
+    baseUrl === null
+      ? null
+      : (context.deps.createModel ?? createOpenAiCompatibleClient)({
+          base_url: baseUrl,
+          model: modelId,
+          api_key: apiKey,
+          thinking,
+          cost: cost ?? undefined,
+        });
+  return {
+    model,
+    info: {
+      base_url: baseUrl,
+      model_id: modelId,
+      thinking,
+      cost_table: cost,
+      skip_reason: baseUrl === null ? "未配置 --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,
+    },
+  };
+}
+
 async function runResolve(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "resolve");
   const question = requireFlag(context.parsed, "question");
   const scope = requireScope(context.parsed);
   const store = openDatabase(context);
   try {
-    const baseUrl =
-      stringFlag(context.parsed, "model-base-url") ?? process.env["VESTIGIO_MODEL_BASE_URL"] ?? null;
-    const modelId =
-      stringFlag(context.parsed, "model-id") ?? process.env["VESTIGIO_MODEL_ID"] ?? DEFAULT_RESOLVE_MODEL_ID;
-    const apiKey = stringFlag(context.parsed, "model-api-key") ?? process.env["VESTIGIO_MODEL_API_KEY"];
-    const thinking = thinkingFlag(context.parsed);
-    const costInput = numberFlag(context.parsed, "cost-input");
-    const costOutput = numberFlag(context.parsed, "cost-output");
-    const cost =
-      costInput === undefined && costOutput === undefined
-        ? undefined
-        : { input: costInput ?? 0, output: costOutput ?? 0 };
-    const model =
-      baseUrl === null
-        ? null
-        : (context.deps.createModel ?? createOpenAiCompatibleClient)({
-            base_url: baseUrl,
-            model: modelId,
-            api_key: apiKey,
-            thinking,
-            cost,
-          });
+    const wiring = wireModel(context);
+    const model = wiring.model;
     const home = stringFlag(context.parsed, "obelisk-home");
     const history =
       home === undefined
@@ -440,12 +513,8 @@ async function runResolve(context: CommandContext): Promise<number> {
           });
     const outcome = await resolveMemory({ store, question, scope, model, history });
     const modelInfo = {
-      base_url: baseUrl,
-      model_id: modelId,
-      thinking,
-      cost_table: cost ?? null,
+      ...wiring.info,
       degraded: outcome.measured.degraded,
-      skip_reason: baseUrl === null ? "未配置 --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,
     };
     emit(
       context.io,
@@ -463,13 +532,7 @@ async function runResolve(context: CommandContext): Promise<number> {
   }
 }
 
-type ResolveModelInfo = {
-  base_url: string | null;
-  model_id: string;
-  thinking: ModelThinking;
-  degraded: boolean;
-  skip_reason: string | null;
-};
+type ResolveModelInfo = ModelWiring["info"] & { degraded: boolean };
 
 function formatResolveHuman(question: string, outcome: ResolveOutcome, info: ResolveModelInfo): string {
   const { measured, result } = outcome;
@@ -527,6 +590,8 @@ export async function main(
         return await runProbe(context);
       case "resolve":
         return await runResolve(context);
+      case "jobs":
+        return await runJobs(context);
       default:
         throw new UsageError(`unknown command ${JSON.stringify(parsed.command)}`);
     }
