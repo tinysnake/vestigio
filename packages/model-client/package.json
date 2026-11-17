@@ -1,0 +1,25 @@
+{
+  "name": "@vestigio/model-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenAI-compatible chat client implementing the @vestigio/core/resolver ModelPort. No runtime dependencies beyond Node's fetch.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vestigio/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

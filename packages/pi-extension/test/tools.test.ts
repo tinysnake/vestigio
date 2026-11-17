@@ -17,8 +17,9 @@ import { openStore } from "@vestigio/core/storage";
 import { afterEach, describe, expect, it } from "vitest";
 import { readConfig } from "../src/config.js";
 import { DecisionLog } from "../src/decision-log.js";
-import { VestigioState } from "../src/state.js";
+import { VestigioState, type StateDeps } from "../src/state.js";
 import { registerMemoryTools } from "../src/tools.js";
+import type { ModelPort } from "@vestigio/core/resolver";
 
 const AT = "2026-11-17T12:00:00.000Z";
 const PROJECT = "p-tools";
@@ -99,7 +100,7 @@ function capture(tools: Map<string, CapturedTool>) {
 	return pi;
 }
 
-function setup() {
+function setup(options: { deps?: StateDeps; env?: Record<string, string | undefined> } = {}) {
 	const { path, store } = makeStore();
 	store.saveMemory(
 		memory({
@@ -121,8 +122,9 @@ function setup() {
 	});
 	store.upsertProjectActivity({ project_id: PROJECT, activity_seq: 7, last_input_at: AT });
 	const state = new VestigioState(
-		readConfig({ VESTIGIO_STORE: path, VESTIGIO_PROJECT_ID: PROJECT }),
+		readConfig({ VESTIGIO_STORE: path, VESTIGIO_PROJECT_ID: PROJECT, ...options.env }),
 		new DecisionLog(null),
+		options.deps,
 	);
 	const tools = new Map<string, CapturedTool>();
 	registerMemoryTools(capture(tools) as never, state);
@@ -219,5 +221,97 @@ describe("memory_read", () => {
 			.get("memory_read")!
 			.execute("call-7", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, { cwd: "/tmp" });
 		expect(result.content[0]!.text).toContain("unavailable");
+	});
+});
+
+function fakeModel(replies: readonly string[]): { port: ModelPort; requests: unknown[] } {
+	const requests: unknown[] = [];
+	let index = 0;
+	const port: ModelPort = {
+		async complete(request) {
+			requests.push(request);
+			const text = replies[Math.min(index, replies.length - 1)] ?? "";
+			index += 1;
+			return {
+				ok: true,
+				value: {
+					text,
+					usage: { tokens_in: 100, tokens_out: 20, cost_usd: 0.0001 },
+					model: "fake",
+					finish_reason: "stop",
+				},
+			};
+		},
+	};
+	return { port, requests };
+}
+
+function decision(overrides: Record<string, unknown>): string {
+	return JSON.stringify({
+		sufficient: false,
+		answer: null,
+		evidence_ids: [],
+		read_uris: [],
+		next_queries: [],
+		conflicts: [],
+		descend: false,
+		...overrides,
+	});
+}
+
+describe("memory_resolve", () => {
+	it("answers from Active without descending or touching history", async () => {
+		const model = fakeModel([
+			decision({ sufficient: true, answer: "默认端口是 18080，部署脚本也要一起改。", evidence_ids: ["mem-deploy"] }),
+		]);
+		const { store, state, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-r1", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(result.details.status).toBe("resolved");
+		expect(text).toContain("-> resolved");
+		expect(text).toContain("18080");
+		expect(text).toContain("active=matched");
+		expect(text).toContain("history=skipped");
+		expect(result.details.degraded).toBe(false);
+		expect((result.details.measured as { model_calls: number }).model_calls).toBe(1);
+		// The returned card is a hit, exactly like memory_search.
+		expect(store.countUsageEvents()).toBe(1);
+		expect(state.resolveCountUsed()).toBe(1);
+		store.close();
+	});
+
+	it("degrades to the zero-LLM layered search when no backend is configured", async () => {
+		const { store, tools, ctx } = setup();
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-r2", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(result.details.degraded).toBe(true);
+		expect(text).toContain("degraded: zero-LLM layered search");
+		expect(text).toContain("VESTIGIO_MODEL_BASE_URL");
+		expect(store.countUsageEvents()).toBe(1);
+		store.close();
+	});
+
+	it("reports a stated gap instead of prose when the model declines to answer", async () => {
+		const model = fakeModel([decision({ sufficient: false, descend: false })]);
+		const { store, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-r3", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(result.details.status).not.toBe("resolved");
+		expect(text).toContain("missing:");
+		expect(text).not.toContain("answer:");
+		expect(store.countUsageEvents()).toBe(1);
+		store.close();
 	});
 });

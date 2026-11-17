@@ -13,6 +13,9 @@ importers:
       '@vestigio/core':
         specifier: workspace:*
         version: link:../core
+      '@vestigio/model-client':
+        specifier: workspace:*
+        version: link:../model-client
       '@vestigio/source-obelisk':
         specifier: workspace:*
         version: link:../source-obelisk
@@ -39,11 +42,30 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.0))
 
+  packages/model-client:
+    dependencies:
+      '@vestigio/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.0))
+
   packages/pi-extension:
     dependencies:
       '@vestigio/core':
         specifier: workspace:*
         version: link:../core
+      '@vestigio/model-client':
+        specifier: workspace:*
+        version: link:../model-client
       '@vestigio/source-obelisk':
         specifier: workspace:*
         version: link:../source-obelisk

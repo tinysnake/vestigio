@@ -16,7 +16,7 @@ export {
 export type { LayeredSearchInput, MemoryReadInput } from "./layered.js";
 export { boundExcerpt, truncationMarker } from "./excerpt.js";
 export type { BoundedExcerpt } from "./excerpt.js";
-export { findConflictingMemoryIds, subjectKey } from "./conflict.js";
+export { findConflictingMemoryIds, subjectKey, subjectsCollide } from "./conflict.js";
 export { RetrievalError, isRetrievalError, retrievalError } from "./errors.js";
 export type { RetrievalErrorCode } from "./errors.js";
 export type {

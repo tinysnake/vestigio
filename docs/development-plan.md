@@ -296,7 +296,7 @@ PR-05 形成第一个试用闭环。可手动导入符合两级摘要约束的�
 - [ ] 失败条件。超预算继续调用模型、证据不支持答案、取消不生效、历史文本诱导外部动作或扩大项目范围为硬失败。
 - [ ] 合并前审阅。核对外发片段、返回密度、失败表述及预算体验。
 
-后端选型已定。检索与两级摘要统一用 `magpie/auto/deepseek-v4.1-flash`，thinking low，与 `~/.pstack/models.md` 的 `feature, refactoring` 行一致。第一版只接这一个后端，不自动升级到更贵的模型。本地小模型只作为 PR-09 的对照，未跑通就不写成绩。
+后端选型已定。检索与两级摘要统一用 `magpie/auto/deepseek-v4.1-flash`，thinking low，与 `~/.pstack/models.md` 的 `feature, refactoring` 行一致。档位由配置给出（默认即 low），`memory.resolve` 不逐次覆盖它。第一版只接这一个后端，不自动升级到更贵的模型。本地小模型只作为 PR-09 的对照，未跑通就不写成绩。
 
 预算按下列数值冻结，PR-06 实测后调整具体数字，不放开结构：
 

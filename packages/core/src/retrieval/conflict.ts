@@ -35,7 +35,12 @@ function scopeKey(scope: Scope): string {
   return scope.kind === "project" ? `project:${scope.project_id}` : "global";
 }
 
-function collides(left: string, right: string): boolean {
+/**
+ * Whether two normalized subject keys claim the same subject. Exported so the
+ * PR-06 resolver can anchor the same rule on the cards its answer cites,
+ * instead of letting a model-held `resolved` outrank a contested subject.
+ */
+export function subjectsCollide(left: string, right: string): boolean {
   if (left.length === 0 || right.length === 0) {
     return false;
   }
@@ -65,7 +70,7 @@ export function findConflictingMemoryIds(cards: readonly MemoryCard[]): string[]
         if (a === undefined || b === undefined) {
           continue;
         }
-        if (collides(a.key, b.key)) {
+        if (subjectsCollide(a.key, b.key)) {
           conflicting.add(a.memory_id);
           conflicting.add(b.memory_id);
         }

@@ -9,6 +9,7 @@
  */
 
 import type { HistoryPort } from "@vestigio/core/retrieval";
+import type { ModelPort, ResolveContinuation } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
 import type { MemoryStore } from "@vestigio/core/storage";
 import type { InjectionLedgerDelta } from "@vestigio/core/hotspots";
@@ -17,6 +18,8 @@ import type { VestigioConfig } from "./config.js";
 import { DecisionLog, type DecisionRecord } from "./decision-log.js";
 import { loadLedger } from "./ledger-store.js";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
+import { createOpenAiCompatibleClient } from "@vestigio/model-client";
+import type { OpenAiCompatibleOptions } from "@vestigio/model-client";
 import type { SessionManagerLike, SessionTreeLike } from "./pi-types.js";
 
 export type SessionLike = SessionTreeLike;
@@ -24,6 +27,8 @@ export type SessionLike = SessionTreeLike;
 /** The one seam a test needs: open a store the caller controls. */
 export type StateDeps = {
 	open?: (options: { path: string }) => MemoryStore;
+	/** Replaces the OpenAI-compatible client in tests. */
+	create_model?: (options: OpenAiCompatibleOptions) => ModelPort;
 };
 
 export class VestigioState {
@@ -32,10 +37,16 @@ export class VestigioState {
 
 	private store: MemoryStore | null = null;
 	private readonly open: (options: { path: string }) => MemoryStore;
+	private readonly createModel: (options: OpenAiCompatibleOptions) => ModelPort;
 	private storeFailure: string | null = null;
 	private ledger: InjectionLedger = new InjectionLedger();
 	private history: HistoryPort | null = null;
 	private historyFailure: string | null = null;
+	private model: ModelPort | null = null;
+	private modelFailure: string | null = null;
+	private modelAttempted = false;
+	private resolves = 0;
+	private continuation: ResolveContinuation | null = null;
 	private turn = 0;
 	private sessionId = "unknown";
 	private branchRef = "root";
@@ -44,6 +55,7 @@ export class VestigioState {
 		this.config = config;
 		this.log = log ?? new DecisionLog(config.decision_log);
 		this.open = deps.open ?? openStore;
+		this.createModel = deps.create_model ?? createOpenAiCompatibleClient;
 	}
 
 	/** Open the store once. Returns null (and logs once) when it cannot open. */
@@ -144,6 +156,56 @@ export class VestigioState {
 		if (this.config.obelisk_home === null) return `未配置 ${"VESTIGIO_OBELISK_HOME"}`;
 		if (this.historyFailure !== null) return `历史层不可用：${this.historyFailure}`;
 		return null;
+	}
+
+	/**
+	 * The model port, created on first use. Without `VESTIGIO_MODEL_BASE_URL`
+	 * there is no configured backend, and `memory_resolve` degrades to the
+	 * zero-LLM layered search with a stated reason — it never silently picks
+	 * another endpoint.
+	 */
+	modelPort(): ModelPort | null {
+		if (this.config.model_base_url === null) return null;
+		if (this.model !== null) return this.model;
+		if (this.modelAttempted) return null;
+		this.modelAttempted = true;
+		try {
+			this.model = this.createModel({
+				base_url: this.config.model_base_url,
+				model: this.config.model_id,
+				api_key: this.config.model_api_key ?? undefined,
+				thinking: this.config.model_thinking,
+			});
+			return this.model;
+		} catch (error) {
+			this.modelFailure = errorText(error);
+			this.log.write({ ts: nowIso(), kind: "error", status: "model_unavailable", error: this.modelFailure });
+			return null;
+		}
+	}
+
+	modelSkipReason(): string | null {
+		if (this.config.model_base_url === null) return "未配置 VESTIGIO_MODEL_BASE_URL";
+		if (this.modelFailure !== null) return `模型不可用：${this.modelFailure}`;
+		return null;
+	}
+
+	/** Resolves already attempted in this Session; the resolver enforces the cap. */
+	resolveCountUsed(): number {
+		return this.resolves;
+	}
+
+	noteResolveUsed(): void {
+		this.resolves += 1;
+	}
+
+	/** The last reusable candidate set; the resolver re-checks scope, question and expiry. */
+	get lastContinuation(): ResolveContinuation | null {
+		return this.continuation;
+	}
+
+	set lastContinuation(value: ResolveContinuation | null) {
+		this.continuation = value;
 	}
 
 	recordDelta(delta: InjectionLedgerDelta, host: { appendEntry<T>(customType: string, data?: T): void }): void {

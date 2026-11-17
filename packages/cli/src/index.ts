@@ -15,9 +15,15 @@
 import { isAbsolute, normalize, sep } from "node:path";
 import type { MemoryUri, Scope } from "@vestigio/core";
 import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/core/retrieval";
+import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
+import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
+import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
 import { formatReadHuman, formatSearchHuman } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
+
+/** The plan's one configured backend; never upgraded automatically. */
+export const DEFAULT_RESOLVE_MODEL_ID = "auto/deepseek-v4.1-flash";
 
 export const USAGE = `vestigio — layered memory inspection
 
@@ -25,6 +31,7 @@ Usage:
   vestigio search --db <path> (--project <abs path> | --global) --query <text> [options]
   vestigio read   --db <path> --uri <memory://store/id> [--revision <n>] [--json]
   vestigio probe  --db <path> --obelisk-home <dir> [--json]
+  vestigio resolve --db <path> (--project <abs path> | --global) --question <text> [options]
   vestigio --help
 
 Search options:
@@ -42,6 +49,16 @@ Search options:
   --source-instance <id>         SourceRef instance label (default "local").
   --json                         Print machine-readable JSON.
 
+Resolve options:
+  --model-base-url <url>   OpenAI-compatible base URL (default: VESTIGIO_MODEL_BASE_URL).
+                           Without one, resolve degrades to the zero-LLM layered search.
+  --model-id <id>               Model id (default auto/deepseek-v4.1-flash).
+  --model-api-key <key>         Bearer key (default: VESTIGIO_MODEL_API_KEY).
+  --model-thinking <level>      off|low|medium|high (default low).
+  --cost-input <usd-per-1m>     Input price used to report cost; omit for null.
+  --cost-output <usd-per-1m>    Output price used to report cost; omit for null.
+  --obelisk-home <dir>          Optional raw history layer for the descent.
+
 --project must be a normalised absolute path: it is used verbatim as the store
 scope and as Obelisk's project_path, so a typo is a different project, not a
 convenience.`;
@@ -54,6 +71,7 @@ export type CliIo = {
 export type CliDeps = {
   open?: (options: { path: string }) => MemoryStore;
   createHistoryPort?: (options: ObeliskHistoryOptions) => HistoryPort;
+  createModel?: (options: OpenAiCompatibleOptions) => ModelPort;
 };
 
 const DEFAULT_IO: CliIo = {
@@ -82,6 +100,13 @@ const VALUE_FLAGS = new Set([
   "source-instance",
   "uri",
   "revision",
+  "question",
+  "model-base-url",
+  "model-id",
+  "model-api-key",
+  "model-thinking",
+  "cost-input",
+  "cost-output",
 ]);
 
 const BOOLEAN_FLAGS = new Set(["global", "archived", "history", "history-read", "json", "help"]);
@@ -163,6 +188,18 @@ function integerFlag(parsed: ParsedArgs, name: string, min: number, max: number)
   const value = Number.parseInt(raw, 10);
   if (value < min || value > max) {
     throw new UsageError(`--${name} must be an integer from ${min} to ${max}`);
+  }
+  return value;
+}
+
+function numberFlag(parsed: ParsedArgs, name: string): number | undefined {
+  const raw = stringFlag(parsed, name);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new UsageError(`--${name} must be a non-negative number`);
   }
   return value;
 }
@@ -345,6 +382,123 @@ async function runProbe(context: CommandContext): Promise<number> {
   }
 }
 
+const THINKING_LEVELS: readonly ModelThinking[] = ["off", "low", "medium", "high"];
+
+function thinkingFlag(parsed: ParsedArgs): ModelThinking {
+  const raw = stringFlag(parsed, "model-thinking") ?? process.env["VESTIGIO_MODEL_THINKING"];
+  if (raw === undefined) {
+    return "low";
+  }
+  const trimmed = raw.trim();
+  return (THINKING_LEVELS as readonly string[]).includes(trimmed) ? (trimmed as ModelThinking) : "low";
+}
+
+/**
+ * The PR-06 subcommand the eval drives: one budgeted, model-backed resolve.
+ *
+ * The model client is only built when a base URL is configured; otherwise the
+ * resolver degrades to the zero-LLM layered search with a stated reason, which
+ * is exactly the unconfigured-backend behaviour. The cost table is optional
+ * and, when given, is the only source of `cost_usd` — a price is never guessed.
+ */
+async function runResolve(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "resolve");
+  const question = requireFlag(context.parsed, "question");
+  const scope = requireScope(context.parsed);
+  const store = openDatabase(context);
+  try {
+    const baseUrl =
+      stringFlag(context.parsed, "model-base-url") ?? process.env["VESTIGIO_MODEL_BASE_URL"] ?? null;
+    const modelId =
+      stringFlag(context.parsed, "model-id") ?? process.env["VESTIGIO_MODEL_ID"] ?? DEFAULT_RESOLVE_MODEL_ID;
+    const apiKey = stringFlag(context.parsed, "model-api-key") ?? process.env["VESTIGIO_MODEL_API_KEY"];
+    const thinking = thinkingFlag(context.parsed);
+    const costInput = numberFlag(context.parsed, "cost-input");
+    const costOutput = numberFlag(context.parsed, "cost-output");
+    const cost =
+      costInput === undefined && costOutput === undefined
+        ? undefined
+        : { input: costInput ?? 0, output: costOutput ?? 0 };
+    const model =
+      baseUrl === null
+        ? null
+        : (context.deps.createModel ?? createOpenAiCompatibleClient)({
+            base_url: baseUrl,
+            model: modelId,
+            api_key: apiKey,
+            thinking,
+            cost,
+          });
+    const home = stringFlag(context.parsed, "obelisk-home");
+    const history =
+      home === undefined
+        ? null
+        : (context.deps.createHistoryPort ?? createObeliskHistoryPort)({
+            home,
+            cli_path: stringFlag(context.parsed, "obelisk-cli"),
+            source_instance: stringFlag(context.parsed, "source-instance"),
+          });
+    const outcome = await resolveMemory({ store, question, scope, model, history });
+    const modelInfo = {
+      base_url: baseUrl,
+      model_id: modelId,
+      thinking,
+      cost_table: cost ?? null,
+      degraded: outcome.measured.degraded,
+      skip_reason: baseUrl === null ? "未配置 --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,
+    };
+    emit(
+      context.io,
+      context.parsed,
+      {
+        ...outcome,
+        model_info: modelInfo,
+        history_index: home === undefined ? null : historyIndexPath(home),
+      },
+      formatResolveHuman(question, outcome, modelInfo),
+    );
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+type ResolveModelInfo = {
+  base_url: string | null;
+  model_id: string;
+  thinking: ModelThinking;
+  degraded: boolean;
+  skip_reason: string | null;
+};
+
+function formatResolveHuman(question: string, outcome: ResolveOutcome, info: ResolveModelInfo): string {
+  const { measured, result } = outcome;
+  const lines: string[] = [];
+  lines.push(
+    `resolve(${JSON.stringify(question)}) -> ${result.status} | cards=${result.cards.length} excerpts=${outcome.history.length}`,
+  );
+  lines.push(
+    `model: ${info.base_url === null ? `degraded (${info.skip_reason})` : `${info.model_id} thinking=${info.thinking}`}`,
+  );
+  lines.push(
+    `layers: ${outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`).join(" ")}`,
+  );
+  lines.push(
+    `budget: calls=${measured.model_calls} in=${measured.tokens_in} out=${measured.tokens_out} ` +
+      `cost=${measured.cost_usd === null ? "n/a" : `$${measured.cost_usd.toFixed(6)}`} ` +
+      `elapsed=${Math.round(measured.elapsed_ms)}ms gather=${Math.round(measured.gather_ms)}ms ` +
+      `model=${Math.round(measured.model_ms)}ms history_read=${Math.round(measured.history_read_ms)}ms${measured.cold ? " cold" : ""}`,
+  );
+  for (const card of result.cards) {
+    lines.push(`card [${card.state} r${card.revision}] ${card.uri} ${card.title}`);
+  }
+  if (result.answer !== null) lines.push(`answer: ${result.answer}`);
+  if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);
+  if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);
+  if (result.next_action !== null) lines.push(`next: ${result.next_action}`);
+  return `${lines.join("\n")}\n`;
+}
+
 export async function main(
   argv: readonly string[],
   io: CliIo = DEFAULT_IO,
@@ -371,6 +525,8 @@ export async function main(
         return runRead(context);
       case "probe":
         return await runProbe(context);
+      case "resolve":
+        return await runResolve(context);
       default:
         throw new UsageError(`unknown command ${JSON.stringify(parsed.command)}`);
     }

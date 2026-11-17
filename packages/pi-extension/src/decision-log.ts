@@ -13,7 +13,7 @@ import { appendFileSync } from "node:fs";
 
 export type DecisionRecord = {
 	readonly ts: string;
-	readonly kind: "input" | "tool_search" | "tool_read" | "session" | "error";
+	readonly kind: "input" | "tool_search" | "tool_read" | "tool_resolve" | "session" | "error";
 	readonly status: string;
 	readonly reason?: string | null;
 	readonly source?: string | null;

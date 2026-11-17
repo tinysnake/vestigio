@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
+import type { ModelPort } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { main } from "../src/index.js";
 import { PROJECT_A, captureIo, historyHit, makeHistoryPort, type FakeHistoryOptions, seed, tempDbPath } from "./support.js";
@@ -24,15 +25,49 @@ type RunResult = { code: number; out: string; err: string };
 
 async function run(
   argv: readonly string[],
-  extra: { history?: FakeHistoryOptions } = {},
+  extra: { history?: FakeHistoryOptions; model?: ModelPort } = {},
 ): Promise<RunResult & { fake: ReturnType<typeof makeHistoryPort> }> {
   const captured = captureIo();
   const fake = makeHistoryPort(extra.history ?? {});
   const code = await main(argv, captured.io, {
     open: (options) => track(openStore(options)),
     createHistoryPort: () => fake.port,
+    ...(extra.model === undefined ? {} : { createModel: () => extra.model as ModelPort }),
   });
   return { code, out: captured.stdout(), err: captured.stderr(), fake };
+}
+
+function judgeModel(replies: readonly string[]): { port: ModelPort; calls: () => number } {
+  let calls = 0;
+  const port: ModelPort = {
+    async complete() {
+      const text = replies[Math.min(calls, replies.length - 1)] ?? "";
+      calls += 1;
+      return {
+        ok: true,
+        value: {
+          text,
+          usage: { tokens_in: 100, tokens_out: 20, cost_usd: 0.0001 },
+          model: "fake",
+          finish_reason: "stop",
+        },
+      };
+    },
+  };
+  return { port, calls: () => calls };
+}
+
+function decision(overrides: Record<string, unknown>): string {
+  return JSON.stringify({
+    sufficient: false,
+    answer: null,
+    evidence_ids: [],
+    read_uris: [],
+    next_queries: [],
+    conflicts: [],
+    descend: false,
+    ...overrides,
+  });
 }
 
 /** Seed a project A store at a fresh path and return the closed-over path. */
@@ -288,4 +323,75 @@ describe("cli probe", () => {
     expect(result.out).toContain("history: unavailable (cli_missing)");
     expect(result.out).toContain("history_index: /tmp/fixture-home/.obelisk/obelisk.sqlite");
   });
+});
+
+describe("cli resolve", () => {
+	it("resolves from Active with the configured model and reports the measured budget", async () => {
+		const path = seedStore((store) => {
+			seed(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口。" });
+		});
+		const model = judgeModel([
+			decision({ sufficient: true, answer: "默认端口是部署脚本里的那个值。", evidence_ids: ["mem-active"] }),
+		]);
+		const result = await run(
+			[
+				"resolve",
+				"--db",
+				path,
+				"--project",
+				PROJECT_A,
+				"--question",
+				"端口",
+				"--model-base-url",
+				"http://127.0.0.1:9/v1",
+				"--model-id",
+				"test-model",
+				"--cost-input",
+				"0.15",
+				"--cost-output",
+				"0.6",
+				"--json",
+			],
+			{ model: model.port },
+		);
+		expect(result.code).toBe(0);
+		const payload = parseJson<{
+			result: { status: string; answer: string | null; budget_used: { model_calls: number; cost_usd: number | null } };
+			layers: { layer: string; status: string }[];
+			measured: { model_calls: number; tokens_in: number; cost_usd: number | null; degraded: boolean };
+			model_info: { base_url: string | null; model_id: string };
+		}>(result.out);
+		expect(payload.model_info.base_url).toBe("http://127.0.0.1:9/v1");
+		expect(payload.model_info.model_id).toBe("test-model");
+		expect(payload.result.status).toBe("resolved");
+		expect(payload.result.answer).toContain("默认端口");
+		expect(payload.measured.model_calls).toBe(1);
+		expect(payload.measured.degraded).toBe(false);
+		expect(payload.measured.tokens_in).toBe(100);
+		expect(payload.measured.cost_usd).toBeCloseTo(0.0001, 8);
+		expect(payload.result.budget_used.cost_usd).toBeCloseTo(0.0001, 8);
+		expect(payload.layers.find((layer) => layer.layer === "history")?.status).toBe("skipped");
+	});
+
+	it("degrades to the zero-LLM layered search with a stated reason without a backend", async () => {
+		const path = seedStore((store) => {
+			seed(store, { memory_id: "mem-active" });
+		});
+		const result = await run(["resolve", "--db", path, "--project", PROJECT_A, "--question", "端口"]);
+		expect(result.code).toBe(0);
+		expect(result.out).toContain("model: degraded");
+		expect(result.out).toContain("VESTIGIO_MODEL_BASE_URL");
+		expect(result.out).toContain("cards=1");
+	});
+
+	it("requires a question and a scope", async () => {
+		const path = seedStore((store) => seed(store, {}));
+		const missingQuestion = await run(["resolve", "--db", path, "--project", PROJECT_A]);
+		expect(missingQuestion.code).toBe(2);
+		expect(missingQuestion.err).toContain("--question");
+
+		const missingScope = await run(["resolve", "--db", path, "--question", "端口"]);
+		expect(missingScope.code).toBe(2);
+		expect(missingScope.err).toContain("--project");
+	});
 });
