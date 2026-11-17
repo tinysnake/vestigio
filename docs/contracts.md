@@ -231,8 +231,31 @@ Failures throw `ValidationError` with a JSON-path `path` and a `code`
   estimate) under `eval/baseline/out/`. An unavailable Obelisk is reported as
   `not_run` with null resource numbers.
 
+## Storage
+
+`packages/core/src/storage` owns the SQLite file: `openStore()` opens one database,
+applies the forward-only migration list in `packages/core/migrations`
+(`0001_initial` creates `memories`, `memory_heads`, `sources`, `usage_events`,
+`injection_receipts`, `project_activity`, `hotspot_memberships`, `store_meta` and
+the two FTS5 indexes `memory_fts_active` / `memory_fts_archived`), and every read
+goes through its query functions, never caller SQL. A revision and its `sources`
+rows land in one transaction, so a reader sees the previous head or the new one,
+never a half-written memory; usage events dedup on the PR-01 `event_id` and
+injection receipts on `(store_id, session_id, branch_ref, input_id, memory_id)`.
+Recording an event also moves the head row's counters in the same transaction —
+a `hit` increments `hit_count`, an `access` increments `access_count` and pushes
+`last_access_at` forward only — so a ranking never has to aggregate the log,
+while the log stays the per-revision audit trail.
+Archived memories live only in the archived index, so a default `searchActive`
+cannot return them. Chinese text is indexed by `normalizeForIndex()` — NFKC,
+lowercased, every CJK code point plus every overlapping bigram, Latin runs split
+on `-` and `_` — and queries pass through the same function before becoming an
+FTS5 `MATCH` string of quoted, `AND`-joined tokens, so 服务器, 配置, 部署, pi,
+pi-agent and memory.search all match, which the stock tokenizer and
+`tokenize='trigram'` (no match under three code points) cannot.
+
 ## Not frozen here
 
-Storage layout, the pi extension surface, model choices, hotspot weights and
-eviction policy, and the concrete prompt template are later PRs. This document
-freezes only the shapes and the boundary rules above.
+The pi extension surface, model choices, hotspot weights and eviction policy,
+and the concrete prompt template are later PRs. This document freezes only the
+shapes and the boundary rules above.
