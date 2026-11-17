@@ -2,12 +2,14 @@
 
 Probe of the Obelisk CLI on this machine for **vestigio PR-03** (Obelisk read-only source
 adapter). The upstream `api-reference.md` advertises `projectPath`, `contextLimit` and
-`snippetTokens`; the **installed** `/opt/homebrew/bin/obelisk` is **0.3.0** and silently
-ignores all three. Everything below was measured against a throwaway data directory, not the
+`snippetTokens`; the **installed** `/opt/homebrew/bin/obelisk` was **0.3.0** during this probe
+and silently ignores all three. (The global install has since been upgraded to **0.3.2**, the
+same version this doc pins for PR-03; §7a covers what that means for an existing index.) Everything below was measured against a throwaway data directory, not the
 operator's real history. Upstream source is **AGPL-3.0-only** and was read, never copied into
 this repo.
 
-- Installed artifact: `obelisk --version` -> `0.3.0` (`/opt/homebrew/bin/obelisk`).
+- Installed artifact at probe time: `obelisk --version` -> `0.3.0` (`/opt/homebrew/bin/obelisk`);
+  the global install is now `0.3.2`, which is also the pin.
 - Recommended pin for PR-03: **`@obelisk-apps/cli@0.3.2`** (npm `latest`) — see §7.
 - Raw evidence: `eval/probes/obelisk/evidence/`; reproduce all of it with
   `eval/probes/obelisk/run_all.sh`.
@@ -204,6 +206,53 @@ pi message UUID = `${sessionId}:entry:${line-ordinal padded to 6}:message:block:
 **Pin `@obelisk-apps/cli@0.3.2`.** 0.3.0 cannot satisfy PR-03's exact-project requirement and
 forces unbounded/oversized payloads; 0.3.1 is the same as 0.3.0 for these options.
 
+## 7a. Schema compatibility with an existing index — closed by measurement
+
+This was raised as a blocking risk for PR-03: a local 0.3.2 opening an index built by 0.3.0
+could apply a schema migration and break the globally installed reader. It does not, and the
+operator's index has nothing pending.
+
+Why a read path cannot migrate:
+
+- `dist/core/src/db.js` `openReadDb()` opens `new DatabaseSync(DB_PATH, { readOnly: true })` and
+  only sets `PRAGMA busy_timeout=250`; db.js:42 records the rule: "Queries and daemon-arbitration
+  checks must never migrate/configure the index".
+- `ALTER TABLE` exists only in `openDb()` and `openAttuneDb()`, driven by the 15 entries of
+  `COLUMN_MIGRATIONS` in `dist/core/src/schema-migrations.js`, and every entry is an additive
+  `ALTER TABLE ... ADD COLUMN`.
+
+The operator's real index (~6.97 GiB):
+
+- It already carries all 15 columns (`sessions` 11, `memories` 11, `messages` 19);
+  `coreSchemaNeedsMigration()` returns `false`, so opening it triggers nothing.
+- `0.3.2 --search "vestigio" --limit 2` exited 0 with a normal message body, and the column
+  counts were identical before and after. Cold run **59.9 s** (it includes the incremental
+  refresh); warm run immediate.
+
+Only an index predating those columns is touched at all: against a fixture index built by 0.3.0,
+a 0.3.2 write path added `index_state.replay_required INTEGER NOT NULL DEFAULT 0` (one additive
+ALTER), and 0.3.0 read that file correctly afterwards — identical search hits, identical
+`--query` output across 39 keys, `--build` still `{"ok":true}`. The adapter never calls
+`--build`/`--attune` and never opens the database itself (only `openReadDb()`-equivalent work
+happens inside the CLI's own read commands).
+
+### 7.1 Operational notes measured while building the adapter
+
+- **stderr is not a failure signal.** pi writes `observation-pack/ledger.jsonl` inside session
+  directories, so every Obelisk build emits dozens of lines of
+  `Warning: skipped pi artifact ...: Unsupported or malformed Pi session header` on stderr.
+  Success must be decided from the exit code plus the JSON on stdout alone; stderr is kept for
+  diagnostics and never treated as an error. The boundary was measured too: a *malformed pi
+  session header* is a hard failure, not a warning — `--build` prints the same `Warning:` line,
+  then `{"error":"Index rebuild was not published: provider_failure"}` and exits 1. So the rule is
+  "exit code and stdout decide", not "ignore stderr content and assume success".
+- **`--query` keeps its nonce tax.** `executeQuery` always runs the script it is handed and pays
+  invocation-nonce resolution first; when the nonce cannot resolve that is the ~4 s poll.
+  Measured here: **4.30 s** per `--query` call versus **0.18 s** for `--search`. Routine retrieval
+  therefore stays on `--search` (0.3.2 there also supports `--project-path`, `--snippet-tokens`
+  and `--context-limit 0..6`); the script path is reserved for what `--search` cannot express
+  (parent resolution, per-hit `project_path`).
+
 ## 8. Baselines (question 9)
 
 `eval/probes/obelisk/baselines.py`, 5 repeats, isolated `HOME`, wall-clock seconds including
@@ -242,8 +291,9 @@ process or batched `--query` scripts in PR-04.
 
 ## Not verified
 
-- Refresh behaviour and timing against the operator's real 6.49 GiB index (deliberately not
-  measured; a refresh writes to `~/.obelisk`).
+- Per-file refresh breakdown on the operator's real index: only the cold/warm pair in §7a
+  (59.9 s cold including refresh, immediate warm) was taken, to avoid writing it more often than
+  necessary.
 - Concurrency beyond a single held writer lease (e.g. multiple simultaneous cold refreshes).
 - Whether `projectPath` in 0.3.2 resolves symlinked/relative project roots (only the two fixture
   paths were exercised).
