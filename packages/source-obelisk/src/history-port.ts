@@ -1,36 +1,26 @@
-import type {
-  HistoryHit,
-  HistoryMessage,
-  HistoryPort,
-  HistoryResult,
-} from "@vestigio/core/retrieval";
 import { join } from "node:path";
-import {
-  INDEX_RELATIVE_PATH,
-  ObeliskSource,
-  isUnavailable,
-  isObeliskError,
-  type ObeliskSourceOptions,
-  type ReadMessage,
-  type SearchHit,
-} from "@vestigio/source-obelisk";
+import type { HistoryHit, HistoryMessage, HistoryPort, HistoryResult } from "@vestigio/core/retrieval";
+import { isObeliskError, isUnavailable } from "./errors.js";
+import { INDEX_RELATIVE_PATH } from "./pinned.js";
+import { ObeliskSource, type ObeliskSourceOptions } from "./source.js";
+import type { SearchHit } from "./hit.js";
+import type { ReadMessage } from "./read.js";
 
 /**
- * The concrete history port: the Obelisk adapter, narrowed to what
- * `@vestigio/core` is allowed to know about.
+ * The Obelisk adapter narrowed to the `HistoryPort` that `@vestigio/core`
+ * defines, so a host injects the port instead of core importing this package.
  *
- * This is the only place that imports `@vestigio/source-obelisk`, and it lives
- * in the CLI on purpose. Core defines the port; the caller injects an
- * implementation; a second history provider would be another file like this
- * one, with no core change.
+ * A port reports environment problems as `{ ok: false }` and never throws
+ * (`packages/core/src/retrieval/types.ts`), which is what keeps a missing index
+ * a degraded search instead of a failed tool call.
  */
 
 export type ObeliskHistoryOptions = {
   /** Isolated Obelisk data directory. Never guessed. */
-  home: string;
-  cli_path?: string | undefined;
-  source_instance?: string | undefined;
-  timeout_ms?: number | undefined;
+  readonly home: string;
+  readonly cli_path?: string | undefined;
+  readonly source_instance?: string | undefined;
+  readonly timeout_ms?: number | undefined;
 };
 
 function failureOf(error: unknown): HistoryResult<never> {
@@ -106,7 +96,7 @@ export function createObeliskHistoryPort(options: ObeliskHistoryOptions): Histor
 
     /**
      * The causal chain, one bounded window. `parents` cannot take an `after`
-     * window, so the CLI pays exactly one script invocation here.
+     * window, so this pays exactly one script invocation.
      */
     async readByAnchor(input) {
       try {

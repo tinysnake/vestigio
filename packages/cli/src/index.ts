@@ -17,7 +17,7 @@ import type { MemoryUri, Scope } from "@vestigio/core";
 import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/core/retrieval";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { formatReadHuman, formatSearchHuman } from "./format.js";
-import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "./obelisk-history.js";
+import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 
 export const USAGE = `vestigio — layered memory inspection
 

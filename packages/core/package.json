@@ -9,6 +9,7 @@
   },
   "exports": {
     ".": "./src/contracts/index.ts",
+    "./hotspots": "./src/hotspots/index.ts",
     "./retrieval": "./src/retrieval/index.ts",
     "./storage": "./src/storage/index.ts"
   },

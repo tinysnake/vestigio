@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { layeredSearch, type LayeredSearchOutcome, type LayerOutcome } from "@vestigio/core/retrieval";
 import { openStore } from "@vestigio/core/storage";
 import { main } from "../../src/index.js";
-import { createObeliskHistoryPort } from "../../src/obelisk-history.js";
+import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
 import { captureIo, seed, sourceRef, tempDbPath } from "../support.js";
 import {
   BASELINE_RUNNER,

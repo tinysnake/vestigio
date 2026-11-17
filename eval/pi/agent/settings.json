@@ -1,0 +1,8 @@
+{
+  "compaction": {
+    "enabled": false,
+    "reserveTokens": 0,
+    "keepRecentTokens": 1
+  },
+  "lastChangelogVersion": "1.5.2"
+}
