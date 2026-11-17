@@ -8,7 +8,9 @@
     "node": ">=22.5"
   },
   "exports": {
-    ".": "./src/contracts/index.ts"
+    ".": "./src/contracts/index.ts",
+    "./retrieval": "./src/retrieval/index.ts",
+    "./storage": "./src/storage/index.ts"
   },
   "scripts": {
     "test": "vitest run",

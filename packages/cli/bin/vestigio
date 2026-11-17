@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# vestigio — runs the CLI from source. Node strips the TypeScript types and
+# hook.mjs maps the repo's NodeNext `./x.js` specifiers back to `./x.ts`.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node --import "$HERE/../hook.mjs" "$HERE/../src/entry.ts" "$@"

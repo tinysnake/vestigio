@@ -294,6 +294,20 @@ process or batched `--query` scripts in PR-04.
 - Per-file refresh breakdown on the operator's real index: only the cold/warm pair in §7a
   (59.9 s cold including refresh, immediate warm) was taken, to avoid writing it more often than
   necessary.
+
+## The read path writes: one measured incident
+
+`--search` refreshes the derived query index as part of its normal read, so a caller that
+resolves the wrong home refreshes the real index. That happened once during PR-04: a live test's
+first draft called the CLI without `--obelisk-home`, the adapter therefore ran the pinned CLI with
+`HOME` set to the operator's real home, and the run refreshed `/Users/snake/.obelisk/obelisk.sqlite`
+(mtime 16:54:30 → 17:38:51, size 6981890048 → 6990770176 bytes, +8.88 MB; the 23.26 s run matches
+the cold refresh). No session text was altered or added: the index is derived from the real session
+root, Obelisk never writes transcripts, and the fixture lived under `/tmp`.
+
+Two guards came out of it, both now enforced by tests: `packages/cli` requires an explicit
+`--obelisk-home` for every history path instead of defaulting to `os.homedir()`, and the committed
+live test always passes the fixture home and asserts the real index is byte-identical afterwards.
 - Concurrency beyond a single held writer lease (e.g. multiple simultaneous cold refreshes).
 - Whether `projectPath` in 0.3.2 resolves symlinked/relative project roots (only the two fixture
   paths were exercised).

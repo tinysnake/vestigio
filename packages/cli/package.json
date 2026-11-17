@@ -1,0 +1,30 @@
+{
+  "name": "@vestigio/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "vestigio maintenance and inspection CLI. PR-04: layered search and the history-port wiring.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "vestigio": "./bin/vestigio"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:live": "VESTIGIO_OBELISK_LIVE=1 vitest run test/live --testTimeout=180000 --hookTimeout=180000",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vestigio/core": "workspace:*",
+    "@vestigio/source-obelisk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
