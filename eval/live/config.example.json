@@ -1,0 +1,17 @@
+{
+  "_comment": "Committed placeholders only, no secrets. Copy to eval/live/config.local.json (gitignored) and fill in what you want to override. Any null/omitted field falls back to the documented default in run.mjs: endpoint http://127.0.0.1:3425/v1, provider magpie, tools memory_search,memory_read,memory_resolve,memory_mark_stale, agent_model auto/deepseek-v4.1-flash, agent_thinking low, extension_model auto/deepseek-v4.1-flash, extension_thinking low, judge_model codex/gpt-6.2-sol, judge_thinking high, max_model_calls 200, max_total_tokens 2000000, wall_clock_ms 1200000.",
+  "_judge_note": "The F5 judge runs once per repeat, only for corpora that carry a `session2` block, as a non-streaming chat completion through the same recording proxy and on the same budget, with a 600 s timeout and one retry on a transport failure or 5xx. run.mjs refuses to start if judge_model equals agent_model or extension_model. The default is the pinned `codex/gpt-6.2-sol`: `magpie/auto/gpt-6.1-sol` and `remote-magpie/auto/gpt-6.1-sol` do not answer on this gateway, `auto/gpt-6.1-sol` is switched off, and the `group/auto-gpt-6-sol` routing group scored the same prompt pass and fail on different calls.",
+  "_tools_note": "`tools` is pi's --tools allowlist for the agent under test in the default `agent` variant. It is memory-only on purpose: the agent must answer from the memory API, never by reading files, inspecting the store or running commands. run.mjs refuses to start if the list contains anything but a known memory tool, if an agent-variant required tool is missing, or if an agent variant enables a memory writer such as memory_update — repair is retrieval-side and the agent may only report staleness. The `detector` variant (--variant detector) ignores this field and hardcodes memory_search,memory_read,memory_resolve.",
+  "endpoint": null,
+  "provider": null,
+  "tools": "memory_search,memory_read,memory_resolve,memory_mark_stale",
+  "agent_model": null,
+  "agent_thinking": null,
+  "extension_model": null,
+  "extension_thinking": null,
+  "judge_model": null,
+  "judge_thinking": null,
+  "max_model_calls": null,
+  "max_total_tokens": null,
+  "wall_clock_ms": null
+}

@@ -1,0 +1,98 @@
+{
+  "name": "f1f2",
+  "description": "F1 system recall and F2 false-mark behaviour for one project memory: a deployment default port plus a stable rollback-script fact. Labels are the ground truth and were fixed before any run. The agent is restricted to the extension's memory tools, so every turn is answerable from memory alone; the seeded workspace exists only to make the scenario coherent. No turn text names memories, marking, updating or staleness: every mark is the agent's or the detector's own judgement, never an instruction the turn gave it.",
+  "expected_multi_events": 2,
+  "memory": {
+    "memory_id": "mem-deploy-port",
+    "title": "部署默认端口",
+    "keywords": [
+      "部署",
+      "端口",
+      "deploy-port"
+    ],
+    "facts": {
+      "默认端口": "3456",
+      "并发上限": "8"
+    },
+    "stable": [
+      "回滚脚本位于 ops/rollback.sh"
+    ],
+    "context": [
+      "这套服务用 deploy.sh 发布到测试和生产两套环境，两边共用同一个默认端口，改端口时要同时确认反向代理、健康检查、监控探针和容器端口映射指向的端口，发布之后还要实际请求一次首页和一条业务接口，确认新端口真的在接收流量，避免其中一处漏改导致请求打不进来却没人发现，同时通知值班同学确认监控面板没有异常报警，确认无误后再关闭旧的发布任务。",
+      "并发上限决定单个实例同时处理的请求数，调低会减少内存占用但也会拉长排队时间，调高则可能压垮数据库连接池，所以调整之前应该先在测试环境观察一段时间的错误率、响应时间和连接数，确认没有明显退化再同步到生产，并在发布记录里写明调整前后的数值和观察结果，方便事后回溯，也方便交接。",
+      "回滚流程以 ops/rollback.sh 为准，脚本会把当前版本撤回到上一个发布版本，每次改动端口或并发参数之后都要在测试环境演练一次回滚，确认脚本、镜像标签和发布记录仍然对得上，再把结果补进运维手册，让下一个人遇到问题时能照着文档操作，避免遗漏关键步骤。"
+    ]
+  },
+  "workspace": {
+    "deploy.sh": "#!/usr/bin/env bash\n# 项目部署脚本：默认端口与并发上限都从这里读取。\n# 回滚见 ops/rollback.sh。\nset -euo pipefail\n\nPORT=3456\nWORKERS=8\nLOG_ROTATION=hourly\n\necho \"deploy on port ${PORT} with ${WORKERS} workers\"\n",
+    "ops/rollback.sh": "#!/usr/bin/env bash\n# 回滚脚本：把部署撤销回上一个版本。\nset -euo pipefail\n\necho \"rolling back to the previous release\"\n",
+    "README.md": "# demo 服务\n\n部署用 `deploy.sh`，默认端口写在脚本里。回滚脚本位于 `ops/rollback.sh`。\n"
+  },
+  "turns": [
+    {
+      "text": "项目现在部署用的默认端口是多少？",
+      "label": "READ",
+      "note": "Surfaces the memory so the session has it and the detector may inspect it. No marking expected; the workspace on disk already matches the stored fact, so any event here is a false mark."
+    },
+    {
+      "text": "默认端口已经从 3456 改成 5678 了。",
+      "label": "CHANGE",
+      "fact_after": "5678",
+      "note": "The stored default port (3456) changed to 5678. A plain statement of the change: it does not name memories, marking, updating or staleness, so a mark here is proactive detection, not instruction-following. Exactly one new event expected; the agent cannot rewrite the memory, so the summary stays at 5678 only after retrieval-side repair."
+    },
+    {
+      "text": "端口现在是 5678，没问题。",
+      "label": "CONFIRM",
+      "note": "Restates the current value. No event."
+    },
+    {
+      "text": "如果以后要换成 7777，需要注意什么？",
+      "label": "HYPOTHESIS",
+      "note": "Conditional or future wording. No event."
+    },
+    {
+      "text": "我本来想把端口改成 4321，后来没有动，还是 5678。",
+      "label": "FAILED",
+      "outcome": "改动未落地",
+      "note": "The change was attempted and did not take effect. No event."
+    },
+    {
+      "text": "日志轮转策略改成每天一次了。",
+      "label": "UNRELATED",
+      "note": "A different part of the project changed, stated without referring to the memory page. No event for this memory."
+    },
+    {
+      "text": "默认端口改成 6789 了，同时把并发上限降到 4。",
+      "label": "MULTI",
+      "expected_events": 2,
+      "facts": [
+        "默认端口: 5678 -> 6789",
+        "并发上限: 8 -> 4"
+      ],
+      "note": "Two distinct changes in one turn. The seeded memory carries both facts (默认端口 3456, 并发上限 8), so both are genuine changes to this memory and both need their own event: the default port becomes 6789 and the worker cap drops to 4. Two events."
+    }
+  ],
+  "session2": {
+    "question": "项目现在部署用的默认端口和并发上限分别是多少？",
+    "expected": {
+      "默认端口": "6789",
+      "并发上限": "4"
+    },
+    "required_strings": [
+      "6789"
+    ],
+    "stable": [
+      "回滚脚本位于 ops/rollback.sh"
+    ],
+    "superseded": {
+      "默认端口": [
+        "3456",
+        "5678"
+      ],
+      "并发上限": [
+        "8"
+      ]
+    },
+    "search_query": "默认端口 并发上限"
+  }
+}

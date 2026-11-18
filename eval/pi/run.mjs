@@ -20,8 +20,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } f
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { scenarioStale } from "./stale.mjs";
 
-const ROOT = "/Users/snake/workspace/vestigio";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
 const TMP = "/tmp/vestigio-pi";
 const CWD = join(TMP, "cwd");
@@ -46,6 +48,7 @@ const CLOSE_TAG = "</vestigio_memory_note>";
 function startMock() {
 	const requests = [];
 	let delayMs = 0;
+	let responder = () => ({ content: "OK" });
 	const server = createServer((req, res) => {
 		let raw = "";
 		req.on("data", (chunk) => (raw += chunk));
@@ -63,6 +66,8 @@ function startMock() {
 				return;
 			}
 			const reply = () => {
+				const message = { role: "assistant", ...responder(body) };
+				const finishReason = message.tool_calls?.length ? "tool_calls" : "stop";
 				const usage = { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 };
 				if (body?.stream === true) {
 					res.writeHead(200, {
@@ -78,14 +83,14 @@ function startMock() {
 							model: "mock-1",
 							choices: [{ index: 0, delta, finish_reason: finish }],
 						})}\n\n`;
-					res.write(chunk({ role: "assistant", content: "OK" }, null));
+					res.write(chunk(message, null));
 					res.write(
 						`data: ${JSON.stringify({
 							id: "chatcmpl-mock",
 							object: "chat.completion.chunk",
 							created: Math.floor(Date.now() / 1000),
 							model: "mock-1",
-							choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+							choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
 							usage,
 						})}\n\n`,
 					);
@@ -100,7 +105,7 @@ function startMock() {
 						object: "chat.completion",
 						created: Math.floor(Date.now() / 1000),
 						model: "mock-1",
-						choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+						choices: [{ index: 0, message, finish_reason: finishReason }],
 						usage,
 					}),
 				);
@@ -113,6 +118,9 @@ function startMock() {
 		requests,
 		setDelay(ms) {
 			delayMs = ms;
+		},
+		setResponder(fn) {
+			responder = fn ?? (() => ({ content: "OK" }));
 		},
 		async listen() {
 			await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
@@ -628,6 +636,8 @@ async function main() {
 
 		const onlyIndex = process.argv.indexOf("--only");
 		const only = onlyIndex === -1 ? null : process.argv[onlyIndex + 1];
+		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "perf"];
+		if (only !== null && !scenarios.includes(only)) throw new Error(`unknown scenario: ${only}`);
 		const maybe = async (name, fn) => {
 			if (only === null || only === name) await fn();
 		};
@@ -640,6 +650,7 @@ async function main() {
 		await maybe("queued", scenarioQueuedInput);
 		await maybe("steer", scenarioSteer);
 		await maybe("handler-error", scenarioHandlerError);
+		await maybe("stale", () => scenarioStale({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, chatRequests, systemText, lastUserText }));
 
 		const perfEnabled = only === null || only === "perf";
 		const baseline = perfEnabled ? await perfBaselineDisabled(32) : [];
