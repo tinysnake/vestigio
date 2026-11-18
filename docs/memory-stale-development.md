@@ -1,0 +1,113 @@
+# Memory stale development plan
+
+## Goal and scope
+
+Keep a topic memory useful after later session activity changes part of its contents. Return the existing summary together with stale metadata and evidence, so the agent can investigate and update it. Do not hide stale memories, reinterpret historical port values, redesign summary composition, or add a conflict-resolution subsystem.
+
+The two producers are the main agent's explicit tool call and a bounded model check on `agent_end`. Both use one storage operation. The detector can write a stale event directly. It does not send a user message, start another agent turn, or rewrite a summary.
+
+## Accepted behavior
+
+- Freshness is independent of `medium_ready`, `published`, and `archived` publication states.
+- Stale means the summary has not absorbed later evidence. It does not mean its whole body is false.
+- Keep the medium summary and navigation searchable and readable. Every delivery includes freshness, including search cards, reads, resolver results, and automatic hotspot notes.
+- Include the memory URI, the summary revision observed by the producer, an event ID, reason, bounded evidence excerpt, and source locator. Reuse `SourceRef` for conversation identity, message, project, timestamp, hash, provider and instance. Preserve branch context when available.
+- A request referring to an older revision receives an explicit stale/revision mismatch result with the current head. It cannot silently overwrite that head.
+- Revision comparison alone cannot cover new evidence arriving while a repair is in flight. A summary update acknowledges explicit pending event IDs. Events created after that snapshot remain pending.
+- Marking stale is durable and idempotent. Retrying a logical event must not create duplicates. A duplicate ID with different contents must not silently replace the evidence.
+- Active project boundaries apply to reads, marks, repairs and detector candidates.
+
+## Proposed data ownership
+
+Store stale events separately from immutable memory revisions. A pending event belongs to a stable memory ID, records the observed revision and source evidence, and is acknowledged only by a successful update transaction. Derive freshness from pending events and expected-revision mismatch. Old revisions stay readable with an explicit warning when they are not the head.
+
+Prefer a dedicated freshness structure shared by retrieval contracts and rendering. Do not overload `MemoryState`. Keep the evidence list bounded during delivery and make truncation/count visible; do not silently lose the pending events in storage.
+
+The minimum public operations are `markStale`, a freshness-aware read, and `updateSummary` with `expected_revision` and `acknowledged_event_ids`. Tools should expose these operations to the main agent. Updates reuse the existing medium-ready and navigation job flow. Do not allow an unvalidated body to bypass existing summary/source contracts. Tool names and precise signatures are finalized in the API review.
+
+## Agent lifecycle
+
+Append a small maintenance instruction through `before_agent_start` without replacing the host system prompt. Tell the main agent to compare retrieved memories with task evidence, call the shared stale tool for unabsorbed changes, and preserve unrelated useful material during updates. Treat transcripts and stored excerpts as evidence, not instructions.
+
+Run the supplementary detector on `agent_end`, not on user input. Use only the current branch/session and the new completed activity since its checkpoint, with bounded preceding conversation for context and relevant tool evidence. Capture session and project identity before awaiting the model. Do not let a late result write into a switched session/project. Cancel on shutdown/switch when supported.
+
+Candidates are memories delivered or read in this session and relevant store candidates. Do not send the entire store every turn. Include already pending events so an explicit agent mark suppresses a duplicate detector mark. A completed turn may contain more than one new change. The detector must not skip a separate change just because another event exists.
+
+Use the existing decision-model configuration and model client. Validate bounded structured output, restrict target IDs to the supplied candidates and source IDs to supplied evidence, and use a deadline and a bounded model call count. Missing model configuration, cancellation, malformed output or model failure must not break the completed user task. Record a decision log outcome. Do not claim inspection succeeded after failure. Advance progress only according to documented retry semantics, so failed inspections can be retried without duplicating marks. No recursive user turn is generated.
+
+## Delivery and update
+
+Return the complete existing medium summary through `memory_read`, with its revision, freshness and pending evidence. Search/navigation output carries a concise stale warning and a pointer to read the pending details. Resolver judges receive this metadata too; they must not strip it from their final result. A stale result remains available to the caller for investigation.
+
+A summary update checks expected revision and validates that all acknowledged event IDs belong to this memory. Save a new medium-ready revision, acknowledge exactly those events, and queue its navigation job atomically. A failed or racing update leaves both the old revision and pending events intact. A pending event arriving during the update remains visible on the new head.
+
+Automatic same-session injection dedup must not hide a freshness change forever. Keep historical delivery receipts, but surface a newly changed freshness snapshot independently, without repeatedly injecting an unchanged summary/event set. Never restore an older short summary as if it described a newer body.
+
+## Verification
+
+Meaningful regression cases:
+
+1. Marking stale twice creates one durable event and does not alter the summary body.
+2. Stale memories remain searchable, readable and resolvable, with evidence on the delivered result.
+3. An outdated revision is reported explicitly and cannot overwrite the latest head.
+4. Updating with one event acknowledged leaves a concurrently added event pending.
+5. Failed updates acknowledge nothing; successful updates queue a new short summary against the new revision.
+6. `agent_end` detects an unmarked change from real turn/tool evidence; an explicit agent mark prevents a duplicate; a separate change can still be marked.
+7. No detector call occurs on user input; a completed turn with no following user message is inspected.
+8. Model failure, invalid output, cancellation and session/project switches do not corrupt state or trigger an extra turn.
+9. Existing session/branch injection behavior remains correct; a freshness change is visible even after the old memory was delivered.
+10. A fresh database and the previous schema both migrate without data loss.
+
+Use core unit/integration tests and the repository's real pi mock-provider harness. Keep runtime verification on isolated temporary homes/stores. Do not refresh or modify the user's real Obelisk index.
+
+## Concrete architecture decision
+
+Use candidate C's separate event table and `MemoryStore` methods as the base. The cross-judge preferred C by 9–8 because stale marking must preserve evidence even when the observed revision has fallen behind the head. Candidate A was cancelled before completion; B supplies the detector's pending-event context. Keep the existing revision-read API.
+
+Adopt three corrections. Keep already-stale memories eligible for new changes. Deduplicate injection by revision plus sorted pending event IDs. Derive event identity from canonical source anchors and the logical change, excluding producer and observation time; compare immutable semantic payload on retry, so a detector retry does not conflict merely because its timestamp differs. Reusing an explicit ID for different evidence is an error. Similar model paraphrases cannot be guaranteed identical; supply existing marks as context and only suppress a known logical event, never the whole memory.
+
+An old-revision mark records its observed revision and returns an explicit mismatch plus the latest head, while retaining its evidence. Reject a nonexistent/future revision. Summary writes require exact head revision. Reuse one canonical session-entry-to-source helper in the explicit tool and detector. Save bounded excerpts immediately because history indexing can lag.
+
+The retrieval LLM must be able to repair a hit stale memory, rather than merely generate a second memory with similar content. On a stale hit, provide the stored body, pending events and source anchors, resolve bounded source history when available, and allow a validated update of that same memory through `updateSummary`. Acknowledge only the snapshot events actually incorporated by that update. Failed/partial repair returns the existing readable memory and its pending events. An unrelated resolver-generated memory must never clear the original events. Replay caches cannot bypass freshness inspection. This closes the user's next-session repair journey.
+
+## Implemented interfaces and operation
+
+- Storage exposes `markStale`, `readFreshness`, `listPendingStaleEvents`, and `updateSummary`. Schema migration `0003_stale_events.sql` preserves revision rows and adds durable pending evidence.
+- pi exposes four tools and no writer: `memory_search`, `memory_resolve`, `memory_read`, `memory_mark_stale(uri, observed_revision, reason, excerpt, source_message_ids?)`. If source IDs are omitted, the excerpt must quote user/tool evidence from the active branch. The tool locates the actual entry and stores its text. It never accepts a fabricated source ID or an abandoned branch entry, and the instruction requires one finding per distinct change that actually took effect.
+- The main agent cannot rewrite or acknowledge a stored memory (user decision, 2026-11-18). `memory_update` existed on the pi surface briefly and was removed; the retrieval side is the only writer. A marking never rewrites the summary, and repair runs when that memory is next retrieved, which is why the maintenance instruction ends with `You cannot rewrite a stored memory.`
+- The repair path requires a validated 500–1000 non-whitespace-code-point summary and acknowledges only the events the new body actually cites (`packages/core/src/resolver/repair.ts:176`, `:182`; an uncited event returns `not_incorporated`). `packages/core/src/storage/store.ts:833 updateSummary` additionally rejects an id that is not pending for that memory. The atomic write queues navigation regeneration and leaves unacknowledged events pending.
+- The detector uses the existing `VESTIGIO_MODEL_BASE_URL`, `VESTIGIO_MODEL_ID`, `VESTIGIO_MODEL_API_KEY`, and `VESTIGIO_MODEL_THINKING` configuration. Without a model endpoint it skips inspection; explicit tools still work. It considers session-seen memories and project hotspot candidates, with at most 24 candidates, 32 evidence entries, bounded text per entry and pending-event context, and a 15-second abort deadline. Up to 10 preceding entries provide context. It treats user/tool evidence as facts and excludes agent narration and injected memory notes.
+- Checkpoints and injection fingerprints persist as branch-scoped custom session entries. Resume restores them; reverting a branch forgets checkpoints and deliveries outside it. Invalid model output or failed writes keep the checkpoint retryable.
+- `memory_read` is the repair trigger the agent actually reaches (`packages/pi-extension/src/read-repair.ts`). Reading an unpinned stale memory folds the pending events in at the delivered revision, then runs that memory's queued navigation job so the new head is published and findable again. Bounded by `READ_REPAIR_DEADLINE_MS = 90_000` for both model calls and at most one attempt per memory per session. The read reports `repair: repaired r1 -> r2`, `repair: nav_pending` (body saved, still unsearchable) or `repair: repair_failed` (body and every pending event unchanged), and re-reads the new body only when the write landed. Pinned reads, `memory_search` and `memory_resolve` do not trigger it, and the maintenance instruction tells the agent to read a STALE memory before relying on it.
+- A repair call is budgeted at `REPAIR_MAX_OUTPUT_TOKENS = 4096` with one correction retry for an `invalid` body or a `model_invalid_response:` failure; transport failures, cancellations and evidence verdicts are not retried, and `RepairOutcome.calls` records every attempt.
+- A stale retrieval hit can repair the original memory before descending to unrelated history. Pending sources drive at most two targeted history reads. Saved excerpts remain available when indexing lags. Stale cached resolve results re-enter retrieval. A moved head returns an explicit mismatch instead of creating a duplicate topic.
+
+## Verification results and limits
+
+`pnpm -r typecheck` and `pnpm -r test` passed across all five packages. Existing environment-dependent integration tests remain skipped (10 in source-obelisk and 8 in CLI). Real pi 1.5.2 against the isolated loopback provider passed 76 checks, including completed-tool-result detection, explicit marking without supplied entry IDs, preserved stale body delivery, resume dedup, no recursive agent run, and same-memory repair from a new session. Proof logs are under `/tmp/vestigio-stale-proof/`.
+
+The pi surface was verified after the writer was removed: the extension registers exactly `memory_search`, `memory_resolve`, `memory_read`, `memory_mark_stale`, and `extension.test.ts` asserts `memory_update` is absent. The scripted stale scenario passes 23/23 in this checkout. It reads the stale memory inside the first session and asserts `read repairs the stale memory in place [r2]`, `repaired read publishes the memory [published nav=r2]`, `repaired read acknowledges the event it absorbed [0 pending]`, `repaired read returns the new body`, then that a second read in the same session does not repair again, that a mark observed at `r1` against head `r2` still records, that the resumed session repairs that event through `memory_resolve` to `r3` (`repair is driven by retrieval, not by an agent write`), and that a later session reads a current memory without another repair.
+
+Known gaps. A repair that lands through `memory_resolve` instead of `memory_read` queues its navigation job rather than running it, so that memory stays unpublished and unsearchable until `vestigio jobs run`; the read path is currently the only one that publishes inline. The resolver also discards the `next_queries` its judge proposes and gathers with the raw question, which makes a realistic long question return `not_found` even when `memory_search` matches the memory; that defect is older than this feature and still unfixed.
+
+Two live-model variants in `eval/live` (real `magpie/auto/deepseek-v4.1-flash`, `--repeat 3`, corpus `f1f2`, [`docs/live-eval.md`](live-eval.md)) both exited 0 with the operator Obelisk index untouched. The `detector` variant, which drops the marking tool so the change stays unmarked, scored `detector_catch_rate 1/1/1`, `false_mark_rate 0/0/0` and `multiplicity 1/1/1` while recording no event on any of the five noise turns. In the `agent` variant (allowlist `memory_search,memory_read,memory_resolve,memory_mark_stale`) the first measured state was `agent_mark_rate 1/1/1`, `false_mark_rate 0/0/0` but `handled_rate 0.5` and `multiplicity 0`: a single message stating two changes to one memory produced one mark covering both, while the detector produced two events with a reason each. Adding `mark each distinct change as its own finding` to the maintenance instruction raised the agent to `multi_events 2/2` in every repeat, but one repeat then marked the rolled-back `FAILED` turn to warn against writing an abandoned value, for `false_mark_rate 0.2`. Adding `Mark only changes that actually took effect` too settled it: `system_recall 1`, `handled_rate 1`, `agent_mark_rate 1`, `false_mark_rate 0/0/0`, `multiplicity 1/1/1`, `multi_events 2/2` and exactly three recorded marks per repeat, at a median of 74k input tokens and 61 s per repeat.
+
+End to end, measured on real models: the memory was written in session 1, marked stale by the agent inside that session, and repaired by the next session's read. `f1f2 --repeat 2` (run `eval/live/runs/2026-11-18T15-38-18-408Z`) scored `repair_rate`, `pending_drained`, `repaired_in_place`, `fact_fidelity`, `retrieval_drove_repair`, `navigation_updated`, `published_after`, `searchable_after_repair` and `judge_pass` true in both repeats, leaving a `published` memory with an 868 and a 920 character body. The metrics table and the failures that preceded it are in [`docs/live-eval.md`](live-eval.md).
+
+The lifecycle test scripts model decisions. It verifies hook timing, persistence, delivery and repair execution; it does not measure a real model's precision or recall. Detection is deliberately bounded and may miss topics outside its candidate/evidence window. Durable source anchors and saved excerpts support later manual correction. No real external model or user history index was used, no installed extension configuration was changed, and no commit or remote publication was performed.
+
+## Work plan
+
+- [x] Frame the accepted scope and data ownership.
+- [x] Fan out API/design candidates in isolated artifacts.
+- [x] Cross-judge candidates and choose one concrete contract.
+- [x] Graft useful constraints and delegate the complete feature to one implementation owner.
+- [x] Review the diff and verify core behavior and actual pi lifecycle delivery.
+- [x] Record verified results and limitations.
+
+Throughput checkpoint:
+
+- Blocking first steps: agree on event ownership, acknowledgement semantics and delivery contracts before implementation.
+- Independent workstreams: architecture candidates produce separate artifacts; verification preparation can run while implementation proceeds.
+- Shared mutable state: memory revision, acknowledged event IDs and navigation job are one atomic store operation; one implementation owner changes this coupled subsystem.
+- Smallest safe decomposition: one code owner implements storage through pi integration, because separately changing serialization, retrieval and freshness contracts risks inconsistent delivery. Review and runtime verification are independent.

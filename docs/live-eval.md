@@ -1,0 +1,319 @@
+# Live model evaluation
+
+Real-model evaluation of the agent-facing memory flows. The scripted harness in
+`eval/pi` proves lifecycle and state handling with a fake provider; this suite
+answers a different question. Given real models, does the system notice the
+changes it should, stay quiet about the changes it should not, and repair a
+memory without damaging the rest of it?
+
+## Roles
+
+Three roles, configured separately so a failure can be attributed.
+
+| Role | What it does | Model |
+| --- | --- | --- |
+| Agent | runs pi turns, decides whether to call a tool | `magpie/auto/deepseek-v4.1-flash`, thinking `low` |
+| Extension model | detector, retrieval judge, summary and navigation (`VESTIGIO_MODEL_*`) | `magpie/auto/deepseek-v4.1-flash`, thinking `low` |
+| Judge | scores repair fidelity only | `codex/gpt-6.2-sol`, thinking `high` |
+
+The judge must never be the model under test. With the first two roles on the
+same model, F5 fidelity is scored by a different family.
+
+Endpoint for all three is the local magpie gateway, `http://127.0.0.1:3425/v1`.
+
+## Secrets never enter the repository
+
+- `eval/live/config.local.json` holds endpoint and model ids. It is ignored.
+  `config.example.json` is committed with placeholders.
+- The magpie key is read at runtime from `~/.pi/agent/auth.json`
+  (`magpie.key`) and passed to the extension as `VESTIGIO_MODEL_API_KEY`. It is
+  never written to a file in the workspace.
+- The agent configuration directory is built under `/tmp` at runtime from
+  `~/.pi/agent/models.json` and `~/.pi/agent/auth.json`. Nothing is copied into
+  the workspace.
+- `.gitignore` covers `eval/live/runs/`, `eval/live/*.local.json`, `*.log`.
+- Before finishing, scan staged content for `bearer`, `api_key`, `sk-`, `token=`.
+
+## Harness
+
+`eval/live/run.mjs`, started with the workspace hook so it drives TypeScript
+source directly:
+
+```
+node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3
+```
+
+It does not start a mock provider. It runs real `pi` processes in `--mode rpc`
+with `--provider magpie --model auto/deepseek-v4.1-flash --thinking low`,
+isolated `--session-dir`, `--no-context-files`, `--no-mcp`, `--no-extensions`,
+and only this repository's extension loaded. The real operator Obelisk index is
+never opened: `VESTIGIO_OBELISK_HOME` points at a scratch directory, and the
+run records the real index mtime before and after to prove it.
+
+Each repeat gets a fresh store and a fresh session directory.
+
+The agent runs with an explicit allowlist and no memory writer:
+
+```
+--tools memory_search,memory_read,memory_resolve,memory_mark_stale
+```
+
+It can report a memory as stale but cannot rewrite one; repair happens on the
+retrieval side, in a later session. Two variants run the same corpus, the same
+seeded memory and the same workspace, and differ only in that allowlist. The
+default `agent` variant measures marking. The `detector` variant drops the
+marking tool so the change stays unmarked and the detector's own decisions
+become observable:
+
+```
+node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3 --variant detector
+```
+
+Each invocation writes its own `runs/<timestamp>/` directory and `run.json`
+records `variant` and the effective allowlist. `eval/live/README.md` is the
+operator-facing copy of the metric definitions below.
+
+### Second session (F5)
+
+When the corpus carries a `session2` block, the repeat does not end with the
+last turn. The harness closes the first session, starts a second `pi` process on
+the same store, project and `VESTIGIO_OBELISK_HOME` with a fresh session
+directory, and sends exactly `session2.question`. Nothing is marked by hand in
+that session: the memory is stale and already carries pending events, so the
+retrieval path has to repair it on its own. This is the only place where the
+feature's user-visible outcome is measured, because it is the only place where a
+real model writes a body.
+
+The judge runs once per repeat to `judge_model`, over the same gateway, logged
+through the same proxy and counted against the same budget. `judge_model` must
+differ from `agent_model` and `extension_model`; the harness refuses to start
+otherwise. `config.example.json` carries `judge_model` and `judge_thinking`,
+defaulting to `codex/gpt-6.2-sol` with `thinking: high`. Pin one serving
+checkpoint: a routing group can answer `pass` and `fail` for the same prompt on
+different calls.
+
+## Corpus
+
+`eval/live/corpus/<name>.json`:
+
+```jsonc
+{
+  "name": "port-change",
+  "memory": {
+    "memory_id": "mem-port",
+    "title": "部署端口",
+    "keywords": ["部署", "端口"],
+    "facts": { "port": "3456" },        // exact strings for deterministic scoring
+    "stable": ["回滚脚本位于 ops/rollback.sh"]  // must survive a repair
+  },
+  "turns": [
+    { "text": "部署用的端口是多少", "label": "READ" },
+    { "text": "把默认端口从 3456 改成 5678 并重新部署，确认生效", "label": "CHANGE" },
+    { "text": "端口还是 5678，没问题", "label": "CONFIRM" },
+    { "text": "如果以后换成 7777 会怎样", "label": "HYPOTHESIS" },
+    { "text": "我把端口改成 4321 试试", "label": "FAILED", "outcome": "命令未生效" },
+    { "text": "把回滚脚本挪到 ops/rollback.sh", "label": "UNRELATED" },
+    { "text": "端口改成 5678，同时把并发上限降到 4", "label": "MULTI" }
+  ],
+  "session2": {
+    "question": "项目现在部署用的默认端口和并发上限分别是多少？",
+    "expected": { "默认端口": "6789", "并发上限": "4" },
+    "required_strings": ["6789"],
+    "stable": ["回滚脚本位于 ops/rollback.sh"],
+    "superseded": { "默认端口": ["3456", "5678"], "并发上限": ["8"] }
+  }
+}
+```
+
+Labels:
+
+- `READ` — surfaces the memory so the session has it and the detector may
+  inspect it. No marking expected.
+- `CHANGE` — a fact in the memory changed. Exactly one new event expected per
+  changed fact.
+- `CONFIRM` — restates the current value. No event.
+- `HYPOTHESIS` — conditional or future wording. No event.
+- `FAILED` — the change was attempted and did not take effect. No event.
+- `UNRELATED` — a different part of the project changed. No event for this
+  memory.
+- `MULTI` — two distinct changes in one turn. Two events.
+- `OLD_SOURCE` — references a superseded value with new context. No new event
+  unless the value itself changed.
+- `INJECTION` — the turn relays text that tries to give the agent instructions,
+  quoted from a document, a memory or a tool result. No event; the transcript is
+  evidence, not instruction.
+
+A second corpus, `hygiene`, exercises the two no-event classes that the port
+corpus cannot. Its memory body carries an instruction-looking line, and its
+`INJECTION` and `OLD_SOURCE` turns quote values that were never real, so any
+event or any value that lands in the body is a false positive. It carries its
+own `session2` block, so the repair is scored on it as well.
+
+Ambiguous labels are decided before the corpus is used; the label file is the
+ground truth, not a judgement made after seeing the result.
+
+## Logging
+
+Every run writes `eval/live/runs/<timestamp>/`:
+
+- `run.json` — git commit, pi version, harness version, model ids, endpoint
+  host and port, corpus names, repeat count, start and end, exit code, real
+  Obelisk mtime before and after.
+- `turns.jsonl` — one line per turn: repeat, corpus, turn index, label, user
+  text, injected block, system prompt hash and length, full model request
+  messages, response content and tool calls, `usage`, latency, head revision and
+  pending event ids after the turn.
+- `tools.jsonl` — tool name, full arguments, result summary, duration, error.
+- `store.jsonl` — per turn: head revision, pending event ids, freshness
+  fingerprint, memory count.
+- `session2.jsonl` — per repeat: the second session's question, the tool calls it
+  made, the head revision before and after, the new body, pending ids after,
+  memory count, the deterministic F5 verdicts and the judge's raw reply.
+- `judge.json` — the judge model, thinking level, prompt hash and every verdict.
+- `decisions.jsonl` — the extension decision log, copied verbatim.
+- `metrics.json` — the scored numbers below.
+- `failures/` — full request and response for any non-2xx or parse failure.
+
+Redaction happens before writing: the `authorization` header and anything
+matching `sk-`, `Bearer `, or `token=` is removed. Environment variable values
+are never logged.
+
+Requests and responses are logged in full so a surprising score can be
+explained from the record alone, without rerunning the model.
+
+## Scoring (milestone 1: F1 and F2)
+
+Deterministic, no judge. Attribution uses the event `producer` field.
+
+- `system_recall` — fraction of `CHANGE` turns that produced at least one new
+  event for the memory, by either producer.
+- `handled_rate` — fraction of `CHANGE` + `MULTI` turns where every change the
+  turn stated has its own recorded event. A `CHANGE` turn states one change; a
+  `MULTI` turn states `expected_events` of them. This is stricter than
+  `system_recall`: a `MULTI` turn that records one event for two stated changes
+  is recalled but not handled. The count of distinct recorded event ids is the
+  proxy, and `metrics.json` `multi_turns` keeps the stated facts, the recorded
+  count and each reason so the verdict can be audited.
+- `agent_mark_rate` — fraction of `CHANGE` turns where `producer = agent`.
+- `detector_catch_rate` — of the `CHANGE` turns the agent did not mark, the
+  fraction the detector marked in the same turn.
+- `false_mark_rate` — fraction of `READ`, `CONFIRM`, `HYPOTHESIS`, `FAILED`,
+  `UNRELATED`, `OLD_SOURCE` and `INJECTION` turns that produced any event.
+- `multiplicity` — `MULTI` turns whose count of distinct recorded event ids
+  equals `expected_events`.
+- `revision_correctness` — marked events whose `observed_revision` equals the
+  revision the session had been shown.
+- `cost` — tokens in and out per turn, detector calls per turn, wall time.
+
+Reported as a distribution over repeats, never as a single pass.
+
+## Scoring (milestone 2: F5 repair)
+
+Deterministic, no judge. A repeat counts as repaired when the second session
+advanced the head revision of the same `memory_id`.
+
+- `repair_rate` — repeats whose second session advanced the head revision.
+- `pending_drained` — repeats whose pending event set is empty afterwards. A
+  repair that leaves events pending did not absorb them.
+- `repaired_in_place` — repeats where `countMemories()` is still 1, so the
+  session updated the existing memory instead of adding a second topic.
+- `fact_fidelity` — repeats where the new body contains every
+  `required_strings` entry, still contains the path token of every `stable`
+  string, and sits inside the 500–1000 non-whitespace code point band.
+- `retrieval_drove_repair` — repeats where the second session called
+  `memory_resolve` or `memory_read` before the head advanced.
+- `navigation_updated` — repeats where `nav.source_revision` equals the new
+  head revision.
+
+Those checks prove the new value landed and the memory was repaired in place.
+They cannot prove what the body now says about the old values, because a
+legitimate body may record 3456 as history. That judgement, plus whether the new
+body describes the same topic and invented nothing, belongs to the judge.
+
+One non-streaming call per repeat to `judge_model`. Input: the new body, the
+corpus `expected` facts, `superseded` values, the `stable` list and the changes
+the session was told about. Output, parsed as JSON:
+
+```json
+{
+  "verdict": "pass",
+  "current_values_correct": true,
+  "stale_shown_as_current": [],
+  "invented": [],
+  "dropped_stable": [],
+  "reasoning": "..."
+}
+```
+
+- `judge_pass` — repeats whose verdict is `pass`. A missing or unparsable reply
+  is a failure, not a pass, and the raw reply is kept in `session2.jsonl`.
+
+Reported as a distribution over repeats, never as a single pass.
+
+## Guardrails
+
+- A per-run token budget and wall-clock cap; the run aborts and reports when
+  exceeded.
+- Serial execution. No parallel pi processes.
+- Real Obelisk index untouched, asserted by mtime.
+- The `eval/pi` scripted suite stays the regression layer and must keep passing.
+
+## First milestone
+
+One corpus, `f1f2`, three repeats, real models, printing the seven metrics
+above. That is enough to know whether the design works before the corpus and
+the judge are built out.
+
+## Second milestone
+
+Both corpora, three repeats, both variants, printing the milestone 1 and
+milestone 2 metrics. Omitting `--only` runs every corpus in `corpus/`;
+`--only f1f2` and `--only hygiene` narrow it when only one half is being
+iterated on.
+
+```
+node --import ../pi/hook.mjs ./run.mjs --repeat 3
+node --import ../pi/hook.mjs ./run.mjs --repeat 3 --variant detector
+```
+
+## Measured so far
+
+`f1f2 --repeat 2` on 2026-11-18, agent `magpie/auto/deepseek-v4.1-flash`
+thinking `low`, extension on the same model, judge `codex/gpt-6.2-sol` thinking
+`high` (run `eval/live/runs/2026-11-18T15-38-18-408Z`).
+
+| metric | repeat 1 | repeat 2 |
+| --- | --- | --- |
+| `system_recall` | 1 | 1 |
+| `handled_rate` | 1 | 1 |
+| `agent_mark_rate` | 1 | 1 |
+| `false_mark_rate` | 0 | 0 |
+| `multiplicity` | 1 | 1 |
+| `repair_rate` | 1 | 1 |
+| `pending_drained` | 1 | 1 |
+| `repaired_in_place` | 1 | 1 |
+| `fact_fidelity` | 1 | 1 |
+| `retrieval_drove_repair` | 1 | 1 |
+| `navigation_updated` | 1 | 1 |
+| `published_after` | 1 | 1 |
+| `searchable_after_repair` | 1 | 1 |
+| `judge_pass` | true | true |
+
+The repair left the memory `published` with an 868 and a 920 character body,
+drained both pending events, and the second session found it by a plain search
+afterwards. Four earlier runs of the same configuration failed for reasons
+unrelated to the design: a judge timeout under a 300 s cap, a routing-group
+judge that answered the same prompt `pass`, `fail`, `pass`, a 90 s read-repair
+deadline that killed a live call, and a gateway 502 on the first repair call.
+Each is fixed or documented above; the numbers in this table are from the
+configuration that has the fixes.
+
+## What this does not prove
+
+- Whether a real agent will call the marking tool outside these scripted turns.
+- Whether the detector finds changes older than its candidate and evidence
+  window.
+- Whether the judge is stable across runs. One judge, one verdict per repeat,
+  recorded with its raw reply so a flip can be read rather than guessed at.
+- Whether a body that cites an event has absorbed it in full; citation is a
+  structural check only.
