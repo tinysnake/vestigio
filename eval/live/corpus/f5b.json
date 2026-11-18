@@ -1,0 +1,96 @@
+{
+  "name": "f5b",
+  "description": "F5 with one fact changed twice in a row: the repair must land the latest value, keep the intermediate one as superseded, and still drop a rolled-back attempt. Every turn is stated as a plain fact, so a mark is detection rather than instruction following.",
+  "expected_multi_events": 2,
+  "memory": {
+    "memory_id": "mem-release-window",
+    "title": "发布窗口与灰度比例",
+    "keywords": [
+      "发布",
+      "窗口",
+      "灰度",
+      "release"
+    ],
+    "facts": {
+      "发布窗口": "周二 22:00",
+      "灰度比例": "5%"
+    },
+    "stable": [
+      "回滚脚本位于 ops/rollback.sh"
+    ],
+    "context": [
+      "发布窗口决定了每次上线的具体时段，通常安排在流量低谷并且确保值班同学在线，改动窗口一般是因为值班安排调整或者与另一条业务线的发布撞期，改完之后要同步更新发布日历、告警静默时间和下游依赖方的排期表，并在发布记录里写明变更原因，避免第二天有人按旧时间等待上线。",
+      "灰度比例控制新版本先接收多少比例的线上流量，比例越小发现问题时影响面越小，但也意味着需要更长的观察时间才能积累足够的样本，调整比例之前应该先看错误率、延迟和关键业务指标，确认当前灰度批次的观察结论是正向的，再把比例往前推一档，并且把这一批的观察结论、样本量和推进理由一起写进发布记录，避免下一批的人不知道上一批已经看过什么。",
+      "回滚流程以 ops/rollback.sh 为准，脚本会把当前版本撤回到上一个发布版本，每次改动发布窗口或灰度比例之后都要在测试环境演练一次回滚，确认脚本、镜像标签和发布记录仍然对得上，再把结果补进运维手册，让下一个人遇到问题时能照着文档操作，避免遗漏关键步骤，也避免有人以为窗口或比例只改了一处。"
+    ]
+  },
+  "workspace": {
+    "release.sh": "#!/usr/bin/env bash\n# 发布脚本：窗口与灰度比例都从这里读取。\n# 回滚见 ops/rollback.sh。\nset -euo pipefail\n\nWINDOW=\"tue-22:00\"\nCANARY_PERCENT=5\n\necho \"release in ${WINDOW} with ${CANARY_PERCENT}% canary\"\n",
+    "ops/rollback.sh": "#!/usr/bin/env bash\n# 回滚脚本：把发布撤销回上一个版本。\nset -euo pipefail\n\necho \"rollback to previous release\"\n"
+  },
+  "turns": [
+    {
+      "text": "发布窗口现在安排在哪天几点？",
+      "label": "READ",
+      "note": "Surfaces the memory so the session has it. No marking expected; the workspace on disk already matches the stored fact, so any event here is a false mark."
+    },
+    {
+      "text": "发布窗口从周二 22:00 挪到周四 21:30 了。",
+      "label": "CHANGE",
+      "fact_after": "周四 21:30",
+      "note": "First change to 发布窗口. A plain statement of the change that names no tooling."
+    },
+    {
+      "text": "值班的同学换了，发布窗口再提前到周四 20:00。",
+      "label": "CHANGE",
+      "fact_after": "周四 20:00",
+      "note": "Second change to the same fact in the same session, so the memory carries two pending events for 发布窗口. The repair must land 周四 20:00 and treat 周四 21:30 as superseded, not current."
+    },
+    {
+      "text": "好，那就是周四 20:00 发布。",
+      "label": "CONFIRM",
+      "note": "Restates the current value. No event."
+    },
+    {
+      "text": "本来想把灰度比例先提到 10%，后来还是留在 5%。",
+      "label": "FAILED",
+      "outcome": "改动未落地",
+      "note": "The change was attempted and did not take effect. No event; a mark here would invite the repair to write 10%."
+    },
+    {
+      "text": "灰度比例改成 20% 了，同时发布时长上限定为 30 分钟。",
+      "label": "MULTI",
+      "expected_events": 2,
+      "facts": [
+        "灰度比例: 5% -> 20%",
+        "发布时长上限: 30 分钟"
+      ],
+      "note": "Two distinct changes in one turn: one supersedes a stored fact, the other adds a fact the memory did not carry. A single merged event is a failure."
+    }
+  ],
+  "session2": {
+    "question": "我们现在的发布窗口、灰度比例和发布时长上限分别是多少？",
+    "expected": {
+      "发布窗口": "周四 20:00",
+      "灰度比例": "20%",
+      "发布时长上限": "30 分钟"
+    },
+    "required_strings": [
+      "周四 20:00",
+      "20%"
+    ],
+    "stable": [
+      "回滚脚本位于 ops/rollback.sh"
+    ],
+    "superseded": {
+      "发布窗口": [
+        "周二 22:00",
+        "周四 21:30"
+      ],
+      "灰度比例": [
+        "5%"
+      ]
+    },
+    "search_query": "发布窗口 灰度比例"
+  }
+}

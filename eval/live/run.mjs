@@ -48,8 +48,6 @@ import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
 import { openStore } from "@vestigio/core/storage";
 
-// ---------------------------------------------------------------- constants
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolvePath(HERE, "../..");
 const EXT = join(ROOT, "packages/pi-extension/src/extension.ts");
@@ -97,10 +95,6 @@ const MEMORY_TOOL_UNIVERSE = [
  */
 const MEMORY_WRITER_TOOLS = ["memory_update"];
 
-/**
- * The agent variant: read tools plus marking. The agent may report a stored
- * memory as stale, but it cannot rewrite one — no writer tool is enabled.
- */
 const AGENT_TOOL_ALLOWLIST = [
 	"memory_search",
 	"memory_read",
@@ -115,16 +109,11 @@ const AGENT_TOOL_ALLOWLIST = [
  */
 const DETECTOR_TOOL_ALLOWLIST = ["memory_search", "memory_read", "memory_resolve"];
 
-/**
- * Scenario variants. `agent` is the default so the documented command keeps
- * running it; `detector` is selected with `--variant detector`.
- */
 const VARIANTS = {
 	agent: { name: "agent", tools: AGENT_TOOL_ALLOWLIST },
 	detector: { name: "detector", tools: DETECTOR_TOOL_ALLOWLIST },
 };
 
-/** Documented defaults; `config.local.json` overrides them when present. */
 const DEFAULTS = {
 	endpoint: "http://127.0.0.1:3425/v1",
 	provider: "magpie",
@@ -141,15 +130,11 @@ const DEFAULTS = {
 	// F5 refuses to start if the judge equals a model under test.
 	judge_model: "codex/gpt-6.2-sol",
 	judge_thinking: "high",
-	max_model_calls: 200,
-	max_total_tokens: 2_000_000,
-	wall_clock_ms: 1_200_000,
+	max_model_calls: 700,
+	max_total_tokens: 7_000_000,
+	wall_clock_ms: 3_600_000,
 };
 
-/**
- * Fail before any model call if the run would not be memory-tools-only, or if
- * the allowlist does not match the variant the run claims to measure.
- */
 function assertMemoryToolset(tools, variantName) {
 	const variant = VARIANTS[variantName];
 	if (variant === undefined) {
@@ -186,8 +171,6 @@ function assertMemoryToolset(tools, variantName) {
 }
 
 const AT = "2026-11-17T12:00:00.000Z";
-
-// ---------------------------------------------------------------- redaction
 
 let SECRETS = [];
 function registerSecret(value) {
@@ -226,8 +209,6 @@ function appendJsonl(path, value) {
 	appendFileSync(path, `${JSON.stringify(redactValue(value))}\n`, "utf8");
 }
 
-// ---------------------------------------------------------------- config
-
 function loadConfig() {
 	const localPath = join(HERE, "config.local.json");
 	let raw = {};
@@ -256,7 +237,6 @@ function readMagpieKey() {
 	return key;
 }
 
-/** Build the isolated agent config dir under /tmp from the operator's files. */
 function buildAgentHome(proxyBaseUrl) {
 	rmSync(AGENT_HOME, { recursive: true, force: true });
 	mkdirSync(AGENT_HOME, { recursive: true });
@@ -269,8 +249,6 @@ function buildAgentHome(proxyBaseUrl) {
 	copyFileSync(join(AGENT_SRC, "auth.json"), join(AGENT_HOME, "auth.json"));
 	writeFileSync(join(AGENT_HOME, "models-store.json"), "{}\n", "utf8");
 }
-
-// ---------------------------------------------------------------- recording proxy
 
 function extractUsage(raw, contentType) {
 	const streamed = String(contentType ?? "").includes("text/event-stream");
@@ -452,8 +430,6 @@ async function startProxy({ upstream, logPath, failuresDir, budget }) {
 	};
 }
 
-// ---------------------------------------------------------------- pi RPC client
-
 class PiClient {
 	constructor(proc) {
 		this.proc = proc;
@@ -522,8 +498,6 @@ class PiClient {
 	}
 }
 
-// ---------------------------------------------------------------- store helpers
-
 function memoryUri(memoryId) {
 	return `memory://vestigio/${memoryId}`;
 }
@@ -585,7 +559,6 @@ function composeBody(corpus) {
 	return text;
 }
 
-/** Seed the scratch project cwd so the scenario is coherent, not an empty dir. */
 function seedWorkspace(projectDir, corpus) {
 	const files = corpus.workspace ?? {};
 	for (const [relative, content] of Object.entries(files)) {
@@ -670,8 +643,6 @@ function seedStore({ storePath, corpus, projectId }) {
 	return { body, nav };
 }
 
-// ---------------------------------------------------------------- corpus
-
 function loadCorpus(name) {
 	const path = join(CORPUS_DIR, `${name}.json`);
 	if (!existsSync(path)) {
@@ -697,8 +668,6 @@ function discoverCorpora() {
 		.map((file) => file.slice(0, -5))
 		.sort();
 }
-
-// ---------------------------------------------------------------- scenario runner
 
 function readDecisions(path) {
 	if (!existsSync(path)) return [];
@@ -797,14 +766,6 @@ function extractBlock(text) {
 	return close < 0 ? text.slice(open) : text.slice(open, close + INJECTION_CLOSE.length);
 }
 
-// ---------------------------------------------------------------- milestone 2 (F5)
-
-/**
- * Build the judge prompt. It carries exactly the material the spec lists: the
- * repaired body, the corpus `expected` facts, the `superseded` values, the
- * `stable` list and the changes the first session was told about. The model is
- * asked for one JSON object and nothing else.
- */
 function buildJudgePrompt({ body, oldBody, session2, changes }) {
 	return [
 		"你是 Vestigio 记忆修复的评审。一个项目记忆在早先的会话里被标记为过时（stale，带有待吸收的后续证据），",
@@ -830,7 +791,7 @@ function buildJudgePrompt({ body, oldBody, session2, changes }) {
 		"判断以下几点：",
 		"- current_values_correct：正文是否把 expected 里的每个当前值都写对。",
 		"- stale_shown_as_current：正文把哪些 superseded 的值当成了当前值（列出这些值，没有就空数组）。",
-		"- invented：正文有没有编造出旧摘要、expected、stable、变更叙述里都没有依据的新事实。旧摘要里已有的句子或已记录的流程要求不算编造，即使它没有出现在 expected/stable 里。列出原文片段，没有就空数组。",
+		"- invented：正文有没有编造出旧摘要、expected、stable、变更叙述里都没有依据的新事实。旧摘要里已有的句子或已记录的流程要求不算编造，即使它没有出现在 expected/stable 里。概括性措辞（例如把两次调整说成「窗口两次提前」「先后调整」）不算编造，只要其中的数值、路径和结论与给定事实一致；只有与给定事实不一致、或无法由给定事实推出的具体数值、路径、结论才算。列出原文片段，没有就空数组。",
 		"- dropped_stable：正文丢掉了哪些 stable 事实（列出，没有就空数组）。",
 		'- verdict：只有当 current_values_correct 为 true，且 stale_shown_as_current、invented、dropped_stable 都为空时才给 "pass"，否则 "fail"。',
 		"",
@@ -839,7 +800,6 @@ function buildJudgePrompt({ body, oldBody, session2, changes }) {
 	].join("\n");
 }
 
-/** Tolerant JSON extraction: strips code fences, then falls back to the outer object. */
 function parseJudgeReply(content) {
 	if (typeof content !== "string") return null;
 	let text = content.trim();
@@ -896,7 +856,6 @@ async function callJudge({ proxyUrl, key, model, thinking, prompt }) {
 	};
 }
 
-/** One non-streaming chat completion, sent through the recording proxy. */
 function postChat({ proxyUrl, key, body, signal, timeoutMs = TURN_TIMEOUT_MS }) {
 	const url = new URL(`${proxyUrl.replace(/\/+$/u, "")}/chat/completions`);
 	const payload = JSON.stringify(body);
@@ -943,7 +902,6 @@ function postChat({ proxyUrl, key, body, signal, timeoutMs = TURN_TIMEOUT_MS }) 
 	});
 }
 
-/** Deterministic F5 verdicts for one second session. */
 function scoreSession2({ before, after, navSourceRevision, searchable, session2, toolCalls }) {
 	const body = after.body ?? "";
 	const bodyChars = nonWhitespaceCodePointCount(body);
@@ -954,9 +912,13 @@ function scoreSession2({ before, after, navSourceRevision, searchable, session2,
 		(call) => call.ran && (call.tool_name === "memory_resolve" || call.tool_name === "memory_read"),
 	);
 	const required = session2.required_strings ?? [];
-	const requiredPresent = required.every((value) => body.includes(value));
+	// Spacing is formatting, not a fact: 周四20:00 and 周四 20:00 are the same value.
+	const squash = (value) => value.replace(/\s+/gu, "");
+	const requiredPresent = required.every((value) => squash(body).includes(squash(value)));
 	const stablePaths = (session2.stable ?? []).map((value) => value.split(/\s+/u).find((token) => token.includes("/")));
-	const stablePresent = stablePaths.filter((path) => path !== undefined).every((path) => body.includes(path));
+	const stablePresent = stablePaths
+		.filter((path) => path !== undefined)
+		.every((path) => squash(body).includes(squash(path)));
 	const inBand = bodyChars >= 500 && bodyChars <= 1000;
 	return {
 		repair_rate: repaired,
@@ -982,7 +944,6 @@ function scoreSession2({ before, after, navSourceRevision, searchable, session2,
 	};
 }
 
-/** The change statements the first session was told about, for the judge input. */
 function judgeChanges(corpus) {
 	return corpus.turns
 		.filter((turn) => turn.label === "CHANGE" || turn.label === "MULTI")
@@ -1021,7 +982,6 @@ async function searchableAfterRepair({ storePath, projectId, memoryId, query }) 
 	}
 }
 
-/** Flatten one recorded tool result into the text the agent saw. */
 function resultText(result) {
 	if (typeof result === "string") return result;
 	if (result === null || typeof result !== "object") return "";
@@ -1066,13 +1026,15 @@ function sawRepairFailedLine({ toolCalls, stderr }) {
 }
 
 /**
- * The F5 second session: a fresh `pi` process on the same store, project and
- * Obelisk home with a new session directory, asked only `session2.question`.
- * Nothing is marked by hand; the memory already carries pending events, so the
- * retrieval path has to repair it. Records every tool call, the store before
- * and after, the deterministic verdicts and the judge call, and appends one
- * `session2.jsonl` line per repeat.
+ * Wall time of the tool call that carried the repair, in milliseconds. This is
+ * the number to look at when deciding whether an inline repair is cheap enough
+ * to keep synchronous; it includes every model call the repair made.
  */
+function repairWallMs({ toolCalls }) {
+	const hit = toolCalls.find((call) => /^[ \t]*repair:[^\n]*\brepair(?:ed|_failed)\b/mu.test(resultText(call.result)));
+	return hit?.duration_ms ?? null;
+}
+
 async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, storePath, projectDir, env2, args2, memoryId, label }) {
 	const session2 = corpus.session2;
 	const before = storeSnapshot(storePath, memoryId);
@@ -1165,6 +1127,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 		nav_source_revision: after.nav_source_revision,
 		repair_trigger,
 		repair_failed,
+		repair_ms: repairWallMs({ toolCalls }),
 		search_after_repair: search,
 		deterministic,
 		judge,
@@ -1443,8 +1406,6 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 	return { corpus: corpus.name, repeat, exit_code: exitCode, stderr_tail: exitCode === 0 ? null : stderrTail.slice(-2000), turns, tool_names: toolNames, attempted_tool_names: attemptedToolNames, blocked_tool_names: blockedToolNames, tool_outcomes: toolOutcomes, session2: session2Record };
 }
 
-// ---------------------------------------------------------------- scoring
-
 const FALSE_LABELS = new Set(["READ", "CONFIRM", "HYPOTHESIS", "FAILED", "UNRELATED", "OLD_SOURCE", "INJECTION"]);
 
 /**
@@ -1481,9 +1442,15 @@ function scoreRepeat(result, corpus) {
 		return distinct.size === expected;
 	});
 	const allEvents = turns.flatMap((turn) => turn.new_events);
+	// A read can repair the memory before the mark, so both the revision the turn
+	// started with and the one it ended with were legitimately observed.
 	const revisionCorrect = allEvents.filter((turn) => {
 		const owner = turns.find((candidate) => candidate.new_event_ids.includes(turn.event_id));
-		return owner !== undefined && turn.observed_revision === owner.shown_revision;
+		if (owner === undefined) return false;
+		return (
+			turn.observed_revision === owner.shown_revision ||
+			turn.observed_revision === owner.head_revision_after
+		);
 	});
 	const toolOutcomes = result.tool_outcomes ?? [];
 	const updates = toolOutcomes.filter((outcome) => outcome.tool_name === "memory_update");
@@ -1541,6 +1508,7 @@ function scoreRepeat(result, corpus) {
 		published_after: f5 === null ? null : f5.published_after,
 		searchable_after_repair: f5 === null ? null : f5.searchable_after_repair,
 		f5_state_after: f5 === null ? null : f5.state_after,
+		f5_repair_ms: session2 === null ? null : (session2.repair_ms ?? null),
 		f5_search_query: f5 === null ? null : f5.search_query,
 		judge_pass: session2 === null ? null : session2.judge.pass,
 		f5_body_char_count: f5 === null ? null : f5.body_char_count,
@@ -1612,6 +1580,7 @@ function printTable(metricsByCorpus, variantName) {
 			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), formatMetric(block.distribution.searchable_after_repair)],
 			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), formatMetric(block.distribution.judge_pass)],
 			["f5_state_after", ...block.repeats.map((item) => String(item.f5_state_after ?? "n/a")), String(block.distribution.f5_state_after ?? "n/a")],
+			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
 			["f5_body_chars", ...block.repeats.map((item) => formatMetric(item.f5_body_char_count)), formatMetric(median(block.repeats.map((item) => item.f5_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
@@ -1623,8 +1592,6 @@ function printTable(metricsByCorpus, variantName) {
 		for (const row of f5Rows) console.log(line(row));
 	}
 }
-
-// ---------------------------------------------------------------- main
 
 function parseArgs(argv) {
 	const options = { only: null, repeat: 3, help: false, variant: "agent" };
@@ -1747,7 +1714,6 @@ async function main() {
 		if (aborted) break;
 	}
 
-	// Copy the extension's own decision logs through the redactor into one file.
 	const mergedDecisions = [];
 	for (const file of readdirSync(join(runDir, "decisions"))) {
 		mergedDecisions.push(...readDecisions(join(runDir, "decisions", file)));
@@ -1815,6 +1781,9 @@ async function main() {
 		distribution.tokens_out = median(repeats.map((item) => item.cost.tokens_out));
 		distribution.detector_calls = median(repeats.map((item) => item.cost.detector_calls));
 		distribution.wall_ms = median(repeats.map((item) => item.cost.wall_ms));
+		distribution.f5_repair_ms = median(
+			repeats.map((item) => item.f5_repair_ms).filter((value) => value !== null),
+		);
 		metricsByCorpus[corpus.name] = {
 			corpus: corpus.name,
 			repeats,
@@ -1887,7 +1856,6 @@ async function main() {
 
 	await proxy.close();
 
-	// Redact the extension's verbatim decision logs in place as a second pass.
 	for (const file of readdirSync(join(runDir, "decisions"))) {
 		const path = join(runDir, "decisions", file);
 		const records = readDecisions(path);

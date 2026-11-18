@@ -149,6 +149,13 @@ corpus cannot. Its memory body carries an instruction-looking line, and its
 event or any value that lands in the body is a false positive. It carries its
 own `session2` block, so the repair is scored on it as well.
 
+A third corpus, `f5b`, changes the same fact twice in one session and then adds
+a fact the memory did not carry. Its `session2` question asks for all three
+values, so the repair has to land the latest of the two changes, keep the
+intermediate one as superseded, and still absorb the added fact. One `CHANGE`
+turn is followed directly by another `CHANGE` on the same key, which is the
+case where merging events or landing the first value both look plausible.
+
 Ambiguous labels are decided before the corpus is used; the label file is the
 ground truth, not a judgement made after seeing the result.
 
@@ -202,7 +209,8 @@ Deterministic, no judge. Attribution uses the event `producer` field.
 - `multiplicity` — `MULTI` turns whose count of distinct recorded event ids
   equals `expected_events`.
 - `revision_correctness` — marked events whose `observed_revision` equals the
-  revision the session had been shown.
+  revision the session had been shown, or the revision the turn ended with when
+  a read inside that turn repaired the memory first.
 - `cost` — tokens in and out per turn, detector calls per turn, wall time.
 
 Reported as a distribution over repeats, never as a single pass.
@@ -224,6 +232,13 @@ advanced the head revision of the same `memory_id`.
   `memory_resolve` or `memory_read` before the head advanced.
 - `navigation_updated` — repeats where `nav.source_revision` equals the new
   head revision.
+- `published_after` and `searchable_after_repair` — repeats where the memory
+  ends `published` and a plain `layeredSearch` on the same store finds it. Both
+  are `null` when no repair happened, because an already-published memory says
+  nothing about what the repair left behind.
+- `f5_repair_ms` — wall time of the tool call that carried the repair, in
+  milliseconds. Reported so the inline-versus-background decision is made from
+  a measured distribution rather than the deadline constant.
 
 Those checks prove the new value landed and the memory was repaired in place.
 They cannot prove what the body now says about the old values, because a
@@ -266,9 +281,9 @@ the judge are built out.
 
 ## Second milestone
 
-Both corpora, three repeats, both variants, printing the milestone 1 and
+All three corpora, three repeats, both variants, printing the milestone 1 and
 milestone 2 metrics. Omitting `--only` runs every corpus in `corpus/`;
-`--only f1f2` and `--only hygiene` narrow it when only one half is being
+`--only f1f2`, `--only hygiene` and `--only f5b` narrow it when one half is being
 iterated on.
 
 ```
