@@ -5,7 +5,7 @@
  * `@vestigio/model-client`; core depends on the port, never on HTTP.
  */
 
-export { resolveMemory } from "./resolver.js";
+export { MAX_LAYER_REQUERIES, resolveMemory } from "./resolver.js";
 export {
   deliveryDedupKey,
   evidenceVersionKey,

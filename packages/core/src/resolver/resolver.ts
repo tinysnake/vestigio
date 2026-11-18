@@ -82,6 +82,14 @@ const HISTORY_HITS = 6;
 const MAX_HISTORY_BYTES = 12 * 1024;
 /** Stale-hit targeted read: bounded successors, at most two port reads. */
 const STALE_READ_AFTER = 3;
+/**
+ * A layer may be gathered at most twice: once on arrival, once re-queried with
+ * the judge's better phrasings. The second gather is what keeps `next_queries`
+ * from only ever reaching the *lower* layers.
+ */
+const MAX_LAYER_GATHERS = 2;
+/** Re-gathers one resolve may spend; each one costs the judge call it triggers. */
+export const MAX_LAYER_REQUERIES = 2;
 const STALE_READ_BUDGET = 2;
 const STALE_EXCERPT_CHARS = 1200;
 
@@ -748,15 +756,47 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   let stopReason = "";
   let lastDecision: JudgeDecision | null = null;
   let judgedAny = false;
+  // Per-layer gather bookkeeping. `gathered` alone only remembers *that* a layer
+  // ran, so the judge's improved phrasings could never re-ask it; these two maps
+  // bound the re-ask and make an identical one a no-op.
+  const gatherCounts = new Map<LayerName, number>();
+  const queryUsed = new Map<LayerName, string>();
+  let requeries = 0;
+
+  function queryFingerprint(queries: readonly string[]): string {
+    return queries.slice(0, options.max_query_variants).join("\u0000");
+  }
+
+  async function gatherLayer(layer: LayerName): Promise<void> {
+    const gathered = await gather(querySet, layer);
+    bundle = absorb(bundle, gathered.bundle);
+    bundle.gathered.add(layer);
+    gatherCounts.set(layer, (gatherCounts.get(layer) ?? 0) + 1);
+    queryUsed.set(layer, queryFingerprint(querySet));
+    if (gathered.coldRefresh) cold = true;
+  }
+
+  /**
+   * Re-gather the layer the judge just looked at, once, with the phrasings it
+   * supplied. A re-gather costs a judge call by construction, so the deadline and
+   * the model-call ledger stay the hard bound and this check runs before both the
+   * descend and the ledger gate.
+   */
+  function shouldRequery(layer: LayerName): boolean {
+    if (lastDecision === null || lastDecision.sufficient) return false;
+    if (lastDecision.next_queries.length === 0) return false;
+    if (controller.signal.aborted) return false;
+    if (requeries >= MAX_LAYER_REQUERIES) return false;
+    if ((gatherCounts.get(layer) ?? 0) !== MAX_LAYER_GATHERS - 1) return false;
+    if (queryUsed.get(layer) === queryFingerprint(querySet)) return false;
+    if (remaining() <= 0) return false;
+    if (ledger.stopReason() !== null) return false;
+    return true;
+  }
 
   while (layerIndex < LAYER_ORDER.length) {
     const layer = LAYER_ORDER[layerIndex] as LayerName;
-    if (!bundle.gathered.has(layer)) {
-      const gathered = await gather(querySet, layer);
-      bundle = absorb(bundle, gathered.bundle);
-      bundle.gathered.add(layer);
-      if (gathered.coldRefresh) cold = true;
-    }
+    if (!bundle.gathered.has(layer)) await gatherLayer(layer);
     currentLayers = bundle.layers;
 
     if (controller.signal.aborted) {
@@ -934,6 +974,17 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       querySet = variants.slice(0, options.max_query_variants);
     }
     for (const uri of lastDecision.read_uris) readBody(uri, bundle);
+    // The judge found the layer's candidates unusable and named better phrasings.
+    // Re-ask this same layer with those phrasings, merging into what it already
+    // saw, then judge again before deciding whether to descend. Without this the
+    // new phrasings only ever reach lower layers and a memory sitting in the
+    // layer already searched is never a candidate.
+    if (shouldRequery(layer)) {
+      requeries += 1;
+      await gatherLayer(layer);
+      currentLayers = bundle.layers;
+      continue;
+    }
     if (!lastDecision.descend || layerIndex + 1 >= LAYER_ORDER.length) {
       stopReason = "evidence_insufficient";
       break;
@@ -1115,9 +1166,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       return deliver(patched);
     }
 
-    // The repair did not land. Return the same memory — readable, with its
-    // pending evidence — instead of writing a second memory about the same
-    // topic. The old body and every pending event are untouched.
     const delivered = input.store.readMemory(card.uri, card.revision);
     const patched = parseRetrievalResult({
       ...attempt.base,

@@ -267,13 +267,24 @@ describe("memory.resolve: descent and sufficiency", () => {
     const store = newStore();
     seedMemory(store, { memory_id: "mem-decoy", title: "zqleak install notes", keywords: ["zqleak"], nav_text: "install notes only, no conclusion" });
     const history = makeTimedHistoryPort(1, [historyHit("zqleak alpha first user message")]);
+    // Active's judge proposes an expansion, so Active is re-gathered and judged
+    // again before the walk descends; the four-call ceiling leaves the later
+    // layers their own judge.
     const model = makeModel([
       { text: judgeJson({ next_queries: ["deployment default port"], descend: true }) },
+      { text: judgeJson({ descend: true }) },
       { text: judgeJson({ descend: true }) },
       { text: judgeJson({ descend: false }) },
     ]);
 
-    const outcome = await resolve({ store, question: "zqleak", scope: projectA, model: model.port, history: history.port });
+    const outcome = await resolve({
+      store,
+      question: "zqleak",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      budget: { max_model_calls: 4 },
+    });
 
     // The expansion supplements the question; it must never replace it, or the
     // lower layers would be searched only for the model's own paraphrase.
@@ -289,10 +300,18 @@ describe("memory.resolve: descent and sufficiency", () => {
     const model = makeModel([
       { text: judgeJson({ next_queries: ["unrelated paraphrase"], descend: true }) },
       { text: judgeJson({ descend: true }) },
+      { text: judgeJson({ descend: true }) },
       { text: judgeJson({ descend: false }) },
     ]);
 
-    const outcome = await resolve({ store, question: "zqleak", scope: projectA, model: model.port, history: history.port });
+    const outcome = await resolve({
+      store,
+      question: "zqleak",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      budget: { max_model_calls: 4 },
+    });
 
     const active = outcome.layers.find((layer) => layer.layer === "active");
     const archived = outcome.layers.find((layer) => layer.layer === "archived");
