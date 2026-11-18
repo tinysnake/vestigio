@@ -79,6 +79,11 @@ export type MediumExtractInput = {
    * reply and what the corrected one must satisfy.
    */
   correction?: string | undefined;
+  /**
+   * Appended to the first user message, before any correction: what this
+   * caller needs from the body on the attempt that has no correction yet.
+   */
+  guidance?: string | undefined;
 };
 
 /** Evidence ids a saved medium body may cite, derived from the used sources. */

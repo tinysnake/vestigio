@@ -99,7 +99,6 @@ export type IntegrityReport = {
   archivedIndexCount: number;
 };
 
-/** How many pending stale events and source anchors a delivery reports inline. */
 export const MAX_FRESHNESS_PENDING = 8;
 export const MAX_FRESHNESS_SOURCES = 4;
 
@@ -128,9 +127,7 @@ export type RecordInjectionReceiptOptions = {
 export type UpdateSummaryInput = {
   /** The new summary revision. Must be exactly `expected_revision + 1`. */
   memory: Memory;
-  /** The head the writer validated before composing the summary. */
   expected_revision: Revision;
-  /** Explicit pending events this revision incorporates; empty is allowed. */
   acknowledge_event_ids: readonly string[];
   at?: string;
   /** Set false only for maintenance paths that own their navigation job. */
@@ -797,13 +794,11 @@ export class MemoryStore {
     });
   }
 
-  /** Every pending (unacknowledged) stale event for a memory, oldest first. */
   listPendingStaleEvents(memoryId: MemoryId): StaleEventSummary[] {
     this.assertOpen();
     return this.selectPendingStaleEventRows(memoryId).map((row) => this.staleRowToSummary(row));
   }
 
-  /** Every stale event for a memory, acknowledged or not, oldest first. */
   listStaleEvents(memoryId: MemoryId): StaleEventSummary[] {
     this.assertOpen();
     return this.db

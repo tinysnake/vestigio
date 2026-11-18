@@ -19,9 +19,7 @@ import {
 import type { ModelPort, ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
 
 export const DETECTOR_MAX_OUTPUT_TOKENS = 1024;
-/** Candidate memories one call may judge. */
 export const DETECTOR_MAX_CANDIDATES = 24;
-/** Evidence rows one call may cite. */
 export const DETECTOR_MAX_EVIDENCE = 32;
 
 export const STALE_DETECTOR_SYSTEM_PROMPT = [
@@ -33,9 +31,10 @@ export const STALE_DETECTOR_SYSTEM_PROMPT = [
   "Only new activity can establish a new change. Prior context explains it but is not a new change by itself.",
   "Do not report a change whose 待处理事件 already lists it; those are pending and known.",
   "Report each distinct change as its own finding. One turn can contain more than one.",
+  "A pending event means the change is already recorded. Restating, confirming, repeating or summarising a pending change is never a finding: find only what no pending event lists.",
   "Reply with exactly one JSON object and nothing else:",
   '{"findings": [{"memory_id": "...", "reason": "...", "excerpt": "...", "evidence_ids": ["..."]}]}',
-  "Use an empty findings array when nothing changed.",
+  "Use an empty findings array when nothing changed, when the only new activity restates a pending event, or when the summary merely repeats a value the evidence already settled.",
 ].join("\n");
 
 export type DetectorEvidence = {

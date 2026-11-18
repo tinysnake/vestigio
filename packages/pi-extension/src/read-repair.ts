@@ -1,21 +1,3 @@
-/**
- * Repair on read: a `memory_read` of a stale memory folds its pending stale
- * events into the same memory, then publishes it.
- *
- * This module adds no second repair path. The rewrite is
- * `repairStaleMemory` from core (the resolver's path), and the publish is
- * `runDueJobs` scoped to the memory and the revision the repair just saved.
- * What lives here is the ordering and the honest report:
- *
- * - the repair reads the *delivered* revision, so a read never rewrites a
- *   revision the agent did not see;
- * - at most one attempt per memory per session;
- * - the whole thing is bounded by `READ_REPAIR_DEADLINE_MS`;
- * - if the nav step fails, the new body stays and the queued job stays, and the
- *   read says `nav_pending` — never `repaired`, because a memory without a nav
- *   bound to its head is not findable by search yet.
- */
-
 import type { Freshness, MemoryUri, StaleEventSummary } from "@vestigio/core";
 import type { ModelPort, RepairOutcome } from "@vestigio/core/resolver";
 import { repairStaleMemory } from "@vestigio/core/resolver";
@@ -43,7 +25,6 @@ export type ReadRepairReport = {
   /** The head the repair saved, or null when nothing was written. */
   revision: number | null;
   acknowledged_event_ids: string[];
-  /** The nav step's outcome for a landed repair. */
   nav_status: "published" | "pending" | null;
 };
 
@@ -54,7 +35,6 @@ export type ReadRepairInput = {
   freshness: Freshness;
   project_id: string;
   at: string;
-  /** The tool call's own cancellation signal. */
   signal: AbortSignal | undefined;
 };
 
@@ -120,7 +100,6 @@ export async function repairOnRead(input: ReadRepairInput): Promise<ReadRepairRe
   }
   const revision = repaired.memory.revision;
   if (signal.aborted) {
-    // The body is saved; the nav step is left to the queued job.
     return {
       status: "nav_pending",
       reason: "deadline_exceeded",
@@ -131,29 +110,49 @@ export async function repairOnRead(input: ReadRepairInput): Promise<ReadRepairRe
     };
   }
 
-  const nav = await publish(input, model, memoryId, revision, signal);
+  const nav = await publishRevision(input, model, memoryId, revision, signal);
   return {
-    status: nav ? "repaired" : "nav_pending",
-    reason: nav ? null : navReason(input, revision),
+    status: nav.published ? "repaired" : "nav_pending",
+    reason: nav.published ? null : (nav.reason ?? "nav_not_published"),
     from_revision: freshness.delivered_revision,
     revision,
     acknowledged_event_ids: repaired.incorporated_event_ids,
-    nav_status: nav ? "published" : "pending",
+    nav_status: nav.published ? "published" : "pending",
   };
 }
 
+/** The store facts a publication needs; `read-repair` and `memory_resolve`
+ * share them, which is why this is not private to the read path. */
+export type PublishRevisionInput = {
+  state: VestigioState;
+  store: MemoryStore;
+  uri: MemoryUri;
+  project_id: string;
+  at: string;
+};
+
+export type PublishRevisionOutcome = {
+  published: boolean;
+  /** Why the memory is still not searchable; `null` when `published`. */
+  reason: string | null;
+};
+
 /**
- * Run the memory's own queued nav job. A failed nav is not an error the read
- * hides: the body is saved, the job stays queued, and search cannot find the
- * memory until the nav is bound to this revision.
+ * Run the memory's own queued nav job and verify the head is searchable.
+ *
+ * One attempt, scoped to `memoryId`/`revision`, bounded by
+ * `READ_REPAIR_DEADLINE_MS`. A failed nav is not an error the caller hides:
+ * the body is saved, the job stays queued, and search cannot find the memory
+ * until the nav is bound to this revision. Callers that just wrote the memory
+ * use the returned reason instead of claiming it is findable.
  */
-async function publish(
-  input: ReadRepairInput,
+export async function publishRevision(
+  input: PublishRevisionInput,
   model: ModelPort,
   memoryId: string,
   revision: number,
-  signal: AbortSignal,
-): Promise<boolean> {
+  signal: AbortSignal | undefined,
+): Promise<PublishRevisionOutcome> {
   try {
     const outcome = await runDueJobs({
       store: input.store,
@@ -162,11 +161,13 @@ async function publish(
       limit: 1,
       memory_id: memoryId,
       revision,
-      signal,
+      ...(signal === undefined ? {} : { signal }),
       deadline_ms: READ_REPAIR_DEADLINE_MS,
     });
     const result = outcome.results.find((entry) => entry.memory_id === memoryId && entry.revision === revision);
-    if (result?.state !== "done") return false;
+    if (result?.state !== "done") {
+      return { published: false, reason: navReason(input, revision) };
+    }
   } catch (error) {
     input.state.writeDecision({
       ts: input.at,
@@ -176,13 +177,14 @@ async function publish(
       project_id: input.project_id,
       error: errorText(error),
     });
-    return false;
+    return { published: false, reason: navReason(input, revision) };
   }
   const stored = readHead(input.store, input.uri);
-  return stored?.state === "published" && stored.nav !== null && stored.nav.source_revision === revision;
+  const published = stored?.state === "published" && stored.nav !== null && stored.nav.source_revision === revision;
+  return { published, reason: published ? null : navReason(input, revision) };
 }
 
-function navReason(input: ReadRepairInput, revision: number): string {
+function navReason(input: PublishRevisionInput, revision: number): string {
   const stored = readHead(input.store, input.uri);
   if (stored === null || stored.revision !== revision) return "head_moved_after_repair";
   if (stored.nav === null) return "nav_not_generated";

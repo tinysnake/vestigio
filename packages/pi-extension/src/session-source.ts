@@ -19,7 +19,6 @@ export type EntrySourceContext = {
 	session_id: string;
 	session_file: string | null;
 	project_id: string;
-	/** Defaults to `"session"`; the host name is otherwise meaningless here. */
 	source_instance?: string;
 };
 

@@ -55,7 +55,6 @@ export class InjectionLedger {
     return this.seen.get(memoryId)?.at ?? null;
   }
 
-  /** Freshness fingerprint recorded at the latest delivery, or null. */
   freshnessSig(memoryId: MemoryId): string | null {
     return this.seen.get(memoryId)?.freshness_sig ?? null;
   }

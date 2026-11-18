@@ -28,7 +28,6 @@ export type BoundedExcerpt = {
   char_count: number;
 };
 
-/** Bound an evidence excerpt with a visible marker, counting code points. */
 export function boundStaleExcerpt(text: string, max = STALE_EXCERPT_MAX): BoundedExcerpt {
   const normalized = text.replace(/\s+/gu, " ").trim();
   const full = codePoints(normalized);

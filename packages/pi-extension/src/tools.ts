@@ -21,11 +21,12 @@ import { ValidationError, splitMemoryUri } from "@vestigio/core";
 import type { Freshness, FreshnessBrief, MemoryUri, RetrievalResult, SourceRef, StaleEventSummary } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import { MAX_CARD_LIMIT, layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
-import type { ResolveOutcome } from "@vestigio/core/resolver";
+import type { ResolveOutcome, ModelPort, PersistenceOutcome } from "@vestigio/core/resolver";
 import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/resolver";
+import type { MemoryStore } from "@vestigio/core/storage";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
-import { repairOnRead, type ReadRepairReport } from "./read-repair.js";
+import { publishRevision, repairOnRead, type ReadRepairReport } from "./read-repair.js";
 import { stripInjectedNote } from "./stale-detector.js";
 import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
 
@@ -173,7 +174,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		name: "memory_resolve",
 		label: "Memory resolve",
 		description:
-			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-1000 character medium summary, returns that exact body with its URI and revision, and queues the short nav for `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
+			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-1000 character medium summary, returns that exact body with its URI and revision, and generates the short nav before the tool returns, so the memory is findable by memory_search immediately; if that nav step fails, the memory stays unsearchable until `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
 		parameters: resolveParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
@@ -229,8 +230,23 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				input_id: inputId,
 				detail: `calls=${outcome.measured.model_calls} degraded=${outcome.measured.degraded} hits=${recorded}`,
 			});
+			// A resolve that saved has a memory the store cannot search yet. Publish
+			// it here, inside this tool call's deadline, instead of leaving the agent
+			// with a body that the very next memory_search cannot find.
+			const publication = await publishSavedResult({
+				state,
+				store,
+				project_id: projectId,
+				at,
+				model,
+				signal,
+				result: outcome.result,
+				persistence: outcome.persistence,
+			});
 			return {
-				content: [{ type: "text", text: renderResolve(params.question, projectId, outcome, modelNote, historyNote) }],
+				content: [
+					{ type: "text", text: renderResolve(params.question, projectId, outcome, modelNote, historyNote, publication) },
+				],
 				details: {
 					status: outcome.result.status,
 					project_id: projectId,
@@ -317,7 +333,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 						error: errorText(error),
 					});
 				}
-				// A landed repair saved a new head; render that body and revision.
 				if (repair !== null && repair.revision !== null) {
 					outcome = readMemoryResult({ store, uri });
 				}
@@ -567,6 +582,80 @@ function safeActivitySeq(store: { readProjectActivity(projectId: string): { acti
 	}
 }
 
+type ResolvePublication = {
+	published: boolean;
+	/** Why the saved memory is still not searchable; `null` when published. */
+	reason: string | null;
+	nav_text: string | null;
+};
+
+/**
+ * `memory_resolve` saved a memory, so the store holds a body no search can
+ * admit until its nav job runs. Run that one job here and report the outcome;
+ * a failed publication leaves the answer intact and only the status pending.
+ * Never throws: a publication attempt must not turn a good answer into a tool
+ * error.
+ */
+async function publishSavedResult(input: {
+	state: VestigioState;
+	store: MemoryStore;
+	project_id: string;
+	at: string;
+	model: ModelPort | null;
+	signal: AbortSignal | undefined;
+	result: RetrievalResult;
+	persistence: PersistenceOutcome | null;
+}): Promise<ResolvePublication | null> {
+	const { result, persistence } = input;
+	// Only a save leaves an unsearchable memory behind; reuse and answers that
+	// wrote nothing have no queued job to run.
+	if (
+		input.model === null ||
+		result.status !== "resolved" ||
+		result.persistence_status !== "saved" ||
+		result.navigation_status !== "pending" ||
+		result.memory_uri === null ||
+		result.revision === null
+	) {
+		return null;
+	}
+	// The turn's own budget is already spent: leave the job for `jobs run`
+	// instead of starting a model call that can only be cut off.
+	if (input.signal?.aborted === true) return null;
+	const uri = result.memory_uri;
+	const revision = result.revision;
+	let memoryId: string;
+	try {
+		memoryId = splitMemoryUri(uri).memoryId;
+	} catch (error) {
+		return { published: false, reason: `invalid_uri:${errorText(error)}`, nav_text: null };
+	}
+	try {
+		const outcome = await publishRevision(
+			{ state: input.state, store: input.store, uri, project_id: input.project_id, at: input.at },
+			input.model,
+			memoryId,
+			revision,
+			input.signal,
+		);
+		const stored = outcome.published ? input.store.readMemory(uri, revision) : null;
+		if (!outcome.published || stored === null || stored.nav === null) {
+			return { published: false, reason: outcome.reason ?? "nav_not_published", nav_text: null };
+		}
+		result.navigation_status = "ready";
+		if (persistence !== null) persistence.navigation_status = "ready";
+		for (const card of result.cards) {
+			if (card.memory_id !== memoryId) continue;
+			card.nav_text = stored.nav.text;
+			card.revision = stored.revision;
+			card.state = stored.state;
+		}
+		return { published: true, reason: null, nav_text: stored.nav.text };
+	} catch (error) {
+		return { published: false, reason: `nav_threw:${errorText(error)}`, nav_text: null };
+	}
+}
+
 export function renderSearch(
 	query: string,
 	projectId: string,
@@ -604,6 +693,7 @@ export function renderResolve(
 	outcome: ResolveOutcome,
 	modelNote: string | null,
 	historyNote: string | null,
+	publication: ResolvePublication | null = null,
 ): string {
 	const result: RetrievalResult = outcome.result;
 	const { measured } = outcome;
@@ -652,6 +742,13 @@ export function renderResolve(
 		lines.push(`memory: ${result.memory_uri} revision ${result.revision ?? "?"}`);
 		lines.push("long summary:");
 		lines.push(result.memory_summary);
+	}
+	if (publication !== null) {
+		lines.push(
+			publication.published
+				? `nav: ${publication.nav_text ?? ""} (published; findable by memory_search)`
+				: `nav pending: ${publication.reason ?? "nav_not_published"} (not findable by memory_search yet)`,
+		);
 	}
 	if (result.answer !== null) lines.push(`answer: ${result.answer}`);
 	if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);

@@ -319,8 +319,6 @@ export function replaySavedRequest(input: {
   const memory = input.store.readMemory(parseMemoryUri(text(located, "uri")), integer(row, "revision"));
   if (memory === null) return null;
   if (input.require_current === true) {
-    // A cached answer must never hide a memory that went stale after it was
-    // saved: punt to the walk so the same-memory repair can run.
     const freshness = input.store.readFreshness(memory.uri, memory.revision);
     if (freshness !== null && (freshness.is_stale || freshness.revision_mismatch)) return null;
   }

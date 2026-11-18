@@ -80,7 +80,6 @@ export type HotspotEntry = {
   hit_count: number;
   access_count: number;
   last_access_at: string | null;
-  /** Current stale state of this memory; drives the block warning and dedup. */
   freshness: FreshnessBrief;
   /** Pool statistics read from the membership row. */
   admitted_seq: number;
@@ -114,7 +113,6 @@ export type HotspotMatch = {
   matched_tokens: string[];
   phrase_matched: boolean;
   retention_score: number;
-  /** Copied from the entry so the injection block and dedup stay freshness-aware. */
   freshness: FreshnessBrief;
 };
 

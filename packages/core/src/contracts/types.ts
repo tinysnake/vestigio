@@ -123,22 +123,17 @@ export type NavigationStatus = "pending" | "ready" | "failed";
 /** A phase of the PR-07 resolve pipeline, checkpointed once a revision is saved. */
 export type PersistenceStage = "searched" | "summarized" | "saved" | "returned";
 
-/** Compact stale state carried on every search card and hotspot entry. */
 export type FreshnessBrief = {
   is_stale: boolean;
   head_revision: Revision;
-  /** Pending (unacknowledged) stale events for this memory. */
   pending_count: number;
   /** Fingerprint of the head revision and sorted pending event ids. */
   freshness_sig: string;
 };
 
-/** Full freshness state returned with a read or a resolver result. */
 export type Freshness = FreshnessBrief & {
   memory_id: MemoryId;
-  /** The revision the caller asked for or was given. */
   delivered_revision: Revision;
-  /** True when `delivered_revision` is older than the current head. */
   revision_mismatch: boolean;
   pending: StaleEventSummary[];
   /** Total pending events, which may exceed `pending.length`. */
@@ -176,7 +171,6 @@ export type MemoryCard = {
   hit_count: number;
   access_count: number;
   last_access_at: string | null;
-  /** Always present on cards built by the delivery paths. */
   freshness?: FreshnessBrief;
 };
 
@@ -203,6 +197,5 @@ export type RetrievalResult = {
   next_action: string | null;
   continuation_id: string | null;
   budget_used: BudgetUsed;
-  /** Present on every delivered result; reports pending stale evidence. */
   freshness?: Freshness;
 };

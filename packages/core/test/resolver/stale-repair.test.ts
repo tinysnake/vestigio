@@ -1,12 +1,3 @@
-/**
- * Stale-hit repair has to survive the two short-circuits around it: a saved
- * request whose cached body has since gone stale, and a judge that answers
- * `sufficient:false` because its candidate window never carried the pending
- * evidence. Each case pins one line: the walk repairs the same memory instead
- * of replaying or duplicating it, the pending anchor is read once through its
- * real locator, and a failed read still lands a repair from the saved excerpt.
- */
-
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveMemory } from "../../src/resolver/index.js";
 import type { StaleEventSummary } from "../../src/contracts/index.js";
@@ -38,7 +29,6 @@ afterEach(() => {
 const projectA = { kind: "project", project_id: PROJECT_A } as const;
 const QUESTION = "默认端口是多少";
 
-/** A pending stale event anchored to a real obelisk message id. */
 function staleEvent(
   store: MemoryStore,
   memory_id: string,
@@ -89,10 +79,8 @@ describe("a stale saved request is never replayed as fresh", () => {
     const head = store.listHeads(projectA)[0];
     if (head === undefined) throw new Error("expected one head");
 
-    // The nav job ran after the answer shipped, so the memory is a card now.
     store.setNavigation(uri, 1, navWith("默认端口与回滚方式，改端口前值得读。"));
 
-    // Later evidence lands on the same memory after the request was answered.
     const event = staleEvent(store, head.memory_id, "m-99", "the default port changed to 9090", "2026-11-18T04:00:00Z");
 
     const secondModel = makeScriptedModel((kind) =>

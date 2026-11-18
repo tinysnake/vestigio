@@ -64,7 +64,6 @@ export default function vestigio(pi: ExtensionAPI): void {
 
 	pi.on("input", (event, ctx) => handleInput(state, event, ctx, pi));
 
-	// Append the maintenance instruction to the host prompt without replacing it.
 	pi.on("before_agent_start", (event) => ({
 		systemPrompt: `${event.systemPrompt}\n\n${STALE_MAINTENANCE_INSTRUCTIONS}`,
 	}));

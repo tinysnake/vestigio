@@ -30,7 +30,7 @@ function scopeLabel(project: string | null): string {
   return project ?? "global";
 }
 
-export function buildMediumUserMessage(input: MediumEvidenceInput, correction?: string): string {
+export function buildMediumUserMessage(input: MediumEvidenceInput, correction?: string, guidance?: string): string {
   const lines: string[] = [];
   lines.push(`current question: ${input.question}`);
   lines.push(`project: ${scopeLabel(input.project)}`);
@@ -47,6 +47,9 @@ export function buildMediumUserMessage(input: MediumEvidenceInput, correction?: 
     }
   }
   lines.push(`remember: ${MEDIUM_BODY_MIN}-${MEDIUM_BODY_MAX} non-whitespace characters, cite [来源:<id>], JSON only.`);
+  if (guidance !== undefined) {
+    lines.push("", "this rewrite:", guidance);
+  }
   if (correction !== undefined) {
     lines.push("", "correction:", correction);
   }

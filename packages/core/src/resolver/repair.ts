@@ -43,13 +43,10 @@ export const REPAIR_MAX_OUTPUT_TOKENS = 4096;
 /** Correction retries after the first attempt, each naming the measured miss. */
 export const REPAIR_MAX_CORRECTIONS = 2;
 
-/** Keep the new revision's source list bounded the same way delivery is. */
 export const REPAIR_MAX_SOURCES = 32;
 
 export type RepairStatus =
-  /** A new head revision absorbed the cited pending events. */
   | "repaired"
-  /** The memory has no pending events; there is nothing to repair. */
   | "not_applicable"
   /** The model answered without citing any pending event; nothing is written. */
   | "not_incorporated"
@@ -76,7 +73,6 @@ export type RepairOutcome = {
   calls: MediumCall[];
 };
 
-/** Identity and delivered revision of the memory being repaired. */
 export type RepairTarget = {
   uri: MemoryUri;
   revision: Revision;
@@ -92,9 +88,7 @@ export type RepairInput = {
    * revision are read, so a resolver card and a bare read target both fit.
    */
   card: RepairTarget;
-  /** Snapshot of pending events taken when the card was delivered. */
   pending: readonly StaleEventSummary[];
-  /** The answer the resolver walk produced from the gathered evidence. */
   answer: string;
   /** Bounded history excerpt text, keyed by its anchor message id. */
   excerpts: readonly { id: string; provider: string; source_instance: string; session_id: string; timestamp: string; text: string; source: SourceRef }[];
@@ -195,7 +189,7 @@ export async function repairStaleMemory(input: RepairInput): Promise<RepairOutco
       allowed_ids: allowedIds,
       max_output_tokens: REPAIR_MAX_OUTPUT_TOKENS,
       signal: input.signal,
-      ...(correction === null ? {} : { correction }),
+      ...(correction === null ? { guidance: repairGuidance(pending.length) } : { correction }),
     });
     calls.push(extraction.call);
     return extraction;
@@ -302,6 +296,24 @@ function correctionMessage(pending: readonly StaleEventSummary[], reason: string
     size,
     `It must cite at least one of these pending event ids with [来源:<id>]: ${ids}. No other id may appear.`,
   ].join("\n");
+}
+
+// Four pending events pushed the first attempt to 1389 code points and two
+// corrections could not pull it under the ceiling, so the read repaired nothing.
+// The judges then failed bodies that narrated the repair ("结合此前摘要",
+// "旧摘要的缺口") and bodies that dropped a path the changes never touched.
+function repairGuidance(pendingCount: number): string {
+  return [
+    `This rewrite folds ${pendingCount} pending change(s) into an existing summary.`,
+    "Write the resulting state only, as if nothing had ever been pending: never mention a previous summary, a gap, a correction, a confirmation or a pending event.",
+    "This replaces the general instruction to describe the discussion: do not say what was discussed, what was tried, or what is still uncertain.",
+    "Cite [来源:<id>] for each pending event you fold in, and state the resulting values once, in the conclusion, without enumerating the changes.",
+    "Keep every fact, path and procedure the summary already states and the changes do not replace; the new values replace the ones they supersede.",
+    "Never extend a rule further than the summary states it: a drill required after window or ratio changes does not become a drill after every change.",
+    "Never name a revision, an id, or the evidence set.",
+    "Do not hedge or raise an open question about a value the evidence settles.",
+    `Aim for ${MEDIUM_BODY_MIN + 100}-${MEDIUM_BODY_MAX - 250} non-whitespace code points so the body stays inside the limit.`,
+  ].join(" ");
 }
 
 function dedupeSources(sources: readonly SourceRef[]): SourceRef[] {

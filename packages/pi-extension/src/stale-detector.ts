@@ -42,13 +42,9 @@ export type DetectorSkipReason =
 export type DetectorRunOutcome = {
 	status: "ok" | "none" | "skipped" | "failed";
 	reason: DetectorSkipReason | null;
-	/** Events actually written (new rows). */
 	recorded: number;
-	/** Events the model reported that already existed. */
 	duplicates: number;
-	/** Findings the model returned. */
 	detected: number;
-	/** Whether a model call was made. */
 	called: boolean;
 	detail: string | null;
 };
@@ -63,7 +59,6 @@ const IDLE: DetectorRunOutcome = {
 	detail: null,
 };
 
-/** Remove an injected memory note before a turn is treated as evidence. */
 export function stripInjectedNote(text: string): string {
 	const open = text.indexOf(INJECTION_BLOCK_OPEN);
 	if (open < 0) return text;

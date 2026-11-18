@@ -29,6 +29,7 @@ export type StateDeps = {
 	open?: (options: { path: string }) => MemoryStore;
 	/** Replaces the OpenAI-compatible client in tests. */
 	create_model?: (options: OpenAiCompatibleOptions) => ModelPort;
+	create_history?: () => HistoryPort;
 };
 
 export class VestigioState {
@@ -38,6 +39,7 @@ export class VestigioState {
 	private store: MemoryStore | null = null;
 	private readonly open: (options: { path: string }) => MemoryStore;
 	private readonly createModel: (options: OpenAiCompatibleOptions) => ModelPort;
+	private readonly createHistory: (() => HistoryPort) | null;
 	private storeFailure: string | null = null;
 	private ledger: InjectionLedger = new InjectionLedger();
 	private history: HistoryPort | null = null;
@@ -60,6 +62,7 @@ export class VestigioState {
 		this.log = log ?? new DecisionLog(config.decision_log);
 		this.open = deps.open ?? openStore;
 		this.createModel = deps.create_model ?? createOpenAiCompatibleClient;
+		this.createHistory = deps.create_history ?? null;
 	}
 
 	/** Open the store once. Returns null (and logs once) when it cannot open. */
@@ -144,7 +147,6 @@ export class VestigioState {
 		return this.config.project_id ?? cwd;
 	}
 
-	/** The current session manager, for hooks that need to read entries. */
 	get sessionManagerRef(): SessionLike | null {
 		return this.sessionManager;
 	}
@@ -196,12 +198,17 @@ export class VestigioState {
 	 * history layer is simply not available, which `layeredSearch` reports.
 	 */
 	async historyPort(): Promise<HistoryPort | null> {
-		if (this.config.obelisk_home === null) return null;
 		if (this.history !== null) return this.history;
 		if (this.historyFailure !== null) return null;
 		try {
+			if (this.createHistory !== null) {
+				this.history = this.createHistory();
+				return this.history;
+			}
+			const home = this.config.obelisk_home;
+			if (home === null) return null;
 			this.history = createObeliskHistoryPort({
-				home: this.config.obelisk_home,
+				home,
 				cli_path: this.config.obelisk_cli ?? undefined,
 			});
 			return this.history;

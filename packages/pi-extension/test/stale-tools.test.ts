@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
-import type { Memory } from "@vestigio/core";
+import type { Memory, MemoryUri } from "@vestigio/core";
+import { countSummaryJobs } from "@vestigio/core/jobs";
+import type { HistoryHit, HistoryPort } from "@vestigio/core/retrieval";
+import { layeredSearch } from "@vestigio/core/retrieval";
 import { REPAIR_MAX_CORRECTIONS } from "@vestigio/core/resolver";
 import type { ModelPort, ModelRequest } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
@@ -110,21 +113,45 @@ function makeSessionManager(): { sessionManager: Record<string, unknown>; entrie
 
 type Reply = { text: string } | { fail: "cancelled" | "unavailable" };
 
+type ScriptedKind = "summary" | "judge" | "nav" | "other";
+
 /**
  * Routes by the system prompt, like the core extraction tests: one port serves
- * the medium repair call and the nav call, and the test can fail either alone.
+ * the medium repair call, the retrieval judge and the nav call, and the test
+ * can fail any of them alone.
  */
-function scriptedModel(route: (kind: "summary" | "nav" | "other", index: number) => Reply) {
-	const stats = { summary_calls: 0, nav_calls: 0, requests: [] as ModelRequest[] };
+function scriptedModel(
+	route: (kind: ScriptedKind, index: number, request: ModelRequest) => Reply,
+) {
+	const stats = {
+		summary_calls: 0,
+		judge_calls: 0,
+		nav_calls: 0,
+		requests: [] as ModelRequest[],
+	};
 	const port: ModelPort = {
 		async complete(request) {
 			stats.requests.push(request);
 			const system = request.messages[0]?.content ?? "";
-			const kind = system.includes("中期摘要") ? "summary" : system.includes("导航短摘要") ? "nav" : "other";
-			const index = kind === "summary" ? stats.summary_calls : stats.nav_calls;
+			const kind: ScriptedKind = system.includes("Decide whether the candidates")
+				? "judge"
+				: system.includes("中期摘要")
+					? "summary"
+					: system.includes("导航短摘要")
+						? "nav"
+						: "other";
+			const index =
+				kind === "summary"
+					? stats.summary_calls
+					: kind === "judge"
+						? stats.judge_calls
+						: kind === "nav"
+							? stats.nav_calls
+							: 0;
 			if (kind === "summary") stats.summary_calls += 1;
+			else if (kind === "judge") stats.judge_calls += 1;
 			else if (kind === "nav") stats.nav_calls += 1;
-			const reply = route(kind, index);
+			const reply = route(kind, index, request);
 			if ("fail" in reply) return { ok: false, status: reply.fail, reason: "scripted" };
 			return {
 				ok: true,
@@ -140,7 +167,7 @@ function scriptedModel(route: (kind: "summary" | "nav" | "other", index: number)
 	return { port, stats };
 }
 
-function setup(options: { model?: ModelPort } = {}) {
+function setup(options: { model?: ModelPort; history?: HistoryPort } = {}) {
 	const { path, store } = makeStore();
 	store.saveMemory(memory());
 	store.upsertHotspotMembership({
@@ -162,11 +189,10 @@ function setup(options: { model?: ModelPort } = {}) {
 					VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1",
 					VESTIGIO_MODEL_ID: "scripted",
 				};
-	const state = new VestigioState(
-		readConfig(env),
-		new DecisionLog(null),
-		options.model === undefined ? {} : { create_model: () => options.model! },
-	);
+	const state = new VestigioState(readConfig(env), new DecisionLog(null), {
+		...(options.model === undefined ? {} : { create_model: () => options.model! }),
+		...(options.history === undefined ? {} : { create_history: () => options.history! }),
+	});
 	const { sessionManager } = makeSessionManager();
 	state.bindSession(sessionManager as never);
 	const tools = new Map<string, CapturedTool>();
@@ -435,6 +461,218 @@ describe("memory_read freshness", () => {
 			.get("memory_search")!
 			.execute("call-search", { query: "部署 端口" }, undefined, undefined, ctx);
 		expect(result.content[0]!.text).toContain("stale: 未吸收 1 条后续证据");
+		store.close();
+	});
+});
+
+function judgeDecision(overrides: Record<string, unknown>): string {
+	return JSON.stringify({
+		sufficient: false,
+		answer: null,
+		evidence_ids: [],
+		read_uris: [],
+		next_queries: [],
+		conflicts: [],
+		descend: false,
+		...overrides,
+	});
+}
+
+function historyHit(): HistoryHit {
+	return {
+		source_ref: {
+			provider: "pi",
+			source_instance: "session",
+			session_id: "s-stale-history",
+			message_id: "h-rollback",
+			parent_message_id: null,
+			project_id: PROJECT,
+			timestamp: AT,
+			content_hash: "sha256:99",
+			locator: "/tmp/vestigio-stale-history.jsonl#h-rollback",
+		},
+		text: body("回滚顺序改为先恢复镜像，再恢复配置；回滚前不再执行清理脚本。"),
+		timestamp: AT,
+		role: "user",
+		evidence_complete: true,
+		project_resolved: true,
+	};
+}
+
+function fakeHistory(hit: HistoryHit): HistoryPort {
+	return {
+		async probe() {
+			return { available: true, reason: null };
+		},
+		async search() {
+			return { ok: true, value: { hits: [hit], evidence: "resolved", elapsed_ms: 1 } };
+		},
+		async readByAnchor() {
+			return {
+				ok: true,
+				value: {
+					anchor: hit.source_ref,
+					messages: [{ source_ref: hit.source_ref, text: hit.text, role: hit.role }],
+					has_more: false,
+					elapsed_ms: 1,
+				},
+			};
+		},
+	};
+}
+
+async function findInStore(store: ReturnType<typeof makeStore>["store"], query: string) {
+	const outcome = await layeredSearch({
+		store,
+		query,
+		scope: { kind: "project", project_id: PROJECT },
+		limit: 5,
+	});
+	return outcome.result.cards.map((card) => card.uri);
+}
+
+describe("memory_resolve publication", () => {
+	it("publishes a memory it just saved so the next search finds it", async () => {
+		let navStarted = 0;
+		const model = scriptedModel((kind, index) => {
+			if (kind === "judge") {
+				return index === 2
+					? {
+							text: judgeDecision({
+								sufficient: true,
+								answer: "回滚顺序是先恢复镜像，再恢复配置。",
+								evidence_ids: ["h-rollback"],
+							}),
+						}
+					: { text: judgeDecision({ descend: true }) };
+			}
+			if (kind === "summary") {
+				return { text: JSON.stringify({ body: body("回滚顺序改为先恢复镜像，再恢复配置。 [来源:e1]") }) };
+			}
+			navStarted = performance.now();
+			return { text: JSON.stringify({ nav: "回滚顺序：先恢复镜像，再恢复配置。" }) };
+		});
+		const { store, tools, ctx } = setup({ model: model.port, history: fakeHistory(historyHit()) });
+
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-resolve-save", { question: "回滚顺序 镜像" }, undefined, undefined, ctx);
+		const finishedAt = performance.now();
+		const text = result.content[0]!.text;
+		const uri = result.details.memory_uri as MemoryUri;
+		const revision = result.details.revision as number;
+
+		expect(uri).toMatch(/^memory:\/\//);
+		const head = store.readMemory(uri, revision)!;
+		expect(head.state).toBe("published");
+		expect(head.nav?.source_revision).toBe(revision);
+		expect(result.details.navigation_status).toBe("ready");
+		expect(text).toContain("nav=");
+		expect(text).not.toContain("nav=pending");
+		expect(text).toContain("nav: 回滚顺序：先恢复镜像，再恢复配置。");
+		expect(await findInStore(store, "回滚 镜像")).toContain(uri);
+		expect(model.stats.nav_calls).toBe(1);
+		// The publication step's share of the tool call: from the nav request to
+		// the verified return. Bounded so a hung nav cannot hold the turn.
+		expect(finishedAt - navStarted).toBeLessThan(5_000);
+		store.close();
+	});
+
+	it("publishes a stale memory the resolver repairs and leaves no pending evidence", async () => {
+		let cited: string | null = null;
+		const model = scriptedModel((kind) => {
+			if (kind === "judge") return { text: judgeDecision({ descend: false }) };
+			if (kind === "summary") {
+				return { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已同步。 [来源:${cited}]`) }) };
+			}
+			return { text: JSON.stringify({ nav: "部署脚本的默认端口已经改为 18080。" }) };
+		});
+		const { store, tools, ctx } = setup({ model: model.port });
+		await markStale(tools, ctx);
+		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
+
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-resolve-repair", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		const head = store.readMemory("memory://vestigio/mem-deploy")!;
+
+		expect(head.revision).toBe(2);
+		expect(head.state).toBe("published");
+		expect(head.nav?.source_revision).toBe(2);
+		expect(result.details.navigation_status).toBe("ready");
+		const freshness = result.details.freshness as { pending_count: number };
+		expect(freshness.pending_count).toBe(0);
+		expect(text).not.toContain("nav=pending");
+		expect(await findInStore(store, "部署 端口")).toContain("memory://vestigio/mem-deploy");
+		expect(model.stats.nav_calls).toBe(1);
+		store.close();
+	});
+
+	it("keeps the answer and reports nav_pending when the nav step returns unusable text", async () => {
+		let cited: string | null = null;
+		const model = scriptedModel((kind) => {
+			if (kind === "judge") {
+				return {
+					text: judgeDecision({
+						sufficient: true,
+						answer: "默认端口现在是 18080，部署脚本也已同步。",
+						evidence_ids: ["mem-deploy"],
+					}),
+				};
+			}
+			if (kind === "summary") {
+				return { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已同步。 [来源:${cited}]`) }) };
+			}
+			return { text: "这不是 JSON，也没有 nav 字段。" };
+		});
+		const { store, tools, ctx } = setup({ model: model.port });
+		await markStale(tools, ctx);
+		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
+
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-resolve-nav-fail", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+
+		expect(result.details.status).toBe("resolved");
+		expect(result.details.navigation_status).toBe("pending");
+		expect(text).toContain("nav pending: nav_not_generated");
+		expect(text).toContain("18080");
+		expect(text).toContain("answer:");
+		const head = store.readMemory("memory://vestigio/mem-deploy")!;
+		expect(head.revision).toBe(2);
+		expect(head.state).toBe("medium_ready");
+		expect(head.nav).toBeNull();
+		expect(countSummaryJobs(store.database())).toBe(1);
+		store.close();
+	});
+
+	it("does not publish when the resolve saves nothing", async () => {
+		const model = scriptedModel((kind) => {
+			expect(kind).toBe("judge");
+			return {
+				text: judgeDecision({
+					sufficient: true,
+					answer: "默认端口是 18080，部署脚本也要一起改。",
+					evidence_ids: ["mem-deploy"],
+				}),
+			};
+		});
+		const { store, tools, ctx } = setup({ model: model.port });
+		expect(countSummaryJobs(store.database())).toBe(0);
+
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-resolve-reuse", { question: "部署 端口" }, undefined, undefined, ctx);
+
+		expect(result.details.persistence_status).toBe("not_attempted");
+		expect(result.details.navigation_status).toBe("pending");
+		expect(result.content[0]!.text).not.toContain("nav pending:");
+		expect(model.stats.summary_calls).toBe(0);
+		expect(model.stats.nav_calls).toBe(0);
+		expect(model.stats.requests).toHaveLength(1);
+		expect(countSummaryJobs(store.database())).toBe(0);
 		store.close();
 	});
 });

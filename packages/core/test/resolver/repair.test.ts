@@ -222,6 +222,20 @@ describe("repairStaleMemory", () => {
     expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(1);
   });
 
+  it("tells the first attempt how to fit several pending events into the limit", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind) =>
+      kind === "summary" ? { text: JSON.stringify({ body: bodyOfLength(600, fixture.first.event_id) }) } : { text: "{}" },
+    );
+    await repairStaleMemory(repairInput(fixture, model));
+
+    const first = model.requests[0]!.messages.at(-1)?.content ?? "";
+    expect(first).toContain("this rewrite:");
+    expect(first).toContain("folds 2 pending change(s)");
+    expect(first).toContain("600-750");
+    expect(first).not.toContain("correction:");
+  });
+
   it("gives up after the correction budget and leaves every event pending", async () => {
     const fixture = seed();
     const model = makeScriptedModel((kind) =>
