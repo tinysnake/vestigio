@@ -20,7 +20,7 @@ import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/re
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
-import { formatJobsHuman, formatReadHuman, formatSearchHuman } from "./format.js";
+import { formatFreshnessLines, formatJobsHuman, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 
 /** The plan's one configured backend; never upgraded automatically. */
@@ -554,7 +554,12 @@ function formatResolveHuman(question: string, outcome: ResolveOutcome, info: Res
   );
   for (const card of result.cards) {
     lines.push(`card [${card.state} r${card.revision}] ${card.uri} ${card.title}`);
+    const stale = staleCardLine(card.freshness);
+    if (stale !== null) {
+      lines.push(stale.trimStart());
+    }
   }
+  lines.push(...formatFreshnessLines(result.freshness));
   if (result.answer !== null) lines.push(`answer: ${result.answer}`);
   if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);
   if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);

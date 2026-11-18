@@ -9,6 +9,10 @@ export type StorageErrorCode =
   | "created_at_mismatch"
   | "not_found"
   | "duplicate_injection_receipt"
+  | "scope_mismatch"
+  | "stale_future_revision"
+  | "stale_event_conflict"
+  | "stale_unknown_event"
   | "row_corrupt"
   | "closed";
 

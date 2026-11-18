@@ -148,12 +148,17 @@ export function planInjection(input: PlanInjectionInput): InjectionPlan {
       return notInjected(input, deadline, budgetBytes, "no_match");
     }
 
-    // Session dedup: a memory is injected once per Session (the ledger), and at
-    // most once per turn even when several aliases hit (the `seen` set).
+    // Session dedup: a memory is injected once per freshness snapshot (the
+    // ledger), and at most once per turn even when several aliases hit (the
+    // `seen` set). A changed pending-event set is a new snapshot, so a newly
+    // stale memory is not hidden by an older delivery.
     const fresh: HotspotMatch[] = [];
     const seen = new Set<MemoryId>();
     for (const match of matched) {
-      if (seen.has(match.memory_id) || input.ledger.has(match.memory_id)) {
+      if (
+        seen.has(match.memory_id) ||
+        input.ledger.isDelivered(match.memory_id, match.freshness.freshness_sig)
+      ) {
         continue;
       }
       seen.add(match.memory_id);
@@ -292,7 +297,7 @@ export function commitInjection(input: CommitInjectionInput): CommitResult {
       committed_at: input.at,
     };
     try {
-      store.recordInjectionReceipt(receipt);
+      store.recordInjectionReceipt(receipt, { freshness_sig: match.freshness.freshness_sig });
       result.receipts += 1;
       delivered.push(match.memory_id);
     } catch (error) {
@@ -315,11 +320,24 @@ export function commitInjection(input: CommitInjectionInput): CommitResult {
   // must not tell the user the memory arrived unless both are true.
   result.delivered = delivered;
   const receiptComplete = delivered.length === plan.injected.length;
-  result.ledger_added = receiptComplete ? ledger.addMany(delivered, input.at) : [];
+  const freshnessSigs: Record<string, string> = {};
+  for (const match of plan.injected) {
+    if (match.freshness.freshness_sig.length > 0) {
+      freshnessSigs[match.memory_id] = match.freshness.freshness_sig;
+    }
+  }
+  result.ledger_added = receiptComplete
+    ? ledger.addMany(delivered, input.at, freshnessSigs)
+    : [];
   result.delta =
     result.ledger_added.length === 0
       ? null
-      : { at: input.at, input_id: plan.input_id, memory_ids: result.ledger_added };
+      : {
+          at: input.at,
+          input_id: plan.input_id,
+          memory_ids: result.ledger_added,
+          ...(Object.keys(freshnessSigs).length === 0 ? {} : { freshness_sigs: freshnessSigs }),
+        };
   return result;
 }
 

@@ -74,6 +74,11 @@ export type MediumExtractInput = {
   allowed_ids: readonly string[];
   max_output_tokens: number;
   signal: AbortSignal;
+  /**
+   * Appended to the user message on a retry: what was wrong with the previous
+   * reply and what the corrected one must satisfy.
+   */
+  correction?: string | undefined;
 };
 
 /** Evidence ids a saved medium body may cite, derived from the used sources. */

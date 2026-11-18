@@ -78,6 +78,13 @@ export function buildJudgeUserMessage(input: JudgeCandidateInput): string {
   for (const card of input.cards) {
     lines.push(`- memory id=${card.memory_id} uri=${card.uri} state=${card.state} title=${card.title}`);
     lines.push(`  nav: ${card.nav_text}`);
+    if (card.freshness !== undefined) {
+      lines.push(
+        card.freshness.is_stale
+          ? `  freshness: STALE — ${card.freshness.pending_count} pending later-evidence event(s) not yet absorbed; head revision ${card.freshness.head_revision}`
+          : `  freshness: current (head revision ${card.freshness.head_revision})`,
+      );
+    }
   }
   for (const excerpt of input.excerpts) {
     const ref = excerpt.source_ref;

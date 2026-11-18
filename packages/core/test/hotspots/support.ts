@@ -1,4 +1,5 @@
 import type {
+  FreshnessBrief,
   HotspotMembership,
   InjectionReceipt,
   Memory,
@@ -95,9 +96,25 @@ export class FakeStore implements HotspotStore {
   /** Called before every `readMemory`, after the clock is read. */
   onReadMemory: (() => void) | null = null;
   receiptError: Error | null = null;
+  readonly freshness = new Map<MemoryId, FreshnessBrief>();
 
   readProjectActivity(projectId: string): ProjectActivity | null {
     return this.activity.get(projectId) ?? null;
+  }
+
+  readFreshness(uri: MemoryUri): FreshnessBrief | null {
+    const memory = this.memories.get(uri);
+    if (memory === undefined) {
+      return null;
+    }
+    return (
+      this.freshness.get(memory.memory_id) ?? {
+        is_stale: false,
+        head_revision: memory.revision,
+        pending_count: 0,
+        freshness_sig: "",
+      }
+    );
   }
 
   readHotspotMemberships(projectId: string): HotspotMembership[] {
@@ -118,7 +135,7 @@ export class FakeStore implements HotspotStore {
     return true;
   }
 
-  recordInjectionReceipt(receipt: InjectionReceipt): void {
+  recordInjectionReceipt(receipt: InjectionReceipt, _options?: { freshness_sig?: string }): void {
     if (this.receiptError !== null) {
       throw this.receiptError;
     }
@@ -198,6 +215,7 @@ export function makeEntry(overrides: Partial<HotspotEntry> = {}): HotspotEntry {
     last_access_seq: 0,
     recent_hit_weight: 0,
     recent_access_weight: 0,
+    freshness: { is_stale: false, head_revision: 1, pending_count: 0, freshness_sig: "" },
     ...overrides,
   };
 }
@@ -218,6 +236,7 @@ export function makeMatch(overrides: Partial<HotspotMatch> = {}): HotspotMatch {
     matched_tokens: ["部署", "端口"],
     phrase_matched: false,
     retention_score: 1,
+    freshness: { is_stale: false, head_revision: 1, pending_count: 0, freshness_sig: "" },
     ...overrides,
   };
 }

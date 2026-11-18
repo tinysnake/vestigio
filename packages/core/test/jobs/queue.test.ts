@@ -43,6 +43,19 @@ describe("summary job queue", () => {
     expect(readSummaryJob(db, "mem-a", 1)?.state).toBe("pending");
   });
 
+  it("claims only the job scoped to one memory and revision", () => {
+    const store = newStore();
+    const db = store.database();
+    enqueueSummaryJob(db, { memory_id: "mem-a", revision: 1, at: AT });
+    enqueueSummaryJob(db, { memory_id: "mem-b", revision: 1, at: AT });
+
+    expect(claimDueSummaryJob(db, { now_ms: T0, owner: "w1", memory_id: "mem-a", revision: 2 })).toBeNull();
+    const scoped = claimDueSummaryJob(db, { now_ms: T0, owner: "w1", memory_id: "mem-b", revision: 1 });
+    expect(scoped?.memory_id).toBe("mem-b");
+    expect(readSummaryJob(db, "mem-a", 1)?.state).toBe("pending");
+    expect(readSummaryJob(db, "mem-b", 1)?.state).toBe("running");
+  });
+
   it("gives a job to one owner, and hands it to another only after the lease expires", () => {
     const store = newStore();
     const db = store.database();

@@ -29,6 +29,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "summary_jobs",
     sql: readFileSync(new URL("../../migrations/0002_summary_jobs.sql", import.meta.url), "utf8"),
   },
+  {
+    version: 3,
+    name: "stale_events",
+    sql: readFileSync(new URL("../../migrations/0003_stale_events.sql", import.meta.url), "utf8"),
+  },
 ];
 
 export function listAppliedMigrations(db: DatabaseSync): AppliedMigration[] {

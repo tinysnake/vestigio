@@ -10,6 +10,7 @@
 
 import {
   memoryUri,
+  type FreshnessBrief,
   type HotspotMembership,
   type Memory,
   type MemoryId,
@@ -49,7 +50,12 @@ export function evaluatePool(input: EvaluatePoolInput): HotspotPool {
     const uri = memoryUri(input.store.storeId, membership.memory_id);
     const memory = input.store.readMemory(uri);
     input.deadline?.check("readMemory");
-    const joined = joinMember(memory, membership, input.project_id);
+    const joined = joinMember(
+      memory,
+      membership,
+      input.project_id,
+      freshnessFor(input.store, membership.memory_id),
+    );
     if (joined.kind === "entry") {
       entries.push(joined.entry);
     } else {
@@ -65,6 +71,7 @@ function joinMember(
   memory: Memory | null,
   membership: HotspotMembership,
   projectId: string,
+  freshness: FreshnessBrief,
 ): JoinResult {
   if (memory === null) {
     return { kind: "skip", reason: "memory_missing" };
@@ -101,12 +108,28 @@ function joinMember(
       hit_count: memory.hit_count,
       access_count: memory.access_count,
       last_access_at: memory.last_access_at,
+      freshness,
       admitted_seq: membership.admitted_seq,
       last_hit_seq: membership.last_hit_seq,
       last_access_seq: membership.last_access_seq,
       recent_hit_weight: membership.recent_hit_weight,
       recent_access_weight: membership.recent_access_weight,
     },
+  };
+}
+
+/** Freshness for a memory, with a conservative fallback when unavailable. */
+function freshnessFor(store: HotspotStore, memoryId: MemoryId): FreshnessBrief {
+  const memory = store.readMemory(memoryUri(store.storeId, memoryId));
+  const freshness = store.readFreshness(memoryUri(store.storeId, memoryId));
+  if (freshness !== null) {
+    return freshness;
+  }
+  return {
+    is_stale: false,
+    head_revision: memory?.revision ?? 1,
+    pending_count: 0,
+    freshness_sig: "",
   };
 }
 
@@ -204,6 +227,7 @@ export function admitHotspotCandidate(input: AdmitCandidateInput): AdmissionResu
       input.store.readMemory(memoryUri(input.store.storeId, membership.memory_id)),
       membership,
       input.project_id,
+      freshnessFor(input.store, membership.memory_id),
     );
     if (joined.kind !== "entry") {
       // A slot whose memory cannot be injected is the weakest possible holder.

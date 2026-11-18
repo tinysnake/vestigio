@@ -50,6 +50,10 @@ export class VestigioState {
 	private turn = 0;
 	private sessionId = "unknown";
 	private branchRef = "root";
+	private sessionManager: SessionLike | null = null;
+	private readonly seen: Set<string> = new Set();
+	private readonly repairAttempted: Set<string> = new Set();
+	private detectorCheckpoint: string | null = null;
 
 	constructor(config: VestigioConfig, log?: DecisionLog, deps: StateDeps = {}) {
 		this.config = config;
@@ -95,15 +99,31 @@ export class VestigioState {
 
 	/**
 	 * Rebind to a session or a moved branch. The ledger is rebuilt from the
-	 * branch, which is what makes fork inherit and revert forget.
+	 * branch, which is what makes fork inherit and revert forget. The detector
+	 * checkpoint and the seen-memory set are per session, so they reset here.
 	 */
 	bindSession(sessionManager: SessionLike): void {
+		this.sessionManager = sessionManager;
 		try {
 			this.sessionId = sessionManager.getSessionId();
 		} catch {
 			this.sessionId = "unknown";
 		}
 		this.branchRef = branchRefFor(sessionManager);
+		this.detectorCheckpoint = null;
+		try {
+			const branch = sessionManager.getBranch();
+			const ids = new Set(branch.map((entry) => entry.id));
+			for (const entry of branch) {
+				if (entry.type === "custom" && entry.customType === "vestigio.detector-checkpoint" && typeof entry.data === "object" && entry.data !== null && "entry_id" in entry.data && typeof entry.data.entry_id === "string" && ids.has(entry.data.entry_id)) {
+					this.detectorCheckpoint = entry.data.entry_id;
+				}
+			}
+		} catch {
+			this.detectorCheckpoint = null;
+		}
+		this.seen.clear();
+		this.repairAttempted.clear();
 		try {
 			this.ledger = loadLedger(sessionManager);
 		} catch {
@@ -122,6 +142,46 @@ export class VestigioState {
 
 	projectId(cwd: string): string {
 		return this.config.project_id ?? cwd;
+	}
+
+	/** The current session manager, for hooks that need to read entries. */
+	get sessionManagerRef(): SessionLike | null {
+		return this.sessionManager;
+	}
+
+	/**
+	 * Remember a memory the agent saw this session (search card, read or
+	 * resolve). The `agent_end` detector only inspects memories the agent
+	 * actually met, plus whatever the store already flags as pending.
+	 */
+	noteMemorySeen(memoryId: string): void {
+		this.seen.add(memoryId);
+	}
+
+	seenMemoryIds(): string[] {
+		return [...this.seen];
+	}
+
+	/**
+	 * A read repairs at most once per memory per session. The attempt is
+	 * recorded before the model call, so a failed or cancelled repair is not
+	 * retried by the next read in the same session; a later session retries.
+	 */
+	repairAttemptedFor(memoryId: string): boolean {
+		return this.repairAttempted.has(memoryId);
+	}
+
+	noteRepairAttempt(memoryId: string): void {
+		this.repairAttempted.add(memoryId);
+	}
+
+	/** The last entry the detector inspected, so a turn is judged once. */
+	get detectorCheckpointId(): string | null {
+		return this.detectorCheckpoint;
+	}
+
+	advanceDetectorCheckpoint(entryId: string | null): void {
+		this.detectorCheckpoint = entryId;
 	}
 
 	/** Monotonic per-session turn counter; unique even for same-millisecond input. */

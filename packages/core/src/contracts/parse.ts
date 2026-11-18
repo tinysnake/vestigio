@@ -1,5 +1,7 @@
 import type {
   BudgetUsed,
+  Freshness,
+  FreshnessBrief,
   HotspotMembership,
   InjectionReceipt,
   MediumSummary,
@@ -14,6 +16,8 @@ import type {
   RetrievalStatus,
   Scope,
   SourceRef,
+  StaleEventSummary,
+  StaleProducer,
   UsageChannel,
   UsageEvent,
   UsageEventKind,
@@ -58,6 +62,34 @@ export const PERSISTENCE_STATUSES = [
   "budget_exhausted",
 ] as const;
 export const NAVIGATION_STATUSES = ["pending", "ready", "failed"] as const;
+export const STALE_PRODUCERS = ["agent", "detector"] as const;
+
+function readBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    fail(path, "invalid_type", "expected a boolean");
+  }
+  return value;
+}
+
+function readOptionalField<T>(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  parse: (value: unknown, path: string) => T,
+): T | undefined {
+  if (!Object.hasOwn(record, key) || record[key] === undefined) {
+    return undefined;
+  }
+  return parse(record[key], `${path}.${key}`);
+}
+
+function withOptional<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
+}
+
+function parseBooleanField(record: Record<string, unknown>, key: string, path: string): boolean {
+  return readBoolean(readField(record, key, path), `${path}.${key}`);
+}
 
 export function parseMemoryState(value: unknown, path = "$"): MemoryState {
   return readUnion(value, path, MEMORY_STATES);
@@ -302,6 +334,139 @@ export function parseHotspotMembership(value: unknown, path = "$"): HotspotMembe
   };
 }
 
+export function parseStaleProducer(value: unknown, path = "$"): StaleProducer {
+  return readUnion(value, path, STALE_PRODUCERS);
+}
+
+export function parseFreshnessBrief(value: unknown, path = "$"): FreshnessBrief {
+  const record = readRecord(value, path);
+  const pending_count = readInteger(
+    readField(record, "pending_count", path),
+    `${path}.pending_count`,
+    0,
+  );
+  const freshness_sig = readString(readField(record, "freshness_sig", path), `${path}.freshness_sig`);
+  const is_stale = parseBooleanField(record, "is_stale", path);
+  if (is_stale !== pending_count > 0) {
+    fail(`${path}.is_stale`, "invariant_violation", "is_stale must match pending_count > 0");
+  }
+  if (freshness_sig.length === 0 && pending_count > 0) {
+    fail(
+      `${path}.freshness_sig`,
+      "invariant_violation",
+      "pending events require a freshness fingerprint",
+    );
+  }
+  return {
+    is_stale,
+    head_revision: parseRevision(readField(record, "head_revision", path), `${path}.head_revision`),
+    pending_count,
+    freshness_sig,
+  };
+}
+
+export function parseStaleEventSummary(value: unknown, path = "$"): StaleEventSummary {
+  const record = readRecord(value, path);
+  const excerpt = readString(readField(record, "excerpt", path), `${path}.excerpt`);
+  const excerpt_char_count = readInteger(
+    readField(record, "excerpt_char_count", path),
+    `${path}.excerpt_char_count`,
+    0,
+  );
+  if (codePointCount(excerpt) !== excerpt_char_count) {
+    fail(
+      `${path}.excerpt_char_count`,
+      "invariant_violation",
+      "excerpt_char_count must be the excerpt's code point count",
+    );
+  }
+  const sources = readArray(readField(record, "sources", path), `${path}.sources`).map((source, index) =>
+    parseSourceRef(source, `${path}.sources[${index}]`),
+  );
+  const source_count = readInteger(readField(record, "source_count", path), `${path}.source_count`, 0);
+  if (source_count < sources.length) {
+    fail(`${path}.source_count`, "invariant_violation", "source_count cannot be below the listed count");
+  }
+  const sources_truncated = parseBooleanField(record, "sources_truncated", path);
+  if (sources_truncated !== source_count > sources.length) {
+    fail(
+      `${path}.sources_truncated`,
+      "invariant_violation",
+      "sources_truncated must match whether sources were cut",
+    );
+  }
+  return {
+    event_id: readNonEmptyString(readField(record, "event_id", path), `${path}.event_id`),
+    memory_id: parseMemoryId(readField(record, "memory_id", path), `${path}.memory_id`),
+    observed_revision: parseRevision(
+      readField(record, "observed_revision", path),
+      `${path}.observed_revision`,
+    ),
+    reason: readNonEmptyString(readField(record, "reason", path), `${path}.reason`),
+    excerpt,
+    excerpt_truncated: parseBooleanField(record, "excerpt_truncated", path),
+    excerpt_char_count,
+    sources,
+    source_count,
+    sources_truncated,
+    branch_ref: readNullableString(readField(record, "branch_ref", path), `${path}.branch_ref`),
+    producer: parseStaleProducer(readField(record, "producer", path), `${path}.producer`),
+    created_at: parseTimestamp(readField(record, "created_at", path), `${path}.created_at`),
+  };
+}
+
+export function parseFreshness(value: unknown, path = "$"): Freshness {
+  const record = readRecord(value, path);
+  const brief = parseFreshnessBrief(value, path);
+  const memory_id = parseMemoryId(readField(record, "memory_id", path), `${path}.memory_id`);
+  const delivered_revision = parseRevision(
+    readField(record, "delivered_revision", path),
+    `${path}.delivered_revision`,
+  );
+  if (delivered_revision > brief.head_revision) {
+    fail(
+      `${path}.delivered_revision`,
+      "invariant_violation",
+      "delivered_revision cannot be ahead of head_revision",
+    );
+  }
+  const revision_mismatch = parseBooleanField(record, "revision_mismatch", path);
+  if (revision_mismatch !== delivered_revision < brief.head_revision) {
+    fail(
+      `${path}.revision_mismatch`,
+      "invariant_violation",
+      "revision_mismatch must match delivered_revision < head_revision",
+    );
+  }
+  const pending = readArray(readField(record, "pending", path), `${path}.pending`).map((event, index) =>
+    parseStaleEventSummary(event, `${path}.pending[${index}]`),
+  );
+  for (const event of pending) {
+    if (event.memory_id !== memory_id) {
+      fail(`${path}.pending`, "invariant_violation", "every pending event must belong to memory_id");
+    }
+  }
+  const pending_truncated = parseBooleanField(record, "pending_truncated", path);
+  if (pending_truncated !== brief.pending_count > pending.length) {
+    fail(
+      `${path}.pending_truncated`,
+      "invariant_violation",
+      "pending_truncated must match whether pending events were cut",
+    );
+  }
+  if (pending.length > brief.pending_count) {
+    fail(`${path}.pending`, "invariant_violation", "pending cannot exceed pending_count");
+  }
+  return {
+    ...brief,
+    memory_id,
+    delivered_revision,
+    revision_mismatch,
+    pending,
+    pending_truncated,
+  };
+}
+
 export function parseMemoryCard(value: unknown, path = "$"): MemoryCard {
   const record = readRecord(value, path);
   const memory_id = parseMemoryId(readField(record, "memory_id", path), `${path}.memory_id`);
@@ -334,6 +499,7 @@ export function parseMemoryCard(value: unknown, path = "$"): MemoryCard {
       `${path}.last_access_at`,
       parseTimestamp,
     ),
+    ...withOptional("freshness", readOptionalField(record, "freshness", path, parseFreshnessBrief)),
   };
 }
 
@@ -402,6 +568,24 @@ export function parseRetrievalResult(value: unknown, path = "$"): RetrievalResul
     `${path}.continuation_id`,
   );
   const budget_used = parseBudgetUsed(readField(record, "budget_used", path), `${path}.budget_used`);
+  const freshness = readOptionalField(record, "freshness", path, parseFreshness);
+  if (freshness !== undefined && memory_uri !== null) {
+    const { memoryId } = splitMemoryUri(memory_uri);
+    if (freshness.memory_id !== memoryId) {
+      fail(
+        `${path}.freshness.memory_id`,
+        "invariant_violation",
+        "freshness must describe the result's memory_uri",
+      );
+    }
+  }
+  if (freshness !== undefined && revision !== null && freshness.delivered_revision !== revision) {
+    fail(
+      `${path}.freshness.delivered_revision`,
+      "invariant_violation",
+      "freshness must describe the result's revision",
+    );
+  }
   if (status === "not_found" && (cards.length > 0 || memory_summary !== null)) {
     fail(
       `${path}.status`,
@@ -424,5 +608,6 @@ export function parseRetrievalResult(value: unknown, path = "$"): RetrievalResul
     next_action,
     continuation_id,
     budget_used,
+    ...withOptional("freshness", freshness),
   };
 }

@@ -13,6 +13,7 @@
     "./retrieval": "./src/retrieval/index.ts",
     "./resolver": "./src/resolver/index.ts",
     "./extraction": "./src/extraction/index.ts",
+    "./stale": "./src/stale/index.ts",
     "./jobs": "./src/jobs/index.ts",
     "./storage": "./src/storage/index.ts"
   },

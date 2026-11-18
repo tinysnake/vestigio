@@ -139,11 +139,29 @@ export function countSummaryJobs(db: DatabaseSync, state?: SummaryJobState): num
  */
 export function claimDueSummaryJob(
   db: DatabaseSync,
-  input: { now_ms: number; lease_ms?: number; owner: string; max_attempts?: number },
+  input: {
+    now_ms: number;
+    lease_ms?: number;
+    owner: string;
+    max_attempts?: number;
+    /** Claim only this memory's job; both narrow the same compare-and-set. */
+    memory_id?: string | undefined;
+    revision?: number | undefined;
+  },
 ): SummaryJob | null {
   const leaseMs = Math.max(1, Math.trunc(input.lease_ms ?? DEFAULT_SUMMARY_JOB_LEASE_MS));
   const maxAttempts = Math.max(1, Math.trunc(input.max_attempts ?? SUMMARY_JOB_MAX_ATTEMPTS));
   const at = new Date(input.now_ms).toISOString();
+  const filters: string[] = [];
+  const params: (string | number)[] = [maxAttempts, input.now_ms];
+  if (input.memory_id !== undefined) {
+    filters.push("AND memory_id = ?");
+    params.push(input.memory_id);
+  }
+  if (input.revision !== undefined) {
+    filters.push("AND revision = ?");
+    params.push(input.revision);
+  }
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const candidate = db
       .prepare(
@@ -151,10 +169,11 @@ export function claimDueSummaryJob(
           WHERE attempts < ?
             AND (state = 'pending'
                  OR (state = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)))
+          ${filters.join("\n          ")}
           ORDER BY created_at ASC, job_id ASC
           LIMIT 1`,
       )
-      .get(maxAttempts, input.now_ms);
+      .get(...params);
     if (candidate === undefined) {
       return null;
     }

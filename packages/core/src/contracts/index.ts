@@ -1,5 +1,7 @@
 export type {
   BudgetUsed,
+  Freshness,
+  FreshnessBrief,
   HotspotMembership,
   InjectionReceipt,
   MediumSummary,
@@ -18,6 +20,8 @@ export type {
   Revision,
   Scope,
   SourceRef,
+  StaleEventSummary,
+  StaleProducer,
   StoreId,
   UsageChannel,
   UsageEvent,
@@ -47,9 +51,12 @@ export {
   NAVIGATION_STATUSES,
   PERSISTENCE_STATUSES,
   RETRIEVAL_STATUSES,
+  STALE_PRODUCERS,
   USAGE_CHANNELS,
   USAGE_EVENT_KINDS,
   parseBudgetUsed,
+  parseFreshness,
+  parseFreshnessBrief,
   parseHotspotMembership,
   parseInjectionReceipt,
   parseMediumSummary,
@@ -64,10 +71,22 @@ export {
   parseRetrievalStatus,
   parseScope,
   parseSourceRef,
+  parseStaleEventSummary,
+  parseStaleProducer,
   parseUsageChannel,
   parseUsageEvent,
   parseUsageEventKind,
 } from "./parse.js";
+
+export {
+  STALE_EXCERPT_MAX,
+  STALE_REASON_MAX,
+  boundStaleExcerpt,
+  normalizeStaleReason,
+  staleAnchorKey,
+  staleEventIdentity,
+} from "./stale-event.js";
+export type { BoundedExcerpt, StaleEventIdentity, StaleEventIdentityInput } from "./stale-event.js";
 
 export { usageEventId } from "./usage-event-id.js";
 export { assertUniqueInjectionReceipts, injectionReceiptKey } from "./injection.js";

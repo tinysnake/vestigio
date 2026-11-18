@@ -15,16 +15,19 @@
  * zero-LLM search when no backend is configured rather than inventing one.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ValidationError, splitMemoryUri } from "@vestigio/core";
-import type { MemoryUri, RetrievalResult } from "@vestigio/core";
+import type { Freshness, FreshnessBrief, MemoryUri, RetrievalResult, SourceRef, StaleEventSummary } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import { MAX_CARD_LIMIT, layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
 import type { ResolveOutcome } from "@vestigio/core/resolver";
 import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/resolver";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
+import { repairOnRead, type ReadRepairReport } from "./read-repair.js";
+import { stripInjectedNote } from "./stale-detector.js";
+import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
 
 const searchParameters = Type.Object({
 	query: Type.String({
@@ -66,9 +69,29 @@ const resolveParameters = Type.Object({
 	include_history: Type.Optional(
 		Type.Boolean({
 			description:
-				"Search the read-only session history layer when the stored memories are not sufficient (default true).",
+				"Search the read-only history layer when the stored memories are not sufficient (default true).",
 		}),
 	),
+});
+
+const markStaleParameters = Type.Object({
+	uri: Type.String({
+		description: "A memory URI of the form memory://<store-id>/<memory-id>, as returned by memory_search.",
+	}),
+	observed_revision: Type.Integer({
+		minimum: 1,
+		description: "The revision of the summary you actually read (the delivered revision).",
+	}),
+	reason: Type.String({
+		description: "One short sentence naming the change this summary has not absorbed yet.",
+	}),
+	excerpt: Type.String({
+		description:
+			"The later evidence text. It is bounded and stored next to the event so the warning survives even when history indexing lags.",
+	}),
+	source_message_ids: Type.Optional(Type.Array(Type.String(), {
+		description: "Optional real entry ids from the active branch. If omitted, excerpt must quote a user/tool message verbatim so the tool can locate it.",
+	})),
 });
 
 export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): void {
@@ -117,6 +140,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				});
 			}
 			const note = wantHistory && history === null ? state.historySkipReason() : null;
+			for (const card of outcome.result.cards) state.noteMemorySeen(card.memory_id);
 			state.writeDecision({
 				ts: at,
 				kind: "tool_search",
@@ -138,6 +162,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					next_action: outcome.result.next_action,
 					history_note: note,
 					hits_recorded: recorded,
+					stale_cards: staleCards(outcome.result),
 					measured: outcome.measured,
 				},
 			};
@@ -194,6 +219,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				});
 			}
 			const historyNote = wantHistory && history === null ? state.historySkipReason() : null;
+			for (const card of outcome.result.cards) state.noteMemorySeen(card.memory_id);
 			state.writeDecision({
 				ts: at,
 				kind: "tool_resolve",
@@ -229,6 +255,8 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					revision: outcome.result.revision,
 					persistence_status: outcome.result.persistence_status,
 					navigation_status: outcome.result.navigation_status,
+					freshness: outcome.result.freshness ?? null,
+					stale_cards: staleCards(outcome.result),
 				},
 			};
 		},
@@ -240,7 +268,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		description:
 			"Read the full long (medium) summary of one memory by URI. Use the URI from memory_search or from a hotspot note.",
 		parameters: readParameters,
-		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
 			if (store === null) {
 				return text(`memory_read unavailable: ${state.storeFailureReason ?? "no store configured"}`);
@@ -257,8 +285,44 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			}
 			const uri = params.uri as MemoryUri;
 			const at = nowIso();
-			const outcome = readMemoryResult({ store, uri, revision: params.revision });
 			const projectId = state.projectId(ctx.cwd);
+			let outcome = readMemoryResult({ store, uri, revision: params.revision });
+			// A read is the repair trigger: the agent already has this memory in
+			// front of it, so folding the pending change in here is the one place
+			// repair is guaranteed to be reached. Pinned-revision reads skip it.
+			let repair: ReadRepairReport | null = null;
+			if (
+				params.revision === undefined &&
+				outcome.result.status === "resolved" &&
+				outcome.result.freshness !== undefined &&
+				outcome.result.freshness.is_stale
+			) {
+				try {
+					repair = await repairOnRead({
+						state,
+						store,
+						uri,
+						freshness: outcome.result.freshness,
+						project_id: projectId,
+						at,
+						signal,
+					});
+				} catch (error) {
+					state.writeDecision({
+						ts: at,
+						kind: "error",
+						status: "read_repair_failed",
+						session_id: state.currentSessionId,
+						project_id: projectId,
+						error: errorText(error),
+					});
+				}
+				// A landed repair saved a new head; render that body and revision.
+				if (repair !== null && repair.revision !== null) {
+					outcome = readMemoryResult({ store, uri });
+				}
+			}
+			state.noteMemorySeen(ids.memoryId);
 			let recorded: { recorded: boolean; membership: boolean } | null = null;
 			if (outcome.result.status === "resolved" && outcome.result.revision !== null) {
 				const activity = safeActivitySeq(store, projectId);
@@ -290,10 +354,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: `tool:${toolCallId}`,
-				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false}`,
+				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false} repair=${repair?.status ?? "none"}`,
 			});
 			return {
-				content: [{ type: "text", text: renderRead(params.uri, outcome) }],
+				content: [{ type: "text", text: renderRead(params.uri, outcome, repair) }],
 				details: {
 					status: outcome.result.status,
 					memory_uri: outcome.memory_uri,
@@ -303,11 +367,192 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					conflicts: outcome.result.conflicts,
 					next_action: outcome.result.next_action,
 					access_recorded: recorded?.recorded ?? false,
+					freshness: outcome.result.freshness ?? null,
+					repair,
 					measured: outcome.measured,
 				},
 			};
 		},
 	});
+
+	registerStaleTools(pi, state);
+}
+
+function staleCards(result: RetrievalResult): Array<{ memory_id: string; head_revision: number; pending_count: number }> {
+	return result.cards
+		.filter((card) => card.freshness?.is_stale === true)
+		.map((card) => ({
+			memory_id: card.memory_id,
+			head_revision: card.freshness?.head_revision ?? card.revision,
+			pending_count: card.freshness?.pending_count ?? 0,
+		}));
+}
+
+function staleMarker(brief: FreshnessBrief | undefined): string | null {
+	if (brief === undefined || brief.is_stale !== true) return null;
+	return `stale: 未吸收 ${brief.pending_count} 条后续证据 (head r${brief.head_revision})`;
+}
+
+function sessionFileOf(sessionManager: { getSessionFile(): unknown }): string | null {
+	try {
+		const file = sessionManager.getSessionFile();
+		return typeof file === "string" ? file : null;
+	} catch {
+		return null;
+	}
+}
+
+function entriesOf(sessionManager: { getBranch(): SessionEntry[] }): SessionEntry[] {
+	try {
+		return sessionManager.getBranch();
+	} catch {
+		return [];
+	}
+}
+
+function sourceContext(state: VestigioState, ctx: ExtensionContext) {
+	return {
+		session_id: ctx.sessionManager.getSessionId(),
+		session_file: sessionFileOf(ctx.sessionManager),
+		project_id: state.projectId(ctx.cwd),
+	};
+}
+
+/**
+ * The repair line is the difference between "the body you are reading is the
+ * current one" and "you are still reading the stale body". Never soften a
+ * `nav_pending` into a success: until the nav is bound to the new revision,
+ * search cannot return this memory.
+ */
+function renderRepair(repair: ReadRepairReport): string {
+	const acknowledged = repair.acknowledged_event_ids.length;
+	switch (repair.status) {
+		case "repaired":
+			return `repair: repaired r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); published and findable)`;
+		case "nav_pending":
+			return `repair: nav_pending r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); body saved, nav job queued, not findable by search yet${repair.reason === null ? "" : `: ${repair.reason}`})`;
+		case "repair_failed":
+			return `repair: repair_failed (${repair.reason ?? "unknown"}); the stored body and every pending event are unchanged`;
+	}
+}
+
+function renderPendingEvent(event: StaleEventSummary): string[] {
+	const lines = [
+		`  - event ${event.event_id} observed r${event.observed_revision} (${event.producer}): ${event.reason}`,
+		`    excerpt: ${event.excerpt}${event.excerpt_truncated ? " …" : ""}`,
+	];
+	if (event.sources.length > 0) {
+		const anchors = event.sources
+			.map(
+				(source) =>
+					`${source.session_id}/${source.message_id}${source.locator === null ? "" : ` (${source.locator})`}`,
+			)
+			.join(", ");
+		const more = event.sources_truncated ? ` (+${event.source_count - event.sources.length} more)` : "";
+		lines.push(`    sources: ${anchors}${more}`);
+	}
+	return lines;
+}
+
+function renderFreshness(freshness: Freshness | undefined): string[] {
+	if (freshness === undefined) return [];
+	const state = freshness.is_stale
+		? `STALE pending=${freshness.pending_count} head=r${freshness.head_revision}`
+		: `current head=r${freshness.head_revision}`;
+	const mismatch = freshness.revision_mismatch
+		? ` (delivered r${freshness.delivered_revision}, head r${freshness.head_revision})`
+		: "";
+	const lines = [`freshness: ${state}${mismatch}`];
+	for (const event of freshness.pending) lines.push(...renderPendingEvent(event));
+	if (freshness.pending_truncated) {
+		lines.push(`  … ${freshness.pending_count - freshness.pending.length} more pending event(s)`);
+	}
+	return lines;
+}
+
+function registerStaleTools(pi: ExtensionAPI, state: VestigioState): void {
+	pi.registerTool({
+		name: "memory_mark_stale",
+		label: "Memory mark stale",
+		description:
+			"Record that a stored memory summary has not absorbed later evidence. Idempotent: re-marking the same logical change stores one durable event. This never rewrites the summary, and you cannot rewrite a stored memory: marking only reports staleness. Repair happens on retrieval — the next memory_resolve that hits this memory folds the pending evidence into the summary and acknowledges the event.",
+		parameters: markStaleParameters,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const store = state.ensureStore();
+			if (store === null) {
+				return text(`memory_mark_stale unavailable: ${state.storeFailureReason ?? "no store configured"}`);
+			}
+			let ids: { storeId: string; memoryId: string };
+			try {
+				ids = splitMemoryUri(params.uri);
+			} catch (error) {
+				const reason = error instanceof ValidationError ? error.message : errorText(error);
+				return text(`memory_mark_stale rejected the URI: ${reason}`);
+			}
+			if (ids.storeId !== store.storeId) {
+				return text(
+					`memory_mark_stale refused: ${params.uri} belongs to store ${ids.storeId}, not ${store.storeId}.`,
+				);
+			}
+			const context = sourceContext(state, ctx);
+			const memory = store.readMemory(params.uri as MemoryUri);
+			if (memory === null) return text(`memory_mark_stale rejected: ${params.uri} does not exist.`);
+			if (memory.scope.kind === "project" && memory.scope.project_id !== context.project_id) return text("memory_mark_stale refused: memory belongs to another project.");
+			const entries = entriesOf(ctx.sessionManager);
+			const byId = new Map(entries.map((entry) => [entry.id, entry]));
+			const requestedIds = params.source_message_ids ?? entries.filter((entry) => entry.type === "message" && (entry.message.role === "user" || entry.message.role === "toolResult") && params.excerpt.trim().length > 0 && (sessionEntryText(entry) ?? "").includes(params.excerpt.trim())).slice(-1).map((entry) => entry.id);
+			const sources: SourceRef[] = [];
+			const excerpts: string[] = [];
+			const unknown: string[] = [];
+			for (const entryId of requestedIds) {
+				const entry = byId.get(entryId);
+				const ref = entry === undefined || entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "toolResult") ? null : sourceRefForEntry(entry, context);
+				if (ref === null) unknown.push(entryId);
+				else {
+					sources.push(ref);
+					excerpts.push(stripInjectedNote(sessionEntryText(entry!) ?? "").trim());
+				}
+			}
+			if (unknown.length > 0 || sources.length === 0) {
+				const detail = unknown.length > 0 ? unknown.join(", ") : "(none given)";
+				return text(
+					`memory_mark_stale rejected: no session entry for ${detail}. Pass real entry ids from this conversation that carry text.`,
+				);
+			}
+			const at = nowIso();
+			try {
+				const result = store.markStale({
+					memory_id: ids.memoryId,
+					observed_revision: params.observed_revision,
+					reason: params.reason,
+					excerpt: excerpts.join("\n\n"),
+					sources,
+					producer: "agent",
+					at,
+					branch_ref: state.currentBranchRef,
+				});
+				const freshness = store.readFreshness(params.uri as MemoryUri, params.observed_revision);
+				const lines = [
+					`memory_mark_stale(${params.uri}) -> ${result.inserted ? "recorded" : "already recorded"}`,
+					`event: ${result.event.event_id} observed r${result.event.observed_revision} producer=${result.event.producer}`,
+					...renderFreshness(freshness ?? undefined),
+				];
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+					details: {
+						status: "recorded",
+						event_id: result.event.event_id,
+						inserted: result.inserted,
+						revision_mismatch: freshness?.revision_mismatch ?? false,
+						freshness,
+					},
+				};
+			} catch (error) {
+				return text(`memory_mark_stale failed: ${errorText(error)}`);
+			}
+		},
+	});
+
 }
 
 function text(value: string) {
@@ -342,6 +587,8 @@ export function renderSearch(
 		);
 		lines.push(`   ${card.title}`);
 		lines.push(`   ${card.nav_text}`);
+		const marker = staleMarker(card.freshness);
+		if (marker !== null) lines.push(`   ${marker}`);
 	});
 	lines.push(`layers: ${outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`).join(" ")}`);
 	if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);
@@ -383,6 +630,8 @@ export function renderResolve(
 		);
 		lines.push(`   ${card.title}`);
 		lines.push(`   ${card.nav_text}`);
+		const marker = staleMarker(card.freshness);
+		if (marker !== null) lines.push(`   ${marker}`);
 	});
 	for (const excerpt of outcome.history) {
 		lines.push(`history ${excerpt.source_ref.session_id}/${excerpt.source_ref.message_id}: ${excerpt.excerpt}`);
@@ -412,7 +661,7 @@ export function renderResolve(
 	return lines.join("\n");
 }
 
-export function renderRead(uri: string, outcome: MemoryReadOutcome): string {
+export function renderRead(uri: string, outcome: MemoryReadOutcome, repair: ReadRepairReport | null = null): string {
 	const result: RetrievalResult = outcome.result;
 	if (result.status !== "resolved") {
 		const lines = [`memory_read(${uri}) -> ${result.status}`];
@@ -424,9 +673,10 @@ export function renderRead(uri: string, outcome: MemoryReadOutcome): string {
 	const lines = [
 		`memory_read(${uri}) -> resolved | revision=${result.revision ?? "?"}`,
 		`title: ${result.cards[0]?.title ?? "(untitled)"}`,
-		`long summary:`,
-		body,
 	];
+	if (repair !== null) lines.push(renderRepair(repair));
+	lines.push(...renderFreshness(result.freshness));
+	lines.push(`long summary:`, body);
 	if (result.evidence.length > 0) {
 		lines.push(`sources: ${result.evidence.map((ref) => `${ref.provider}/${ref.source_instance}`).join(", ")}`);
 	}

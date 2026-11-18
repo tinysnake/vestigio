@@ -63,13 +63,19 @@ function renderEntry(index: number, match: HotspotMatch, summary: string): strin
     match.source_count === 0
       ? "来源：未知"
       : `来源：${match.source_label ?? "未知"}${match.source_count > 1 ? ` 等 ${match.source_count} 条` : ""}`;
-  return [
+  const lines = [
     `[${index}] ${match.title}`,
     `    记忆 URI：${match.uri}`,
     `    短摘要：${summary}`,
     `    ${source}`,
-    `    读取方式：${readCall}`,
-  ].join("\n");
+  ];
+  if (match.freshness.is_stale) {
+    lines.push(
+      `    ⚠ 该摘要可能未吸收 ${match.freshness.pending_count} 条后续证据；${readCall} 查看待处理详情`,
+    );
+  }
+  lines.push(`    读取方式：${readCall}`);
+  return lines.join("\n");
 }
 
 export function renderInjectionBlock(input: RenderInput): RenderedBlock {

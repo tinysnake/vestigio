@@ -12,6 +12,7 @@
  */
 
 import type {
+  FreshnessBrief,
   HotspotMembership,
   InjectionReceipt,
   Memory,
@@ -36,8 +37,9 @@ export type HotspotStore = {
   readProjectActivity(projectId: string): ProjectActivity | null;
   readHotspotMemberships(projectId: string): HotspotMembership[];
   readMemory(uri: MemoryUri, revision?: Revision): Memory | null;
+  readFreshness(uri: MemoryUri, revision?: Revision): FreshnessBrief | null;
   recordUsageEvent(event: UsageEvent): boolean;
-  recordInjectionReceipt(receipt: InjectionReceipt): void;
+  recordInjectionReceipt(receipt: InjectionReceipt, options?: { freshness_sig?: string }): void;
   upsertProjectActivity(activity: ProjectActivity): ProjectActivity;
   upsertHotspotMembership(membership: HotspotMembership): void;
   deleteHotspotMembership(projectId: string, memoryId: MemoryId): void;
@@ -78,6 +80,8 @@ export type HotspotEntry = {
   hit_count: number;
   access_count: number;
   last_access_at: string | null;
+  /** Current stale state of this memory; drives the block warning and dedup. */
+  freshness: FreshnessBrief;
   /** Pool statistics read from the membership row. */
   admitted_seq: number;
   last_hit_seq: number;
@@ -110,6 +114,8 @@ export type HotspotMatch = {
   matched_tokens: string[];
   phrase_matched: boolean;
   retention_score: number;
+  /** Copied from the entry so the injection block and dedup stay freshness-aware. */
+  freshness: FreshnessBrief;
 };
 
 /**
@@ -179,6 +185,12 @@ export type InjectionLedgerDelta = {
   at: string;
   input_id: string;
   memory_ids: MemoryId[];
+  /**
+   * memory_id -> freshness fingerprint at delivery. When a memory's fingerprint
+   * later changes, that memory is delivered again despite the historical entry.
+   * Absent on entries written before the stale lifecycle existed.
+   */
+  freshness_sigs?: Record<string, string>;
 };
 
 export type { HotspotMembership, Memory, MemoryId, MemoryUri, ProjectActivity, Revision, Scope };

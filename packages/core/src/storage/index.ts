@@ -5,11 +5,20 @@ export type { AppliedMigration, Migration } from "./migrations.js";
 export { buildMatchQuery, normalizeForIndex } from "./tokenize.js";
 export type { MatchMode } from "./tokenize.js";
 export { DEFAULT_BUSY_TIMEOUT_MS, DEFAULT_STORE_ID, MemoryStore, openStore } from "./store.js";
+export {
+  MAX_FRESHNESS_PENDING,
+  MAX_FRESHNESS_SOURCES,
+} from "./store.js";
 export type {
   IntegrityReport,
+  MarkStaleInput,
+  MarkStaleResult,
   OpenStoreOptions,
+  RecordInjectionReceiptOptions,
   SaveMemoryOptions,
   SaveMemoryResult,
   SearchHit,
   SearchOptions,
+  SummaryUpdateOutcome,
+  UpdateSummaryInput,
 } from "./store.js";

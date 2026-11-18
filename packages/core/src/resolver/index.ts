@@ -19,6 +19,8 @@ export {
 export type { EvidenceVersion, PersistResolveInput, PersistResolveOutcome, ReplayOutcome } from "./persist.js";
 export { JUDGE_SYSTEM_PROMPT, buildJudgeUserMessage, judgeAllowList, parseJudgeDecision } from "./judge.js";
 export type { JudgeAllowList, JudgeCandidateInput, JudgeDecision, JudgeParse } from "./judge.js";
+export { REPAIR_MAX_CORRECTIONS, REPAIR_MAX_OUTPUT_TOKENS, REPAIR_MAX_SOURCES, repairStaleMemory } from "./repair.js";
+export type { RepairInput, RepairOutcome, RepairStatus, RepairTarget } from "./repair.js";
 export {
   DEFAULT_RESOLVE_BUDGET,
   RESOLVE_COLD_DEADLINE_MS,

@@ -2,17 +2,24 @@ import { createHash } from "node:crypto";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   deserializeSourceRef,
+  fail,
   parseHotspotMembership,
   parseInjectionReceipt,
   parseMemory,
+  parseMemoryId,
   parseMemoryState,
   parseNavSummary,
   parseProjectActivity,
   parseRevision,
+  parseSourceRef,
+  parseStaleProducer,
   parseStoreId,
+  parseTimestamp,
   parseUsageEvent,
   serializeSourceRef,
   splitMemoryUri,
+  staleEventIdentity,
+  type Freshness,
   type HotspotMembership,
   type InjectionReceipt,
   type Memory,
@@ -23,8 +30,12 @@ import {
   type ProjectActivity,
   type Revision,
   type Scope,
+  type SourceRef,
+  type StaleEventSummary,
+  type StaleProducer,
   type UsageEvent,
 } from "../contracts/index.js";
+import { enqueueSummaryJob, type SummaryJob } from "../jobs/queue.js";
 import { StorageError, isUniqueViolation } from "./errors.js";
 import { applyMigrations, listAppliedMigrations, type AppliedMigration } from "./migrations.js";
 import { buildMatchQuery, normalizeForIndex, type MatchMode } from "./tokenize.js";
@@ -86,6 +97,55 @@ export type IntegrityReport = {
   headCount: number;
   activeIndexCount: number;
   archivedIndexCount: number;
+};
+
+/** How many pending stale events and source anchors a delivery reports inline. */
+export const MAX_FRESHNESS_PENDING = 8;
+export const MAX_FRESHNESS_SOURCES = 4;
+
+export type MarkStaleInput = {
+  memory_id: MemoryId;
+  observed_revision: Revision;
+  reason: string;
+  excerpt: string;
+  sources: readonly SourceRef[];
+  producer: StaleProducer;
+  at?: string;
+  branch_ref?: string | null;
+};
+
+export type MarkStaleResult = {
+  event: StaleEventSummary;
+  /** False when the identical logical event was already stored. */
+  inserted: boolean;
+};
+
+export type RecordInjectionReceiptOptions = {
+  /** Freshness fingerprint at delivery time; empty when there was no pending event. */
+  freshness_sig?: string;
+};
+
+export type UpdateSummaryInput = {
+  /** The new summary revision. Must be exactly `expected_revision + 1`. */
+  memory: Memory;
+  /** The head the writer validated before composing the summary. */
+  expected_revision: Revision;
+  /** Explicit pending events this revision incorporates; empty is allowed. */
+  acknowledge_event_ids: readonly string[];
+  at?: string;
+  /** Set false only for maintenance paths that own their navigation job. */
+  enqueue_navigation?: boolean;
+};
+
+/**
+ * The result of one summary-update transaction. `saved` is false only when the
+ * exact revision already existed with the same content (an idempotent no-op).
+ */
+export type SummaryUpdateOutcome = {
+  saved: boolean;
+  memory?: Memory;
+  job?: SummaryJob;
+  acknowledged_event_ids?: string[];
 };
 
 function str(row: Row, key: string): string {
@@ -185,14 +245,22 @@ export class MemoryStore {
 
   saveMemory(memory: Memory, options: SaveMemoryOptions = {}): SaveMemoryResult {
     const parsed = parseMemory(memory);
-    const { storeId, memoryId } = splitMemoryUri(parsed.uri);
+    const { storeId } = splitMemoryUri(parsed.uri);
     if (storeId !== this.storeId) {
       throw new StorageError("store_mismatch", `store ${this.storeId} cannot write ${parsed.uri}`);
     }
     const hash = memoryContentHash(parsed);
 
     return this.write(() => {
-      const existing = this.selectRevision(memoryId, parsed.revision);
+      const result = this.insertRevisionInTransaction(parsed, hash);
+      options.beforeCommit?.();
+      return result;
+    });
+  }
+
+  private insertRevisionInTransaction(parsed: Memory, hash: string): SaveMemoryResult {
+    const { memoryId } = splitMemoryUri(parsed.uri);
+    const existing = this.selectRevision(memoryId, parsed.revision);
       if (existing !== undefined) {
         if (str(existing, "content_hash") !== hash) {
           throw new StorageError(
@@ -235,9 +303,7 @@ export class MemoryStore {
       this.insertSources(parsed);
       this.upsertHead(parsed);
       this.rewriteFts(memoryId, parsed);
-      options.beforeCommit?.();
       return { memory_id: memoryId, revision: parsed.revision, inserted: true };
-    });
   }
 
   /**
@@ -530,21 +596,58 @@ export class MemoryStore {
 
   /**
    * Record a delivered injection. The uniqueness key is
-   * (store_id, session_id, branch_ref, input_id, memory_id): a duplicate is a
-   * hard failure, not a silent update.
+   * (store_id, session_id, branch_ref, input_id, memory_id): a duplicate at the
+   * same freshness snapshot is a hard failure. When the memory's freshness
+   * fingerprint changed, the stored receipt is refreshed instead, so a changed
+   * pending-event set is still delivered while an unchanged set is not.
    */
-  recordInjectionReceipt(receipt: InjectionReceipt): void {
+  recordInjectionReceipt(
+    receipt: InjectionReceipt,
+    options: RecordInjectionReceiptOptions = {},
+  ): void {
     const parsed = parseInjectionReceipt(receipt);
     if (parsed.store_id !== this.storeId) {
       throw new StorageError("store_mismatch", `receipt store ${parsed.store_id} != ${this.storeId}`);
     }
+    const freshnessSig = options.freshness_sig ?? "";
+    const key = [
+      parsed.store_id,
+      parsed.session_id,
+      parsed.branch_ref,
+      parsed.input_id,
+      parsed.memory_id,
+    ] as const;
+    const duplicate = () =>
+      new StorageError(
+        "duplicate_injection_receipt",
+        `${this.storeId}/${parsed.session_id}/${parsed.branch_ref}/${parsed.input_id}/${parsed.memory_id} was already recorded`,
+      );
     try {
       this.write(() => {
+        const existing = this.db
+          .prepare(
+            `SELECT freshness_sig FROM injection_receipts
+              WHERE store_id = ? AND session_id = ? AND branch_ref = ? AND input_id = ? AND memory_id = ?`,
+          )
+          .get(...key);
+        if (existing !== undefined) {
+          if (str(existing, "freshness_sig") !== freshnessSig) {
+            this.db
+              .prepare(
+                `UPDATE injection_receipts
+                    SET revision = ?, committed_at = ?, freshness_sig = ?
+                  WHERE store_id = ? AND session_id = ? AND branch_ref = ? AND input_id = ? AND memory_id = ?`,
+              )
+              .run(parsed.revision, parsed.committed_at, freshnessSig, ...key);
+            return;
+          }
+          throw duplicate();
+        }
         this.db
           .prepare(
             `INSERT INTO injection_receipts
-               (store_id, session_id, branch_ref, input_id, memory_id, revision, committed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               (store_id, session_id, branch_ref, input_id, memory_id, revision, committed_at, freshness_sig)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             parsed.store_id,
@@ -554,14 +657,15 @@ export class MemoryStore {
             parsed.memory_id,
             parsed.revision,
             parsed.committed_at,
+            freshnessSig,
           );
       });
     } catch (error) {
+      if (error instanceof StorageError) {
+        throw error;
+      }
       if (isUniqueViolation(error)) {
-        throw new StorageError(
-          "duplicate_injection_receipt",
-          `${this.storeId}/${parsed.session_id}/${parsed.branch_ref}/${parsed.input_id}/${parsed.memory_id} was already recorded`,
-        );
+        throw duplicate();
       }
       throw error;
     }
@@ -588,6 +692,208 @@ export class MemoryStore {
     this.assertOpen();
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM injection_receipts").get();
     return row === undefined ? 0 : num(row, "n");
+  }
+
+  /**
+   * Record the durable evidence that a memory's summary has not absorbed later
+   * activity. The event belongs to the stable memory id, so it survives head
+   * moves; `observed_revision` may be older than the head (accepted and
+   * reported as a mismatch) but never ahead of it.
+   *
+   * Identity is deterministic: retrying the same logical change with a new
+   * timestamp or producer is an idempotent no-op (`inserted: false`). Reusing
+   * the same id with different evidence is a hard conflict, never a silent
+   * replace.
+   */
+  markStale(input: MarkStaleInput): MarkStaleResult {
+    const memoryId = parseMemoryId(input.memory_id);
+    const observedRevision = parseRevision(input.observed_revision);
+    const producer = parseStaleProducer(input.producer);
+    if (input.sources.length === 0) {
+      fail("$.sources", "invariant_violation", "a stale event needs at least one source anchor");
+    }
+    const identity = staleEventIdentity({
+      memory_id: memoryId,
+      observed_revision: observedRevision,
+      reason: input.reason,
+      excerpt: input.excerpt,
+      sources: input.sources,
+      branch_ref: input.branch_ref ?? null,
+    });
+    const createdAt = parseTimestamp(input.at ?? new Date().toISOString(), "$.at");
+
+    return this.write(() => {
+      const head = this.headRevision(memoryId);
+      if (head === undefined) {
+        throw new StorageError("not_found", `${memoryId} is not stored`);
+      }
+      if (observedRevision > head) {
+        throw new StorageError(
+          "stale_future_revision",
+          `${memoryId} observed revision ${observedRevision} is ahead of head ${head}`,
+        );
+      }
+      const existing = this.selectStaleEvent(identity.event_id);
+      if (existing !== undefined) {
+        if (str(existing, "content_hash") !== identity.content_hash) {
+          throw new StorageError(
+            "stale_event_conflict",
+            `${identity.event_id} already exists with different evidence`,
+          );
+        }
+        return { event: this.staleRowToSummary(existing), inserted: false };
+      }
+      this.db
+        .prepare(
+          `INSERT INTO stale_events
+             (event_id, memory_id, observed_revision, reason, excerpt, excerpt_char_count,
+              excerpt_truncated, branch_ref, producer, content_hash, created_at,
+              acknowledged_at, acknowledged_revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+        )
+        .run(
+          identity.event_id,
+          memoryId,
+          observedRevision,
+          identity.reason,
+          identity.excerpt,
+          identity.excerpt_char_count,
+          identity.excerpt_truncated ? 1 : 0,
+          identity.branch_ref,
+          producer,
+          identity.content_hash,
+          createdAt,
+        );
+      this.insertStaleEventSources(identity.event_id, input.sources);
+      const row = this.selectStaleEvent(identity.event_id);
+      if (row === undefined) {
+        throw new StorageError("row_corrupt", `${identity.event_id} vanished after insert`);
+      }
+      return { event: this.staleRowToSummary(row), inserted: true };
+    });
+  }
+
+  /**
+   * Current freshness for a memory as delivered to a caller. `revision` is the
+   * revision the caller saw (defaults to head). Returns null when the memory or
+   * the requested revision does not exist.
+   */
+  readFreshness(uri: MemoryUri, revision?: Revision): Freshness | null {
+    const { storeId, memoryId } = splitMemoryUri(uri);
+    if (storeId !== this.storeId) {
+      throw new StorageError("store_mismatch", `store ${this.storeId} cannot read ${uri}`);
+    }
+    const requested = revision === undefined ? undefined : parseRevision(revision);
+    return this.read(() => {
+      const head = this.headRevision(memoryId);
+      if (head === undefined) {
+        return null;
+      }
+      const delivered = requested ?? head;
+      if (delivered > head || this.selectRevision(memoryId, delivered) === undefined) {
+        return null;
+      }
+      return this.buildFreshness(memoryId, head, delivered);
+    });
+  }
+
+  /** Every pending (unacknowledged) stale event for a memory, oldest first. */
+  listPendingStaleEvents(memoryId: MemoryId): StaleEventSummary[] {
+    this.assertOpen();
+    return this.selectPendingStaleEventRows(memoryId).map((row) => this.staleRowToSummary(row));
+  }
+
+  /** Every stale event for a memory, acknowledged or not, oldest first. */
+  listStaleEvents(memoryId: MemoryId): StaleEventSummary[] {
+    this.assertOpen();
+    return this.db
+      .prepare(
+        "SELECT * FROM stale_events WHERE memory_id = ? ORDER BY created_at ASC, event_id ASC",
+      )
+      .all(memoryId)
+      .map((row) => this.staleRowToSummary(row));
+  }
+
+  countPendingStaleEvents(memoryId: MemoryId): number {
+    this.assertOpen();
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM stale_events WHERE memory_id = ? AND acknowledged_at IS NULL",
+      )
+      .get(memoryId);
+    return row === undefined ? 0 : num(row, "n");
+  }
+
+  /**
+   * Save a summary revision, acknowledge exactly the listed pending events and
+   * enqueue its navigation job in one transaction. A stale `expected_revision`
+   * or an event id that is not pending for this memory aborts the whole write:
+   * the old revision stays head and every event stays pending.
+   */
+  updateSummary(input: UpdateSummaryInput): SummaryUpdateOutcome {
+    const memory = parseMemory(input.memory);
+    const { storeId, memoryId } = splitMemoryUri(memory.uri);
+    if (storeId !== this.storeId) {
+      throw new StorageError("store_mismatch", `store ${this.storeId} cannot write ${memory.uri}`);
+    }
+    const expected = parseRevision(input.expected_revision);
+    if (memory.state !== "medium_ready" || memory.nav !== null) {
+      throw new StorageError("stale_revision", "a summary update must queue fresh navigation from a medium_ready revision with nav=null");
+    }
+    const ackIds = [...new Set(input.acknowledge_event_ids)];
+
+    return this.write(() => {
+      const head = this.headRevision(memoryId);
+      if (head === undefined) {
+        throw new StorageError("not_found", `${memory.uri} is not stored`);
+      }
+      if (head !== expected) {
+        throw new StorageError(
+          "stale_revision",
+          `${memory.uri} head is ${head}, not the expected ${expected}`,
+        );
+      }
+      if (memory.revision !== expected + 1) {
+        throw new StorageError(
+          "stale_revision",
+          `a summary update must advance ${memory.uri} to revision ${expected + 1}, got ${memory.revision}`,
+        );
+      }
+      const pending = this.selectPendingStaleEventRows(memoryId);
+      const pendingIds = new Set(pending.map((row) => str(row, "event_id")));
+      for (const eventId of ackIds) {
+        if (!pendingIds.has(eventId)) {
+          throw new StorageError(
+            "stale_unknown_event",
+            `${eventId} is not a pending stale event of ${memoryId}`,
+          );
+        }
+      }
+
+      const hash = memoryContentHash(memory);
+      const saved = this.insertRevisionInTransaction(memory, hash);
+      const at = parseTimestamp(input.at ?? new Date().toISOString(), "$.at");
+      if (ackIds.length > 0) {
+        const acknowledge = this.db.prepare(
+          `UPDATE stale_events SET acknowledged_at = ?, acknowledged_revision = ?
+            WHERE event_id = ? AND memory_id = ? AND acknowledged_at IS NULL`,
+        );
+        for (const eventId of ackIds) {
+          acknowledge.run(at, memory.revision, eventId, memoryId);
+        }
+      }
+      const job =
+        input.enqueue_navigation === false
+          ? undefined
+          : enqueueSummaryJob(this.db, { memory_id: memoryId, revision: memory.revision, at });
+      const updated = this.readMemoryOrThrow(memoryId);
+      return {
+        saved: saved.inserted,
+        memory: updated,
+        ...(job === undefined ? {} : { job }),
+        acknowledged_event_ids: ackIds,
+      };
+    });
   }
 
   /** Monotonic per-project logical clock: a lower or equal sequence never moves it back. */
@@ -795,6 +1101,95 @@ export class MemoryStore {
   private nowAfter(createdAt: string, at?: string): string {
     const candidate = at ?? new Date().toISOString();
     return Date.parse(candidate) < Date.parse(createdAt) ? createdAt : candidate;
+  }
+
+  private selectStaleEvent(eventId: string): Row | undefined {
+    return this.db.prepare("SELECT * FROM stale_events WHERE event_id = ?").get(eventId);
+  }
+
+  private selectStaleEventSources(eventId: string): Row[] {
+    return this.db
+      .prepare("SELECT * FROM stale_event_sources WHERE event_id = ? ORDER BY ordinal ASC")
+      .all(eventId);
+  }
+
+  private selectPendingStaleEventRows(memoryId: MemoryId): Row[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM stale_events
+          WHERE memory_id = ? AND acknowledged_at IS NULL
+          ORDER BY created_at ASC, event_id ASC`,
+      )
+      .all(memoryId);
+  }
+
+  private insertStaleEventSources(eventId: string, sources: readonly SourceRef[]): void {
+    const insert = this.db.prepare(
+      `INSERT INTO stale_event_sources
+         (event_id, ordinal, ref_json, content_hash, provider, source_instance,
+          session_id, message_id, project_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    sources.forEach((source, ordinal) => {
+      const ref = parseSourceRef(source);
+      insert.run(
+        eventId,
+        ordinal,
+        serializeSourceRef(ref),
+        ref.content_hash,
+        ref.provider,
+        ref.source_instance,
+        ref.session_id,
+        ref.message_id,
+        ref.project_id,
+      );
+    });
+  }
+
+  private staleRowToSummary(row: Row, maxSources = MAX_FRESHNESS_SOURCES): StaleEventSummary {
+    const eventId = str(row, "event_id");
+    const sourceRows = this.selectStaleEventSources(eventId);
+    const sources = sourceRows
+      .slice(0, maxSources)
+      .map((source) => deserializeSourceRef(str(source, "ref_json")));
+    return {
+      event_id: eventId,
+      memory_id: str(row, "memory_id"),
+      observed_revision: num(row, "observed_revision"),
+      reason: str(row, "reason"),
+      excerpt: str(row, "excerpt"),
+      excerpt_truncated: num(row, "excerpt_truncated") === 1,
+      excerpt_char_count: num(row, "excerpt_char_count"),
+      sources,
+      source_count: sourceRows.length,
+      sources_truncated: sourceRows.length > sources.length,
+      branch_ref: strOrNull(row, "branch_ref"),
+      producer: parseStaleProducer(str(row, "producer")),
+      created_at: str(row, "created_at"),
+    };
+  }
+
+  private pendingFreshnessSig(memoryId: MemoryId, head: Revision): string {
+    const ids = this.selectPendingStaleEventRows(memoryId)
+      .map((row) => str(row, "event_id"))
+      .sort();
+    return sha256(JSON.stringify([memoryId, head, ids]));
+  }
+
+  private buildFreshness(memoryId: MemoryId, head: Revision, delivered: Revision): Freshness {
+    const rows = this.selectPendingStaleEventRows(memoryId);
+    const pending = rows.slice(0, MAX_FRESHNESS_PENDING).map((row) => this.staleRowToSummary(row));
+    return {
+      is_stale: rows.length > 0,
+      head_revision: head,
+      pending_count: rows.length,
+      freshness_sig: this.pendingFreshnessSig(memoryId, head),
+      memory_id: memoryId,
+      delivered_revision: delivered,
+      revision_mismatch: delivered < head,
+      pending,
+      pending_truncated: rows.length > pending.length,
+    };
   }
 
   private headRevision(memoryId: MemoryId): Revision | undefined {

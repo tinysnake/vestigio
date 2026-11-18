@@ -179,6 +179,7 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
       matched_tokens: matched,
       phrase_matched: phrase,
       retention_score: retentionScore(entry, activitySeq),
+      freshness: entry.freshness,
     });
   }
 

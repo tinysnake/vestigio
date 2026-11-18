@@ -26,6 +26,7 @@ import {
   parseMemoryCard,
   parseRetrievalResult,
   parseScope,
+  type FreshnessBrief,
   type MemoryCard,
   type MemoryUri,
   type Revision,
@@ -146,6 +147,23 @@ type CardBuild = {
   missing: string[];
 };
 
+/** Current stale state for a memory head, with a safe fallback. */
+export function freshnessBriefFor(
+  store: Pick<MemoryStore, "readFreshness">,
+  memory: { memory_id: string; uri: MemoryUri; revision: Revision },
+): FreshnessBrief {
+  const freshness = store.readFreshness(memory.uri, memory.revision);
+  if (freshness !== null) {
+    return {
+      is_stale: freshness.is_stale,
+      head_revision: freshness.head_revision,
+      pending_count: freshness.pending_count,
+      freshness_sig: freshness.freshness_sig,
+    };
+  }
+  return { is_stale: false, head_revision: memory.revision, pending_count: 0, freshness_sig: "" };
+}
+
 /**
  * Turn ranked hits into cards. A hit whose memory has no navigation summary
  * (a `medium_ready` row) is not a card — the frozen `MemoryCard.nav_text` is
@@ -187,6 +205,7 @@ function buildCards(store: MemoryStore, hits: readonly SearchHit[]): CardBuild {
         hit_count: memory.hit_count,
         access_count: memory.access_count,
         last_access_at: memory.last_access_at,
+        freshness: freshnessBriefFor(store, memory),
       }),
     );
     for (const source of memory.medium.sources) {
@@ -677,6 +696,7 @@ export function readMemoryResult(input: MemoryReadInput): MemoryReadOutcome {
     };
   }
 
+  const freshness = input.store.readFreshness(input.uri, memory.revision);
   const cards: MemoryCard[] =
     memory.nav === null
       ? []
@@ -694,6 +714,7 @@ export function readMemoryResult(input: MemoryReadInput): MemoryReadOutcome {
             hit_count: memory.hit_count,
             access_count: memory.access_count,
             last_access_at: memory.last_access_at,
+            freshness: freshnessBriefFor(input.store, memory),
           }),
         ];
   const elapsed = performance.now() - started;
@@ -718,6 +739,7 @@ export function readMemoryResult(input: MemoryReadInput): MemoryReadOutcome {
       tokens_out: 0,
       cost_usd: null,
     },
+    ...(freshness === null ? {} : { freshness }),
   });
   const resultBytes = Buffer.byteLength(JSON.stringify({ result, history: [] }), "utf8");
   const archived = memory.state === "archived";

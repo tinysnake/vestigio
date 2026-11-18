@@ -276,6 +276,11 @@ export type ReplayOutcome = {
  * An explicit request id replays at any age, because it names one logical
  * request. A key derived from the question alone ages out, so re-asking a
  * short question much later searches again instead of returning a stale body.
+ *
+ * `require_current` makes the cache punt when the stored revision is stale or
+ * behind the head, so the caller runs the repair path instead of replaying a
+ * body that later evidence has outgrown. The check happens before any delivery
+ * or stage write, so a punt records nothing.
  */
 export function replaySavedRequest(input: {
   store: MemoryStore;
@@ -286,6 +291,7 @@ export function replaySavedRequest(input: {
   mono_now: () => number;
   wall_now: () => number;
   max_age_ms?: number | undefined;
+  require_current?: boolean | undefined;
 }): ReplayOutcome | null {
   const started = input.mono_now();
   const explicit = (input.request_id ?? "").trim().length > 0;
@@ -312,6 +318,12 @@ export function replaySavedRequest(input: {
   if (located === undefined) return null;
   const memory = input.store.readMemory(parseMemoryUri(text(located, "uri")), integer(row, "revision"));
   if (memory === null) return null;
+  if (input.require_current === true) {
+    // A cached answer must never hide a memory that went stale after it was
+    // saved: punt to the walk so the same-memory repair can run.
+    const freshness = input.store.readFreshness(memory.uri, memory.revision);
+    if (freshness !== null && (freshness.is_stale || freshness.revision_mismatch)) return null;
+  }
   const sessionId = input.session_id ?? `resolve:${requestKey}`;
   const delivered = recordDelivery(input.store, { memory, requestKey, sessionId });
   db.prepare("UPDATE resolve_versions SET stage = 'returned', updated_at = ? WHERE request_key = ?").run(

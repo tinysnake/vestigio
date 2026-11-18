@@ -54,7 +54,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
     ...(input.model_id === undefined ? {} : { model: input.model_id }),
     messages: [
       { role: "system", content: MEDIUM_SUMMARY_SYSTEM_PROMPT },
-      { role: "user", content: buildMediumUserMessage(input.evidence) },
+      { role: "user", content: buildMediumUserMessage(input.evidence, input.correction) },
     ],
     max_output_tokens: input.max_output_tokens,
     expect_json: true,

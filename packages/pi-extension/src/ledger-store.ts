@@ -64,7 +64,17 @@ export function ledgerDeltaFromEntry(entry: unknown): InjectionLedgerDelta | nul
 		ids.push(id);
 	}
 	if (ids.length === 0) return null;
-	return { at, input_id: inputId, memory_ids: ids };
+	const rawSigs = data.freshness_sigs;
+	const sigs: Record<string, string> = {};
+	if (rawSigs !== undefined) {
+		if (!isRecord(rawSigs)) return null;
+		for (const id of ids) {
+			const value = rawSigs[id];
+			if (value !== undefined && typeof value !== "string") return null;
+			if (typeof value === "string") sigs[id] = value;
+		}
+	}
+	return { at, input_id: inputId, memory_ids: ids, ...(rawSigs === undefined ? {} : { freshness_sigs: sigs }) };
 }
 
 /** Append one delta. Only called for turns that actually delivered memories. */

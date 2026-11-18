@@ -173,7 +173,7 @@ describe("handleInput", () => {
 
 	it("inherits what the branch already delivered and forgets what a revert dropped", () => {
 		const { state, ctx, decisions } = setup();
-		const delta = { at: AT, input_id: "input-0", memory_ids: ["mem-deploy"] };
+		const delta = { at: AT, input_id: "input-0", memory_ids: ["mem-deploy"], freshness_sigs: { "mem-deploy": state.ensureStore()!.readFreshness("memory://vestigio/mem-deploy")!.freshness_sig } };
 		state.bindSession({
 			getSessionId: () => "s-input",
 			getBranch: () => [

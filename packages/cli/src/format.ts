@@ -1,3 +1,4 @@
+import type { Freshness, FreshnessBrief } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 
 function clip(text: string, max: number): string {
@@ -17,6 +18,43 @@ export type SearchContext = {
   history_index: string | null;
 };
 
+/** One concise stale warning for a navigation card, or null when it is fresh. */
+export function staleCardLine(brief: FreshnessBrief | undefined): string | null {
+  if (brief === undefined || brief.is_stale !== true) {
+    return null;
+  }
+  return `    stale: pending ${brief.pending_count} evidence(s) not absorbed; read the URI for details`;
+}
+
+/** The full freshness block for a read/resolve result, pending events included. */
+export function formatFreshnessLines(freshness: Freshness | undefined): string[] {
+  if (freshness === undefined) {
+    return [];
+  }
+  const state = freshness.is_stale
+    ? `stale pending=${freshness.pending_count} head=r${freshness.head_revision}`
+    : `current head=r${freshness.head_revision}`;
+  const mismatch = freshness.revision_mismatch ? ` delivered=r${freshness.delivered_revision}` : "";
+  const lines = [`freshness: ${state}${mismatch}`];
+  for (const event of freshness.pending) {
+    lines.push(
+      `  pending ${event.event_id} observed r${event.observed_revision} (${event.producer}): ${event.reason}`,
+    );
+    lines.push(`    excerpt: ${clip(event.excerpt.replace(/\s+/gu, " "), 160)}`);
+    if (event.sources.length > 0) {
+      const anchors = event.sources
+        .map((source) => source.locator ?? `${source.session_id}/${source.message_id}`)
+        .join(", ");
+      const more = event.sources_truncated ? ` (+${event.source_count - event.sources.length} more)` : "";
+      lines.push(`    sources: ${anchors}${more}`);
+    }
+  }
+  if (freshness.pending_truncated) {
+    lines.push(`  … ${freshness.pending_count - freshness.pending.length} more pending event(s)`);
+  }
+  return lines;
+}
+
 export function formatSearchHuman(outcome: LayeredSearchOutcome, context: SearchContext): string {
   const lines: string[] = [];
   lines.push(`status: ${outcome.result.status}`);
@@ -26,6 +64,10 @@ export function formatSearchHuman(outcome: LayeredSearchOutcome, context: Search
       `  [${card.state}] ${card.uri} rev ${card.revision} score ${round(card.score)} ${card.title}`,
     );
     lines.push(`    nav: ${clip(card.nav_text, 80)}`);
+    const stale = staleCardLine(card.freshness);
+    if (stale !== null) {
+      lines.push(stale);
+    }
   }
 
   lines.push("layers:");
@@ -81,6 +123,7 @@ export function formatReadHuman(outcome: MemoryReadOutcome): string {
   }
   lines.push(`memory: ${outcome.result.memory_uri} revision ${outcome.result.revision ?? "(none)"}`);
   lines.push(`navigation: ${outcome.result.navigation_status}`);
+  lines.push(...formatFreshnessLines(outcome.result.freshness));
   if (outcome.result.cards.length > 0) {
     lines.push(`title: ${outcome.result.cards[0]?.title ?? ""}`);
     lines.push(`nav: ${outcome.result.cards[0]?.nav_text ?? ""}`);

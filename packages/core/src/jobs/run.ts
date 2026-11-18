@@ -9,7 +9,7 @@
  * stage two is independent of stage one by construction, not by convention.
  */
 
-import { memoryUri, type Memory } from "../contracts/index.js";
+import { memoryUri, type Memory, type MemoryId, type Revision } from "../contracts/index.js";
 import { admitHotspotCandidate, type AdmissionResult } from "../hotspots/index.js";
 import { RESOLVE_NAV_MAX_OUTPUT_TOKENS } from "../resolver/budget.js";
 import type { ModelPort } from "../resolver/types.js";
@@ -59,6 +59,12 @@ export type RunDueJobsInput = {
   max_output_tokens?: number | undefined;
   /** Per-job deadline. Reaching it is reported as `deadline_exceeded`. */
   deadline_ms?: number | undefined;
+  /**
+   * Run only this memory's job at this revision. Set by a caller that just
+   * repaired it and needs the nav bound before it can be found again.
+   */
+  memory_id?: MemoryId | undefined;
+  revision?: Revision | undefined;
 };
 
 export type RunDueJobsOutcome = {
@@ -120,7 +126,14 @@ export async function runDueJobs(input: RunDueJobsInput): Promise<RunDueJobsOutc
       outcome.missing.push("cancelled");
       break;
     }
-    const job = claimDueSummaryJob(db, { now_ms: now(), lease_ms: leaseMs, owner, max_attempts: maxAttempts });
+    const job = claimDueSummaryJob(db, {
+      now_ms: now(),
+      lease_ms: leaseMs,
+      owner,
+      max_attempts: maxAttempts,
+      ...(input.memory_id === undefined ? {} : { memory_id: input.memory_id }),
+      ...(input.revision === undefined ? {} : { revision: input.revision }),
+    });
     if (job === null) break;
     outcome.claimed += 1;
     const result = await runOne(input, job, {

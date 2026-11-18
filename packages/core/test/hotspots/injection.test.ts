@@ -129,7 +129,7 @@ describe("Session dedup", () => {
     const committed = commitInjection({ plan: first, store, ledger, at: NOW, activity_seq: 4 });
     expect(committed.receipts).toBe(1);
     expect(committed.ledger_added).toEqual(["mem-a"]);
-    expect(committed.delta).toEqual({ at: NOW, input_id: INPUT_ID, memory_ids: ["mem-a"] });
+    expect(committed.delta).toEqual({ at: NOW, input_id: INPUT_ID, memory_ids: ["mem-a"], freshness_sigs: { "mem-a": store.readFreshness("memory://vestigio/mem-a")!.freshness_sig } });
 
     // Restart: the ledger is rebuilt from the deltas the host persisted.
     const restored = InjectionLedger.replay([committed.delta!]);
@@ -149,7 +149,8 @@ describe("Session dedup", () => {
       nav: "流水线并发上限与排队策略，改并发时需要读取。",
     });
     setActivity(store, PROJECT, 2);
-    const ledger = InjectionLedger.fromIds(["mem-a"], NOW);
+    const ledger = new InjectionLedger();
+    ledger.add("mem-a", NOW, store.readFreshness("memory://vestigio/mem-a")!.freshness_sig);
     const result = plan({ store, text: "部署 端口 流水线", ledger });
     expect(result.matched.map((it) => it.memory_id).sort()).toEqual(["mem-a", "mem-b"]);
     expect(result.injected.map((it) => it.memory_id)).toEqual(["mem-b"]);
@@ -157,7 +158,7 @@ describe("Session dedup", () => {
     expect(commit.hit_events).toBe(2);
     expect(commit.receipts).toBe(1);
     expect(commit.ledger_added).toEqual(["mem-b"]);
-    expect(commit.delta).toEqual({ at: NOW, input_id: INPUT_ID, memory_ids: ["mem-b"] });
+    expect(commit.delta).toEqual({ at: NOW, input_id: INPUT_ID, memory_ids: ["mem-b"], freshness_sigs: { "mem-b": store.readFreshness("memory://vestigio/mem-b")!.freshness_sig } });
     store.close();
   });
 });

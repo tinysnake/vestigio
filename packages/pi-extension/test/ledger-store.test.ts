@@ -28,6 +28,14 @@ function userEntry(id: string): SessionEntry {
 const manager = (branch: SessionEntry[]) => ({ getBranch: () => branch });
 
 describe("loadLedger", () => {
+	it("restores the exact freshness snapshot after a session reload", () => {
+		const entry = ledgerEntry("e-snapshot", MAIN, "i-snapshot", ["mem-a"]);
+		if (entry.type !== "custom") throw new Error("fixture must be custom");
+		entry.data = { at: MAIN, input_id: "i-snapshot", memory_ids: ["mem-a"], freshness_sigs: { "mem-a": "r2:event-b" } };
+		const ledger = loadLedger({ getBranch: () => [entry] });
+		expect(ledger.isDelivered("mem-a", "r2:event-b")).toBe(true);
+		expect(ledger.isDelivered("mem-a", "r2:event-c")).toBe(false);
+	});
 	it("replays ledger entries from the branch", () => {
 		const ledger = loadLedger(
 			manager([ledgerEntry("e2", "2026-11-17T18:02:00Z", "i2", ["mem-b"]), userEntry("m1"), ledgerEntry("e1", MAIN, "i1", ["mem-a"])]),
