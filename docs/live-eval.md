@@ -431,7 +431,11 @@ models as above.
 | `navigation_updated` | 3/3 | 3/3 | 3/3 | 3/3 |
 | `published_after` | 3/3 | 3/3 | 3/3 | 3/3 |
 | `judge_pass` | 3/3 | 3/3 | 2/3 | 3/3 |
-| `f5_body_char_count` | 592-651 | 536-579 | 564-649 | 630-649 |
+| `repair_window_body_chars` | 592-651 | 536-579 | 564-649 | 630-649 |
+
+The body-character row is `repair_window_body_chars` in the merged harness; the
+run directories above were written before that rename and store the same value
+as `f5_body_char_count`.
 
 The one failure is `f5b` inline repeat 1, whose repair was cut off by the 150 s
 read deadline (`repair_source none`, `f5_repair_ms 150012`); the other two inline
