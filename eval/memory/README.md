@@ -159,7 +159,7 @@ Both live at the current floor of 1, and the baseline records the cost of moving
 it. Setting `DEFAULT_MIN_MATCH_SCORE` to 2 makes both clean and drops
 `false_positive_rate` to 0.000, but turns `inject-implicit-migration` into a miss
 (one shared token is all it has), taking `inject_hit_rate` to 0.750 and
-Recall@1 to 0.875. At 3 and 4 another inject case is lost. On 17 cases that is a
+Recall@1 to 0.875. At 3 and 4 another inject case is lost. On 18 cases that is a
 sweep, not evidence for a threshold change; shrinking this known-gaps list is
 what a larger dataset should decide.
 
