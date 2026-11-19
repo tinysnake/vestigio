@@ -22,6 +22,7 @@ export {
 } from "./detector.js";
 export type {
   DetectorCall,
+  DetectorDecisionParse,
   DetectorEvidence,
   DetectorFinding,
   DetectorResult,

@@ -959,6 +959,12 @@ function bodyFacts(body, session2) {
 	return { requiredPresent, stablePaths, stablePresent, inBand, satisfied: requiredPresent && stablePresent && inBand };
 }
 
+/**
+ * Deterministic F5 verdicts for one second session. Every number is measured at
+ * the end of session 2, so every field carries the `_s2` window suffix. The
+ * session-1-end window (background repair) is scored separately in `scoreRepeat`
+ * with `_s1` fields; `repair_source` names which window a repeat used.
+ */
 function scoreSession2({ before, after, navSourceRevision, searchable, session2, toolCalls }) {
 	const body = after.body ?? "";
 	const bodyChars = nonWhitespaceCodePointCount(body);
@@ -970,29 +976,29 @@ function scoreSession2({ before, after, navSourceRevision, searchable, session2,
 	);
 	const facts = bodyFacts(body, session2);
 	return {
-		repair_rate: repaired,
-		pending_drained: after.pending_ids.length === 0,
-		repaired_in_place: after.memory_count === 1,
-		fact_fidelity: facts.satisfied,
-		retrieval_drove_repair: repaired && retrievalRan,
-		navigation_updated: repaired && navSourceRevision === headAfter,
+		repair_rate_s2: repaired,
+		pending_drained_s2: after.pending_ids.length === 0,
+		repaired_in_place_s2: after.memory_count === 1,
+		fact_fidelity_s2: facts.satisfied,
+		retrieval_drove_repair_s2: repaired && retrievalRan,
+		navigation_updated_s2: repaired && navSourceRevision === headAfter,
 		// Gated on a repair: a memory that was already published and findable says
 		// nothing about whether the repair left it that way.
-		published_after: repaired ? after.state === "published" : null,
-		searchable_after_repair: repaired ? searchable.returned : null,
+		published_after_s2: repaired ? after.state === "published" : null,
+		searchable_after_repair_s2: repaired ? searchable.returned : null,
 		// Ungated, so a repair window outside session 2 (background mode) can still
 		// read whether the memory was findable afterwards.
-		search_returned: searchable.returned,
-		state_after: after.state,
-		search_query: searchable.query,
-		search_status: searchable.status,
-		search_returned_cards: searchable.cards,
-		body_char_count: bodyChars,
-		required_strings_present: facts.requiredPresent,
-		stable_paths: facts.stablePaths,
-		stable_paths_present: facts.stablePresent,
-		body_in_band: facts.inBand,
-		retrieval_ran: retrievalRan,
+		search_returned_s2: searchable.returned,
+		state_after_s2: after.state,
+		search_query_s2: searchable.query,
+		search_status_s2: searchable.status,
+		search_returned_cards_s2: searchable.cards,
+		body_char_count_s2: bodyChars,
+		required_strings_present_s2: facts.requiredPresent,
+		stable_paths_s2: facts.stablePaths,
+		stable_paths_present_s2: facts.stablePresent,
+		body_in_band_s2: facts.inBand,
+		retrieval_ran_s2: retrievalRan,
 	};
 }
 
@@ -1131,11 +1137,12 @@ function resultText(result) {
 }
 
 /**
- * The tool call that triggered the repair: the first call that ran and whose
- * result already reports the new head revision. The head move alone is not
- * attribution, so a repair that advanced it without any recorded call
- * reporting the new revision falls back to the first repair-capable call
- * (`memory_read` or `memory_resolve`); a repeat with no repair has no trigger.
+ * The tool call that triggered the repair, labelled by how it was attributed.
+ * `observed` is the first ran call whose result already reports the new head
+ * revision. The head move alone is not attribution, so a repair that advanced
+ * it without any recorded call reporting the new revision falls back to the
+ * first repair-capable call (`memory_read` or `memory_resolve`) and labels that
+ * `inferred`; a repeat with no repair has no trigger.
  */
 function repairTrigger({ toolCalls, repaired, headAfter }) {
 	if (!repaired) return null;
@@ -1143,7 +1150,7 @@ function repairTrigger({ toolCalls, repaired, headAfter }) {
 	for (const call of toolCalls) {
 		if (!call.ran) continue;
 		if (marker.test(resultText(call.result))) {
-			return { tool_call_id: call.tool_call_id, tool_name: call.tool_name, args: call.args };
+			return { attribution: "observed", tool_call_id: call.tool_call_id, tool_name: call.tool_name, args: call.args };
 		}
 	}
 	const capable = toolCalls.find(
@@ -1151,7 +1158,7 @@ function repairTrigger({ toolCalls, repaired, headAfter }) {
 	);
 	return capable === undefined
 		? null
-		: { tool_call_id: capable.tool_call_id, tool_name: capable.tool_name, args: capable.args };
+		: { attribution: "inferred", tool_call_id: capable.tool_call_id, tool_name: capable.tool_name, args: capable.args };
 }
 
 /**
@@ -1262,7 +1269,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 		state_after: after.state,
 		old_body: before.body,
 		new_body: after.body,
-		new_body_char_count: deterministic.body_char_count,
+		new_body_char_count: deterministic.body_char_count_s2,
 		pending_event_ids_after: after.pending_ids,
 		memory_count: after.memory_count,
 		nav_source_revision: after.nav_source_revision,
@@ -1630,27 +1637,38 @@ function scoreRepeat(result, corpus, repairMode) {
 		session1 === null || session1.head_revision === null || result.head_at_start === undefined
 			? null
 			: session1.head_revision > result.head_at_start;
-	// Background mode repairs at the first session's `agent_end`, so the repair
-	// window is session 1's end. Scoring session 2 there would report that nothing
-	// was repaired, which is what the mode is designed to do.
-	const window =
+	// Background mode repairs at the first session's `agent_end`, so its repair
+	// window is session 1's end, not session 2's. Scoring session 2 there would
+	// report that nothing was repaired, which is what the mode is designed to do.
+	// Every number here carries an `_s1` suffix so no name can be read as the
+	// other window's.
+	const s1Window =
 		repairMode === "background" && s1Repaired === true && session1 !== null && corpus.session2 !== undefined
 			? {
-					repair_rate: true,
-					pending_drained: session1.pending_ids.length === 0,
-					repaired_in_place: session1.memory_count === 1,
-					fact_fidelity: bodyFacts(session1.body ?? "", corpus.session2).satisfied,
-					retrieval_drove_repair: false,
-					navigation_updated: session1.nav_source_revision === session1.head_revision,
-					published_after: session1.state === "published",
-					searchable_after_repair: f5 === null ? null : f5.search_returned,
-					state_after: session1.state,
-					body_char_count: nonWhitespaceCodePointCount(session1.body ?? ""),
-					head_revision_before: result.head_at_start ?? null,
-					head_revision_after: session1.head_revision,
+					repair_rate_s1: true,
+					pending_drained_s1: session1.pending_ids.length === 0,
+					repaired_in_place_s1: session1.memory_count === 1,
+					fact_fidelity_s1: bodyFacts(session1.body ?? "", corpus.session2).satisfied,
+					retrieval_drove_repair_s1: false,
+					navigation_updated_s1: session1.nav_source_revision === session1.head_revision,
+					published_after_s1: session1.state === "published",
+					state_after_s1: session1.state,
+					body_char_count_s1: nonWhitespaceCodePointCount(session1.body ?? ""),
+					head_revision_before_s1: result.head_at_start ?? null,
+					head_revision_after_s1: session1.head_revision,
 			  }
 			: null;
-	const repaired = (field) => (window === null ? (f5 === null ? null : f5[field]) : window[field]);
+	// The repair window each metric is read from: `_s2` (session 2's end, from
+	// `f5`) for inline mode, `_s1` (session 1's end, from `s1Window`) for
+	// background mode. `repair_source` names which window a repeat used.
+	// `searchable_after_repair` is the one exception: the post-repair store search
+	// runs once session 2 has settled, so background mode reads session 2's
+	// ungated result rather than session 1's window.
+	const repairWindow = (field) => {
+		if (s1Window === null) return f5 === null ? null : f5[`${field}_s2`];
+		if (field === "searchable_after_repair") return f5 === null ? null : f5.search_returned_s2;
+		return s1Window[`${field}_s1`];
+	};
 	const repairSource =
 		f5 === null && !(repairMode === "background" && s1Repaired === true)
 			? null
@@ -1658,7 +1676,7 @@ function scoreRepeat(result, corpus, repairMode) {
 				? s1Repaired === true
 					? "background"
 					: "none"
-				: f5?.repair_rate === true
+				: f5?.repair_rate_s2 === true
 					? "retrieval"
 					: "none";
 	return {
@@ -1682,23 +1700,23 @@ function scoreRepeat(result, corpus, repairMode) {
 		update_rejected_per_turn: ratio(updateRejected, turns.length),
 		mark_stale_recorded: markRecorded,
 		mark_stale_rejected: markRejected,
-		repair_rate: repaired("repair_rate"),
-		pending_drained: repaired("pending_drained"),
-		repaired_in_place: repaired("repaired_in_place"),
-		fact_fidelity: repaired("fact_fidelity"),
-		retrieval_drove_repair: repaired("retrieval_drove_repair"),
+		repair_rate: repairWindow("repair_rate"),
+		pending_drained: repairWindow("pending_drained"),
+		repaired_in_place: repairWindow("repaired_in_place"),
+		fact_fidelity: repairWindow("fact_fidelity"),
+		retrieval_drove_repair: repairWindow("retrieval_drove_repair"),
 		repair_source: repairSource,
-		navigation_updated: repaired("navigation_updated"),
-		published_after: repaired("published_after"),
-		searchable_after_repair: repaired("searchable_after_repair"),
-		f5_state_after: repaired("state_after"),
+		navigation_updated: repairWindow("navigation_updated"),
+		published_after: repairWindow("published_after"),
+		searchable_after_repair: repairWindow("searchable_after_repair"),
+		repair_window_state_after: repairWindow("state_after"),
 		f5_repair_ms: session2 === null ? null : (session2.repair_ms ?? null),
 		f5_background_repair_ms: background === null ? null : background.elapsed_ms,
-		f5_search_query: f5 === null ? null : f5.search_query,
+		s2_search_query: f5 === null ? null : f5.search_query_s2,
 		judge_pass: session2 === null ? null : session2.judge.pass,
-		f5_body_char_count: repaired("body_char_count"),
-		f5_head_revision_before: repaired("head_revision_before"),
-		f5_head_revision_after: repaired("head_revision_after"),
+		repair_window_body_char_count: repairWindow("body_char_count"),
+		repair_window_head_revision_before: repairWindow("head_revision_before"),
+		repair_window_head_revision_after: repairWindow("head_revision_after"),
 		s1_pending_drained: session1 === null ? null : session1.pending_ids.length === 0,
 		s1_repaired: s1Repaired,
 		cost: {
@@ -1779,10 +1797,10 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), passRate(block, "judge_pass")],
 			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), passRate(block, "s1_pending_drained")],
 			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), passRate(block, "s1_repaired")],
-			["f5_state_after", ...block.repeats.map((item) => String(item.f5_state_after ?? "n/a")), String(block.distribution.f5_state_after ?? "n/a")],
+			["repair_window_state_after", ...block.repeats.map((item) => String(item.repair_window_state_after ?? "n/a")), String(block.distribution.repair_window_state_after ?? "n/a")],
 			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
 			["f5_background_repair_ms", ...block.repeats.map((item) => (item.f5_background_repair_ms === null ? "n/a" : String(item.f5_background_repair_ms))), "n/a"],
-			["f5_body_chars", ...block.repeats.map((item) => formatMetric(item.f5_body_char_count)), formatMetric(median(block.repeats.map((item) => item.f5_body_char_count).filter((value) => value !== null)))],
+			["repair_window_body_chars", ...block.repeats.map((item) => formatMetric(item.repair_window_body_char_count)), formatMetric(median(block.repeats.map((item) => item.repair_window_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
 		const widths = header.map((cell, column) => Math.max(cell.length, ...allRows.map((row) => row[column].length)));
@@ -2107,13 +2125,20 @@ function childFirstLine(command, args, cwd) {
 	return result.stdout.split("\n")[0].trim();
 }
 
-main()
-	.then((code) => {
-		// The recording proxy is closed, but a spawned pi or a lingering socket can
-		// keep the event loop alive; every artifact is already written synchronously.
-		process.exit(code);
-	})
-	.catch((error) => {
+/**
+ * The harness owns the process exit, and it is the only owner. `main` closes the
+ * recording proxy, but a spawned pi or a lingering socket can still keep the
+ * event loop alive long after `main` resolves; every artifact is written
+ * synchronously, so the process ends here with the one code `main` computed.
+ */
+async function run() {
+	let code = 2;
+	try {
+		code = await main();
+	} catch (error) {
 		console.error("live harness error:", error);
-		process.exit(2);
-	});
+	}
+	process.exit(code);
+}
+
+await run();
