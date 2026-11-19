@@ -93,4 +93,21 @@
 
 首版暴露三个待处理项。其一，`memory_search` 的默认检索是析取词元加合取匹配（`buildMatchQuery` 用 `AND` 连接一元组与二元组），自然语言问句通常一条也匹配不到，因此样本使用关键词式短语；这与工具契约一致（`packages/pi-extension/src/tools.ts` 写明 exact words work best，自然语言走 `memory_resolve`），但意味着 Recall 数字只在关键词查询口径下成立。其二，`旧配置的字段名` 会因共享二元组「配置」注入 `mem-deploy-port`，`部署脚本默认端口` 会因共享「端口」额外注入两条同名端口约定，两次都是真实的注入误召回，已分别记为 `inject-negative-near-miss` 与 `inject-near-miss-port-rule` 并计入 FP 率。其三，同名冲突场景下两条记忆都在候选集，排序先后不携带信息，样本用 `rank_ignored` 只断言存在性与 `conflicted` 状态，不参与 Recall 分母；这是记录口径，不是放宽标准。
 
+对照第 12 节验收标准，当前状态如下（依据均来自上面的命令与报告，不是推断）：
+
+| 第 12 节条目 | 状态 | 依据 |
+| --- | --- | --- |
+| 1 固定 Dataset 重复运行 | 已满足 | 18 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
+| 2 区分四类 Miss | 部分 | Retrieval Miss 由 `miss` 直接给出；Trigger / Resolution / Usage Miss 需要真实 Agent 回合，离线 harness 不具备 |
+| 3 Recall@1/3/5 | 已满足 | 当前均 1.000，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
+| 4 Candidate / Injection FP 分层 | 已满足 | 两个比率共用分母，另有 `budget_rescued` 计数据 |
+| 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
+| 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |
+| 7 一次完整查询的 Trace | 部分 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联（触发 → 注入 → 使用）缺 |
+| 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`，跨 commit 只需各自产出报告再 `compare.mjs`；尚无自动取两次 worktree 的脚本 |
+| 9 P50/P95 与有效召回成本 | 未做 | 离线 harness 不调用模型、不做索引，计时与 token 都无意义，成本应挂在真实链路上测 |
+| 10 Shadow 不改变生产行为 | 已满足 | 无 shadow 组件接入生产；harness 只读生产代码，写独立 store |
+| 11 评估失败不影响记忆读写 | 已满足 | 工具未接入生产路径，失败只体现为自身退出码 |
+| 12 结果可追溯 | 部分 | 数据集指纹、catalog 版本、commit 都有；`model_id` 因不调模型而不适用 |
+
 真实模型质量、历史快照回放、跨版本配对基线及 Shadow 副作用仍是后续验收项。
