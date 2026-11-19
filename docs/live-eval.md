@@ -41,15 +41,13 @@ source directly:
 
 ```
 node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3
-node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3 --repair-mode background
 node --import ../pi/hook.mjs ./run.mjs --only f5b --probe-only
 ```
 
-`--repair-mode` sets `VESTIGIO_REPAIR_MODE` for the pi children and is recorded in
-`run.json` as `repair_mode`. The default is `inline`. In `background` mode a stale
-read returns the old body with `repair: deferred` and `agent_end` repairs the
-memory, which is still before the session settles, so `repair_rate`,
-`published_after` and `searchable_after_repair` are measured the same way; the
+A repair happens at the end of the session that left pending events, so both
+`f1f2` and `f5b` are run once, not once per timing: a stale read inside a session
+returns the stored body with `repair: deferred` and the pass repairs the memory
+at `agent_end`, which is still before that session settles.
 `f5_repair_ms` value then covers the end-of-session pass rather than the read tool
 call.
 
@@ -253,12 +251,10 @@ Reported as a distribution over repeats, never as a single pass.
 ## Scoring (milestone 2: F5 repair)
 
 Deterministic, no judge. A repeat counts as repaired when the head revision of
-this memory advanced, whichever session advanced it. With `--repair-mode
-inline` that is the second session; with `--repair-mode background` the pass
-runs at the first session's `agent_end`, so the repair window is the end of
-session 1 and the same questions are scored there. `repair_source` names the
-window a repeat was scored in, and `f5_repair_ms` stays `null` in background
-mode because no tool call carried the repair.
+this memory advanced, whichever session advanced it. With the single repair path
+that is the first session's `agent_end` pass, so the repair window is the end of
+session 1, not the end of session 2. `repair_source` names the window a repeat
+was scored in.
 
 - `repair_rate` — repeats whose repair window advanced the head revision.
 - `pending_drained` — repeats whose pending event set is empty afterwards. A
@@ -270,23 +266,20 @@ mode because no tool call carried the repair.
   string, and sits inside the 500–660 non-whitespace code point band the prompt
   asks for.
 - `retrieval_drove_repair` — repeats where the second session called
-  `memory_resolve` or `memory_read` before the head advanced.
+  `memory_resolve` or `memory_read` before the head advanced, which the product
+  no longer expects: the pass repairs before session 2 starts.
 - `navigation_updated` — repeats where `nav.source_revision` equals the new
   head revision.
 - `published_after` and `searchable_after_repair` — repeats where the memory
   ends `published` and a plain `layeredSearch` on the same store finds it. Both
   are `null` when no repair happened, because an already-published memory says
   nothing about what the repair left behind.
-- `f5_repair_ms` — wall time of the tool call that carried the repair, in
-  milliseconds. Reported so the inline-versus-background decision is made from
-  a measured distribution rather than the deadline constant.
-- `f5_background_repair_ms` — wall time of the end-of-session pass, summed over
-  the memories it attempted, read from the `vestigio.background-repair` session
-  entry. `null` in inline mode.
-- `repair_source` — `retrieval` when the second session's repair window
-  advanced the head, `background` when the first session's `agent_end` pass did,
-  `none` when neither did. It is the one field that says which of the two paths
-  the feature actually took.
+- `f5_repair_ms` — wall time of the end-of-session pass, read from the
+  `vestigio.background-repair` session entry's `elapsed_ms`. Reported so the cost
+  of a repair is made from a measured distribution rather than the deadline
+  constant.
+- `repair_source` — `background` when the first session's `agent_end` pass
+  advanced the head, `none` when it did not.
 - `s1_pending_drained` and `s1_repaired` — the state of the store after the
   first session settled, before the second session starts. In `background` mode
   the repair happens at `agent_end` of the turn that recorded the change, so
@@ -381,11 +374,13 @@ deadline that killed a live call, and a gateway 502 on the first repair call.
 Each is fixed or documented above; the numbers in this table are from the
 configuration that has the fixes.
 
-### Repair mode
+### Repair timing
 
-`f5b --repeat 3 --repair-mode background` on 2026-11-19, same models (run
-`eval/live/runs/2026-11-19T01-59-31-298Z`), scores the repair window at the end
-of session 1 because that is where the pass runs.
+A repair runs at the end of the session that left pending events. The 2026-11-19
+comparison that chose this timing, `f5b --repeat 3` with the then-selectable
+`--repair-mode background` (run `eval/live/runs/2026-11-19T01-59-31-298Z`), scores
+the repair window at the end of session 1 because that is where the pass runs.
+That flag is gone; the harness now always scores this window.
 
 | metric | repeat 1 | repeat 2 | repeat 3 |
 | --- | --- | --- | --- |
@@ -398,14 +393,12 @@ of session 1 because that is where the pass runs.
 | `published_after` | true | true | true |
 | `searchable_after_repair` | true | true | true |
 | `judge_pass` | true | true | true |
-| `f5_background_repair_ms` | 25310 | 23519 | 25168 |
+| `f5_repair_ms` | 25310 | 23519 | 25168 |
 
-`retrieval_drove_repair` is `false` in every repeat by construction: the mode
-exists so that retrieval does not repair. `f5_repair_ms` is `null` for the same
-reason, and `f5_background_repair_ms` carries the pass instead. Across runs the
-background pass scored `judge_pass` 3/3 twice while inline scored 3/5, 2/5 and
-2/3, so background has the better content record as well as the shorter
-latency, though every sample is small.
+`retrieval_drove_repair` is `false` in every repeat by construction: the pass
+repairs before session 2 reads. Across runs the background pass scored
+`judge_pass` 3/3 twice while the inline timing it replaced scored 3/5, 2/5 and
+2/3, though every sample is small.
 
 ### 2026-11-19 round, all three corpora
 
@@ -413,7 +406,8 @@ After the re-gather fix, the 500-660 body band and the repair-quality work: `f1f
 in `eval/live/runs/2026-11-19T04-44-40-798Z`, `hygiene` in
 `.../04-58-28-284Z`, `f5b` inline in `.../05-05-30-332Z` and `f5b`
 `--repair-mode background` in `.../05-28-41-416Z`. Three repeats each, same
-models as above.
+models as above. The `f5b inline` column was measured before the inline timing
+was removed; the last column is the timing that shipped.
 
 | metric | f1f2 | hygiene | f5b inline | f5b background |
 | --- | --- | --- | --- | --- |
