@@ -121,4 +121,8 @@
 
 结论：OR 不是自然语言的解法，它只是把排序问题暴露在结果集长度上；FTS 没有可靠排序时，把检索口径放宽到 `OR` 等于放弃精度。自然语言入口应留在 `memory_resolve`（由模型选择证据），`memory_search` 保持关键词契约。实验后 `store.ts` 已改回，`git diff` 为空。
 
+第三个实验在使用侧。`eval/memory/usage.mjs` 把「(用户问题, 注入的 nav 摘要, Agent 回答)」交给一个裁判模型，要求给出 `used` / `partial` / `ignored` / `misused`，再和人工标签比对。裁判走 `pi -p --no-tools`，模型借自 `~/.pstack/models.md` 的 `feature, refactoring` 行，`magpie/auto/deepseek-v4.1-flash:low`；因为是真调用，报告里的 `duration_ms`、输入输出 token 和 `cost_usd` 都是实测值——一次判定约 `$0.00017`，12 条一轮约 `$0.002`，P50 约 2.2–2.4 秒。
+
+一致性一开始只有 0.583，原因不是模型弱，而是标签口径含糊：把「复述 nav 里的具体内容」和「只说该看看记忆」混成了同一个 `used`，裁判按字面判成了 `partial`；把 `misused` 限定为「依赖了记忆但结论相反或把过期内容当现状」之后，答案改成显式复述，一致性升到 0.833。同一份样本再跑一次是 0.750，12 条里有 1 条判定翻转（`usage-deploy-port-used` 从 `used` 变 `partial`）。因此这个裁判适合做趋势观测，不能做单例门禁；把它当门禁会被裁判噪声当成回归。`usage-stale-ttl-*` 三行同时补上了 Stale Misuse 的正样本：同一条带 `is_stale` 的记忆，分别对应「据此修正」「无视」「把旧值当现状」。
+
 真实模型质量、历史快照回放、跨版本配对基线及 Shadow 副作用仍是后续验收项。

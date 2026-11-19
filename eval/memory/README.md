@@ -136,6 +136,37 @@ Metrics use non-error cases only:
 | `budget_rescued` | count of cases where the cap dropped a leaked candidate |
 | `source_gap_rescue_rate` | cases with `expected_source_refs` |
 
+## Usage evaluation
+
+`usage.mjs` is the only part of this directory that calls a model. It takes
+`(query, injected nav summaries, answer)` triples from `usage-cases.jsonl`, asks
+a judge for one of `used` / `partial` / `ignored` / `misused`, and reports how
+often the judge agrees with the hand-written label.
+
+```sh
+node ./usage.mjs            # 12 cases, roughly $0.002 and half a minute
+node ./usage.mjs --dry      # print the prompts, spend nothing
+```
+
+The judge defaults to `magpie/auto/deepseek-v4.1-flash:low` (borrowed from the
+`feature, refactoring` row of `~/.pstack/models.md`; `--model` overrides). It
+runs through `pi -p --no-tools`, so a report records real `duration_ms`, input
+and output tokens, and `cost_usd` per call: cost per verdict is measured, not
+assumed.
+
+Two things to keep in mind before trusting a number:
+
+- The judge sees only what the agent saw — nav summaries, never the body. So
+  `used` means the answer restated nav-level content, not that it recovered the
+  full decision.
+- Verdict stability is about one in twelve on a 12-case run. Agreement on the
+  committed labels is 0.833 and 0.750 across two runs, so this is a trend
+  instrument, not a gate. `usage-cases.jsonl` is labelled by hand precisely so
+  the judge can be wrong and be seen being wrong.
+
+`usage-stale-ttl-*` rows are the Stale Misuse side of the proposal: same memory,
+`is_stale` true, answers that heed it, ignore it, or treat it as current.
+
 `experiments/nl-cases.jsonl` is the same dataset with the six card queries phrased
 as natural questions. It exists to show why the matcher is conjunctive: under the
 production `AND` mode five of six miss, and under `OR` recall returns while six of
