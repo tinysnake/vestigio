@@ -41,7 +41,16 @@ source directly:
 
 ```
 node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3
+node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3 --repair-mode background
 ```
+
+`--repair-mode` sets `VESTIGIO_REPAIR_MODE` for the pi children and is recorded in
+`run.json` as `repair_mode`. The default is `inline`. In `background` mode a stale
+read returns the old body with `repair: deferred` and `agent_end` repairs the
+memory, which is still before the session settles, so `repair_rate`,
+`published_after` and `searchable_after_repair` are measured the same way; the
+`f5_repair_ms` value then covers the end-of-session pass rather than the read tool
+call.
 
 It does not start a mock provider. It runs real `pi` processes in `--mode rpc`
 with `--provider magpie --model auto/deepseek-v4.1-flash --thinking low`,
@@ -217,10 +226,15 @@ Reported as a distribution over repeats, never as a single pass.
 
 ## Scoring (milestone 2: F5 repair)
 
-Deterministic, no judge. A repeat counts as repaired when the second session
-advanced the head revision of the same `memory_id`.
+Deterministic, no judge. A repeat counts as repaired when the head revision of
+this memory advanced, whichever session advanced it. With `--repair-mode
+inline` that is the second session; with `--repair-mode background` the pass
+runs at the first session's `agent_end`, so the repair window is the end of
+session 1 and the same questions are scored there. `repair_source` names the
+window a repeat was scored in, and `f5_repair_ms` stays `null` in background
+mode because no tool call carried the repair.
 
-- `repair_rate` — repeats whose second session advanced the head revision.
+- `repair_rate` — repeats whose repair window advanced the head revision.
 - `pending_drained` — repeats whose pending event set is empty afterwards. A
   repair that leaves events pending did not absorb them.
 - `repaired_in_place` — repeats where `countMemories()` is still 1, so the
@@ -239,6 +253,19 @@ advanced the head revision of the same `memory_id`.
 - `f5_repair_ms` — wall time of the tool call that carried the repair, in
   milliseconds. Reported so the inline-versus-background decision is made from
   a measured distribution rather than the deadline constant.
+- `f5_background_repair_ms` — wall time of the end-of-session pass, summed over
+  the memories it attempted, read from the `vestigio.background-repair` session
+  entry. `null` in inline mode.
+- `repair_source` — `retrieval` when the second session's repair window
+  advanced the head, `background` when the first session's `agent_end` pass did,
+  `none` when neither did. It is the one field that says which of the two paths
+  the feature actually took.
+- `s1_pending_drained` and `s1_repaired` — the state of the store after the
+  first session settled, before the second session starts. In `background` mode
+  the repair happens at `agent_end` of the turn that recorded the change, so
+  the change is absorbed without a second session and `repair_rate` is
+  `false`; these two metrics are what says the memory was still repaired. They
+  are `null` for a repeat with no second session.
 
 Those checks prove the new value landed and the memory was repaired in place.
 They cannot prove what the body now says about the old values, because a
@@ -322,6 +349,33 @@ judge that answered the same prompt `pass`, `fail`, `pass`, a 90 s read-repair
 deadline that killed a live call, and a gateway 502 on the first repair call.
 Each is fixed or documented above; the numbers in this table are from the
 configuration that has the fixes.
+
+### Repair mode
+
+`f5b --repeat 3 --repair-mode background` on 2026-11-19, same models (run
+`eval/live/runs/2026-11-19T01-59-31-298Z`), scores the repair window at the end
+of session 1 because that is where the pass runs.
+
+| metric | repeat 1 | repeat 2 | repeat 3 |
+| --- | --- | --- | --- |
+| `repair_source` | background | background | background |
+| `repair_rate` | true | true | true |
+| `pending_drained` | true | true | true |
+| `repaired_in_place` | true | true | true |
+| `fact_fidelity` | true | true | true |
+| `navigation_updated` | true | true | true |
+| `published_after` | true | true | true |
+| `searchable_after_repair` | true | true | true |
+| `judge_pass` | true | true | true |
+| `f5_background_repair_ms` | 25310 | 23519 | 25168 |
+
+`retrieval_drove_repair` is `false` in every repeat by construction: the mode
+exists so that retrieval does not repair. `f5_repair_ms` is `null` for the same
+reason, and `f5_background_repair_ms` carries the pass instead. The same corpus
+without `--repair-mode` (inline) scored `judge_pass 3/5` at `--repeat 5`, so the
+sample is too small to rank the two timings by content quality; the latency
+difference is measured and real (a 23-25 s pass here, 129 s for one
+corpus-`hygiene` memory, against 15-101 s per inline repair).
 
 ## What this does not prove
 
