@@ -8,10 +8,23 @@
 
 import { nonWhitespaceCodePointCount } from "../contracts/index.js";
 import type { ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
-import { MEDIUM_SUMMARY_SYSTEM_PROMPT, buildMediumUserMessage, describeMediumFailure, validateMediumBody } from "./prompt.js";
+import { MEDIUM_REWRITE_SYSTEM_NOTE, MEDIUM_SUMMARY_SYSTEM_PROMPT, buildMediumUserMessage, describeMediumFailure, validateMediumBody } from "./prompt.js";
 import type { MediumCall, MediumExtractInput, MediumExtraction } from "./types.js";
 
 const ZERO_USAGE: ModelUsage = { tokens_in: 0, tokens_out: 0, cost_usd: null };
+
+/**
+ * The client's documented reason for a non-2xx answer is `http <status>: ...`
+ * (`packages/model-client/src/openai-compatible.ts`). That prefix is the port's
+ * contract, so the HTTP status is read here, once, where the port answer is
+ * consumed; no caller parses the reason again.
+ */
+const HTTP_STATUS = /^http (\d{3})\b/u;
+
+function httpStatusOf(reason: string): number | null {
+  const match = HTTP_STATUS.exec(reason);
+  return match?.[1] === undefined ? null : Number.parseInt(match[1], 10);
+}
 
 function readBodyObject(text: string): string | null {
   const trimmed = text.trim();
@@ -53,7 +66,13 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
   const request: ModelRequest = {
     ...(input.model_id === undefined ? {} : { model: input.model_id }),
     messages: [
-      { role: "system", content: MEDIUM_SUMMARY_SYSTEM_PROMPT },
+      {
+        role: "system",
+        content:
+          input.guidance === undefined && input.correction === undefined
+            ? MEDIUM_SUMMARY_SYSTEM_PROMPT
+            : `${MEDIUM_SUMMARY_SYSTEM_PROMPT}\n\n${MEDIUM_REWRITE_SYSTEM_NOTE}`,
+      },
       { role: "user", content: buildMediumUserMessage(input.evidence, input.correction, input.guidance) },
     ],
     max_output_tokens: input.max_output_tokens,
@@ -74,6 +93,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body_char_count: null,
       cited_ids: [],
       reason: `model_threw:${error instanceof Error ? error.message : String(error)}`,
+      failure: { kind: "model_threw", message: error instanceof Error ? error.message : String(error) },
       usage: ZERO_USAGE,
       call: callOf(input.model_id ?? "unconfigured", ZERO_USAGE, performance.now() - started, "failed"),
     };
@@ -88,6 +108,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body_char_count: null,
       cited_ids: [],
       reason: `model_${result.status}:${result.reason}`,
+      failure: { kind: "model", status: result.status, http_status: httpStatusOf(result.reason) },
       usage: ZERO_USAGE,
       call: callOf(input.model_id ?? "unconfigured", ZERO_USAGE, elapsed, cancelled ? "cancelled" : "failed"),
     };
@@ -103,6 +124,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body_char_count: null,
       cited_ids: [],
       reason: "model_malformed_output:no_body",
+      failure: { kind: "malformed_output" },
       usage,
       call: callOf(model, usage, elapsed, "malformed"),
     };
@@ -117,6 +139,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
         body_char_count: nonWhitespaceCodePointCount(body),
         cited_ids: [],
         reason: describeMediumFailure(validation.failure),
+        failure: { kind: "body", failure: validation.failure },
         usage,
         call: callOf(model, usage, elapsed, "ok"),
       };
@@ -127,6 +150,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body_char_count: null,
       cited_ids: [],
       reason: describeMediumFailure(validation.failure),
+      failure: { kind: "body", failure: validation.failure },
       usage,
       call: callOf(model, usage, elapsed, "invalid"),
     };
@@ -138,6 +162,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
     body_char_count: validation.body_char_count,
     cited_ids: validation.cited_ids,
     reason: null,
+    failure: null,
     usage,
     call: callOf(model, usage, elapsed, "ok"),
   };

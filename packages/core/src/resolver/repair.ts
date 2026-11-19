@@ -204,7 +204,7 @@ export async function repairStaleMemory(input: RepairInput): Promise<RepairOutco
     if (input.signal.aborted) break;
     const over = overrun(extraction);
     if (!retryableExtraction(extraction) && over === null) break;
-    extraction = await ask(correctionMessage(pending, extraction.reason, over));
+    extraction = await ask(correctionMessage(pending, extraction, over));
   }
 
   if (extraction.status === "cancelled") {
@@ -275,16 +275,18 @@ export async function repairStaleMemory(input: RepairInput): Promise<RepairOutco
 /**
  * One more ask is worth it for a body the reader rejected, an answer the backend
  * could not parse, or a gateway 5xx; a cancellation is not, and neither is an
- * evidence verdict (`not_incorporated`, `insufficient_evidence`).
+ * evidence verdict (`not_incorporated`, `insufficient_evidence`). The decision
+ * reads the structured `failure`, never the diagnostic text in `reason`.
  */
 function retryableExtraction(extraction: MediumExtraction): boolean {
+  // `invalid` is the reader's verdict: a malformed reply or a body it rejected.
   if (extraction.status === "invalid") return true;
-  const reason = extraction.reason ?? "";
-  if (extraction.status !== "failed") return false;
-  if (reason.startsWith("model_invalid_response:")) return true;
+  const failure = extraction.failure;
+  if (failure === null || failure.kind !== "model") return false;
+  if (failure.status === "invalid_response") return true;
   // A gateway 5xx is worth one more ask: nothing was written, and the live
   // runs showed the same call failing on 502 and succeeding on the next turn.
-  return /http (?:5\d\d)\b/iu.test(reason);
+  return failure.http_status !== null && failure.http_status >= 500 && failure.http_status < 600;
 }
 
 /**
@@ -298,21 +300,27 @@ function overrun(extraction: MediumExtraction): number | null {
   return measured > MEDIUM_BODY_MAX ? measured : null;
 }
 
+/** The measured body length the validator reported, when it reported one. */
+function measuredBodyCount(extraction: MediumExtraction): number | null {
+  const failure = extraction.failure;
+  if (failure === null || failure.kind !== "body") return null;
+  const body = failure.failure;
+  return body.kind === "too_short" || body.kind === "too_long" ? body.measured : null;
+}
+
 function correctionMessage(
   pending: readonly StaleEventSummary[],
-  reason: string | null,
+  extraction: MediumExtraction,
   over: number | null,
 ): string {
   const ids = pending.map((event) => event.event_id).join(", ");
-  const count = /medium_(?:above|below)_(?:max|min):(\d+)/u.exec(reason ?? "")?.[1];
+  const measured = over ?? measuredBodyCount(extraction);
   const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain Chinese prose`;
-  const size = over !== null
-    ? `Your body was ${over} non-whitespace Unicode code points, over the ${MEDIUM_BODY_MAX} ceiling. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`
-    : count === undefined
-      ? `The body must be ${band}.`
-      : `Your body was ${count} non-whitespace Unicode code points. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`;
+  const size = measured === null
+    ? `The body must be ${band}.`
+    : `Your body was ${measured} non-whitespace Unicode code points${measured > MEDIUM_BODY_MAX ? `, over the ${MEDIUM_BODY_MAX} ceiling` : ""}. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`;
   return [
-    `Your previous reply was not usable: ${reason ?? "unreadable"}.`,
+    `Your previous reply was not usable: ${extraction.reason ?? "unreadable"}.`,
     `Reply with exactly one JSON object {"body": "..."} and nothing else.`,
     size,
     `It must cite at least one of these pending event ids with [来源:<id>]: ${ids}. No other id may appear.`,
@@ -331,6 +339,7 @@ function repairGuidance(pendingCount: number): string {
     "This replaces the general instruction to describe the discussion: do not say what was discussed, what was tried, or what is still uncertain.",
     "Cite [来源:<id>] for each pending event you fold in, and state the resulting values once, in the conclusion, without enumerating the changes.",
     "A value a pending change supersedes may appear only where it is explicitly marked as replaced; never open with the old one, and never state two different current values for the same setting.",
+    "When the pending changes move the same fact more than once, only the last move is current: state that value and mark the earlier moves as replaced, never the first move as the current one.",
     "Keep every fact, path and procedure the summary already states and the changes do not replace.",
     "Never extend a rule further than the summary states it: a drill required after window or ratio changes does not become a drill after every change.",
     "Never name a revision, an id, or the evidence set.",

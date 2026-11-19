@@ -12,7 +12,7 @@
  */
 
 import type { SourceRef } from "../contracts/index.js";
-import type { ModelUsage } from "../resolver/types.js";
+import type { ModelFailureStatus, ModelUsage } from "../resolver/types.js";
 
 /** One piece of gathered evidence as the summary prompt sees it. */
 export type MediumEvidence = {
@@ -55,6 +55,29 @@ export type MediumExtractionStatus =
   | "failed"
   | "cancelled";
 
+/** The body validator's verdict, structured. */
+export type MediumBodyFailure =
+  | { kind: "too_short"; measured: number }
+  | { kind: "too_long"; measured: number }
+  | { kind: "missing_citation" }
+  | { kind: "foreign_source"; ids: string[] }
+  | { kind: "action_claim"; phrase: string };
+
+/**
+ * Why one attempt produced no usable body. The caller reads this instead of
+ * matching text inside `reason`; `reason` stays for the human-facing message
+ * and the ledger.
+ */
+export type MediumFailure =
+  /** The port reported a failure; `http_status` when its reason named one. */
+  | { kind: "model"; status: ModelFailureStatus; http_status: number | null }
+  /** `complete` threw instead of returning a failure. */
+  | { kind: "model_threw"; message: string }
+  /** The reply was not a JSON object carrying a body. */
+  | { kind: "malformed_output" }
+  /** The body failed validation. */
+  | { kind: "body"; failure: MediumBodyFailure };
+
 export type MediumExtraction = {
   status: MediumExtractionStatus;
   /** Present for `ok` and `insufficient_evidence` (the shorter honest body). */
@@ -62,6 +85,8 @@ export type MediumExtraction = {
   body_char_count: number | null;
   cited_ids: string[];
   reason: string | null;
+  /** Structured cause of a non-`ok` result; `null` when `status` is `ok`. */
+  failure: MediumFailure | null;
   usage: ModelUsage;
   call: MediumCall;
 };

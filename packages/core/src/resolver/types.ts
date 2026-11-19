@@ -211,11 +211,6 @@ export type ResolveInput = {
   mono_now?: (() => number) | undefined;
   /** Bounded structural overrides (tests and measured tuning). */
   budget?: Partial<ResolveBudgetOptions> | undefined;
-  /**
-   * "inline" (default) repairs a stale hit during the walk; "defer" delivers
-   * the stale card with its freshness and repairs nothing.
-   */
-  repair?: "inline" | "defer" | undefined;
   /** Recorded on every call; informational. */
   model_id?: string | undefined;
   /**

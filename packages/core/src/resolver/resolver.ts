@@ -31,17 +31,14 @@
 import {
   parseRetrievalResult,
   parseScope,
-  type Freshness,
   type MemoryCard,
   type MemoryUri,
   type RetrievalResult,
   type RetrievalStatus,
   type Scope,
   type SourceRef,
-  type StaleEventSummary,
 } from "../contracts/index.js";
 import { hasRawHistoryEvidence, persistResolvedMemory, replaySavedRequest } from "./persist.js";
-import { repairStaleMemory } from "./repair.js";
 import {
   layeredSearch,
   readMemoryResult,
@@ -53,7 +50,7 @@ import {
   type LayerOutcome,
 } from "../retrieval/index.js";
 import { retrievalError } from "../retrieval/errors.js";
-import { MAX_FRESHNESS_PENDING, type MemoryStore } from "../storage/store.js";
+import { type MemoryStore } from "../storage/store.js";
 import {
   RESOLVE_COLD_REFRESH_THRESHOLD_MS,
   RESOLVE_TOKEN_ESTIMATE_BYTES_PER_TOKEN,
@@ -80,8 +77,6 @@ const LAYER_ORDER: readonly LayerName[] = ["active", "archived", "history"];
 const HISTORY_EXCERPT_CHARS = 1200;
 const HISTORY_HITS = 6;
 const MAX_HISTORY_BYTES = 12 * 1024;
-/** Stale-hit targeted read: bounded successors, at most two port reads. */
-const STALE_READ_AFTER = 3;
 /**
  * A layer may be gathered at most twice: once on arrival, once re-queried with
  * the judge's better phrasings. The second gather is what keeps `next_queries`
@@ -90,8 +85,45 @@ const STALE_READ_AFTER = 3;
 const MAX_LAYER_GATHERS = 2;
 /** Re-gathers one resolve may spend; each one costs the judge call it triggers. */
 export const MAX_LAYER_REQUERIES = 2;
-const STALE_READ_BUDGET = 2;
-const STALE_EXCERPT_CHARS = 1200;
+
+/**
+ * The judge answers with whole phrasings, e.g. "发布窗口 灰度比例 发布时长上限".
+ * One query matches every token ANDed (`packages/core/src/storage/tokenize.ts`),
+ * so a phrasing that names several concepts can never match a memory that states
+ * them in separate clauses, and the re-ask would come back as empty as the first
+ * gather. Split a phrasing on whitespace and list punctuation so each concept is
+ * searched on its own; the store unions the hits and the judge still decides
+ * sufficiency.
+ */
+const PHRASING_SEPARATORS = /[\s、，,；;·|/]+/u;
+/**
+ * How many of those fragments one re-ask may spend. A re-ask is a few cheap
+ * index lookups and no extra model call, but the caller's variant budget is not
+ * the right ceiling for it: the judge can name one concept per phrasing, so a
+ * three-fragment re-ask drops the concept that finally matches. The judge still
+ * filters whatever the wider net pulls in.
+ */
+const MAX_REQUERY_VARIANTS = 8;
+
+/**
+ * Fragments ordered by length: a two-to-four character fragment is a keyword
+ * and ANDs the fewest tokens, while a longer one is closer to a sentence and a
+ * conjunctive index rarely matches it whole.
+ */
+function expandPhrasings(queries: readonly string[]): string[] {
+  const expanded: string[] = [];
+  const seen = new Set<string>();
+  for (const query of queries) {
+    for (const segment of query.split(PHRASING_SEPARATORS)) {
+      const trimmed = segment.trim();
+      const key = trimmed.toLocaleLowerCase();
+      if (Array.from(trimmed).length < 2 || seen.has(key)) continue;
+      seen.add(key);
+      expanded.push(trimmed);
+    }
+  }
+  return expanded.sort((left, right) => Array.from(left).length - Array.from(right).length);
+}
 
 type ReadBody = { uri: string; body: string };
 
@@ -143,11 +175,6 @@ function scopeLabel(scope: Scope): string {
 
 function estimateTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text, "utf8") / RESOLVE_TOKEN_ESTIMATE_BYTES_PER_TOKEN);
-}
-
-function clipText(text: string, max: number): string {
-  const points = [...text];
-  return points.length <= max ? text : `${points.slice(0, max).join("")}…`;
 }
 
 function fnv1a(text: string): string {
@@ -282,7 +309,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   const started = mono();
   const question = readQuestion(input.question);
   const scope = parseScope(input.scope);
-  const repair = input.repair ?? "inline";
   const options = readResolveBudget(input.budget);
   const ledger = new ResolveBudgetLedger(options);
   const calls: ResolveCallRecord[] = [];
@@ -291,9 +317,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   let historyReadMs = 0;
   let cold = false;
   let retryUsed = false;
-  // One stale-hit repair attempt per resolve, on either the sufficient or the
-  // insufficient path, so a descending walk cannot retry the same rewrite.
-  let staleRepairAttempted = false;
   let reused = false;
   let summaryMs = 0;
   let persistMs = 0;
@@ -334,14 +357,18 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
    * whether the history port is touched at all, so a sufficient Active answer
    * never searches Archived or raw history.
    */
-  async function gather(queries: readonly string[], layer: LayerName): Promise<{ bundle: Bundle; coldRefresh: boolean }> {
+  async function gather(
+    queries: readonly string[],
+    layer: LayerName,
+    variants: number = options.max_query_variants,
+  ): Promise<{ bundle: Bundle; coldRefresh: boolean }> {
     const bundle = emptyBundle();
     const port = measuringPort();
     const historyWanted = layer === "history" && port !== null && scope.kind === "project";
     const archivedWanted = layer !== "active";
     let coldRefresh = false;
     const list = queries.length === 0 ? [question] : [...queries];
-    for (const query of list.slice(0, options.max_query_variants)) {
+    for (const query of list.slice(0, variants)) {
       const before = mono();
       const beforeHistory = historyReadMs;
       const outcome = await layeredSearch({
@@ -768,8 +795,12 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     return queries.slice(0, options.max_query_variants).join("\u0000");
   }
 
-  async function gatherLayer(layer: LayerName): Promise<void> {
-    const gathered = await gather(querySet, layer);
+  async function gatherLayer(
+    layer: LayerName,
+    queries: readonly string[] = querySet,
+    variants: number = options.max_query_variants,
+  ): Promise<void> {
+    const gathered = await gather(queries, layer, variants);
     bundle = absorb(bundle, gathered.bundle);
     bundle.gathered.add(layer);
     gatherCounts.set(layer, (gatherCounts.get(layer) ?? 0) + 1);
@@ -869,22 +900,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
         if (staleFreshness?.revision_mismatch === true) {
           return finish({ ...assembled, result: parseRetrievalResult({ ...assembled.result, freshness: staleFreshness, next_action: `memory_read(uri=${JSON.stringify(citedStale.uri)}) 当前摘要已更新至 r${staleFreshness.head_revision}` }) }, null, false);
         }
-        if (
-          repair === "inline" &&
-          staleFreshness !== null &&
-          staleFreshness.is_stale &&
-          !staleFreshness.revision_mismatch &&
-          staleFreshness.pending.length > 0
-        ) {
-          staleRepairAttempted = true;
-          return attemptStaleRepair({
-            target: { card: citedStale, freshness: staleFreshness, answer },
-            layer,
-            current: bundle,
-            base: assembled.result,
-            fallback_status: "resolved",
-          });
-        }
       }
       if (input.model !== null && input.model !== undefined && hasRawHistoryEvidence(evidence, bundle.excerpts)) {
         const persisted = await persistResolvedMemory({
@@ -927,43 +942,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       return finish(assembled, continuationFor(bundle, layer), false, bundle.excerpts);
     }
 
-    // A stale top hit the judge could not confirm. The judge's candidate window
-    // does not carry the pending evidence, so `sufficient=false` here is not a
-    // reason to leave the topic stale. Fold the pending events into the same
-    // memory once, before descending, and deliver the refreshed body.
-    if (repair === "inline" && !staleRepairAttempted && !controller.signal.aborted) {
-      const top = bundle.cards[0];
-      if (top !== undefined && top.freshness?.is_stale === true) {
-        const topFreshness = input.store.readFreshness(top.uri, top.revision);
-        if (
-          topFreshness !== null &&
-          topFreshness.is_stale &&
-          !topFreshness.revision_mismatch &&
-          topFreshness.pending.length > 0
-        ) {
-          staleRepairAttempted = true;
-          currentLayers = bundle.layers;
-          const partial = assemble({
-            status: "partial",
-            answer: null,
-            cards: bundle.cards,
-            evidence: bundle.sources,
-            missing: bundle.missing,
-            conflicts: [],
-            next_action: null,
-            continuation_id: null,
-          });
-          return attemptStaleRepair({
-            target: { card: top, freshness: topFreshness, answer: question },
-            layer,
-            current: bundle,
-            base: partial.result,
-            fallback_status: "partial",
-          });
-        }
-      }
-    }
-
     // Not sufficient. A model-visible disagreement is recorded as a gap.
     for (const conflict of lastDecision.conflicts) bundle.missing.push(`conflict:${conflict}`);
     // The model expands the query; it never replaces the caller's own words.
@@ -983,7 +961,11 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     // layer already searched is never a candidate.
     if (shouldRequery(layer)) {
       requeries += 1;
-      await gatherLayer(layer);
+      const fragments = expandPhrasings(lastDecision.next_queries).slice(0, MAX_REQUERY_VARIANTS);
+      // The re-ask gets its own variant budget: `max_query_variants` bounds the
+      // caller's question and the descent, not the recall pass that exists to
+      // spend one more cheap lookup per concept the judge named.
+      await gatherLayer(layer, [question, ...fragments], 1 + fragments.length);
       currentLayers = bundle.layers;
       continue;
     }
@@ -1001,187 +983,6 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   if (stopReason.length === 0 && ledger.stopReason() !== null) stopReason = ledger.stopReason() ?? "model_call_cap";
   if (stopReason.length === 0) stopReason = judgedAny ? "evidence_insufficient" : "no_candidates";
   return finish(stopAssembly(stopReason, bundle), continuationFor(bundle, lastLayerOf(bundle)), false, bundle.excerpts);
-
-  /**
-   * Bounded evidence for a stale hit: for each pending event's source anchor,
-   * try one targeted timeline read for the freshest text (the user message and
-   * its reply); fall back to the saved excerpt when the port is absent, the
-   * read fails, or the window is empty. Never more than two port reads.
-   */
-  async function staleHitExcerpts(pending: readonly StaleEventSummary[]): Promise<
-    {
-      id: string;
-      provider: string;
-      source_instance: string;
-      session_id: string;
-      timestamp: string;
-      text: string;
-      source: SourceRef;
-    }[]
-  > {
-    const port = measuringPort();
-    const out: {
-      id: string;
-      provider: string;
-      source_instance: string;
-      session_id: string;
-      timestamp: string;
-      text: string;
-      source: SourceRef;
-    }[] = [];
-    const seen = new Set<string>();
-    let reads = 0;
-    for (const event of pending.slice(0, MAX_FRESHNESS_PENDING)) {
-      const anchor = event.sources[0];
-      if (anchor === undefined) continue;
-      if (seen.has(anchor.message_id)) continue;
-      seen.add(anchor.message_id);
-      let source: SourceRef = anchor;
-      let text = event.excerpt;
-      if (port !== null && reads < STALE_READ_BUDGET && remaining() > 0 && !controller.signal.aborted) {
-        reads += 1;
-        try {
-          const read = await port.readByAnchor({
-            anchor: anchor.message_id,
-            before: 0,
-            after: STALE_READ_AFTER,
-            relation: "timeline",
-          });
-          if (read.ok) {
-            const joined = read.value.messages
-              .map((message) => message.text)
-              .filter((value) => value.trim().length > 0)
-              .join("\n");
-            if (joined.length > 0) {
-              source = read.value.anchor;
-              text = clipText(joined, STALE_EXCERPT_CHARS);
-            }
-          }
-        } catch {
-          // A failed read keeps the saved excerpt as the fallback.
-        }
-      }
-      out.push({
-        id: source.message_id,
-        provider: source.provider,
-        source_instance: source.source_instance,
-        session_id: source.session_id,
-        timestamp: source.timestamp,
-        text,
-        source,
-      });
-    }
-    return out;
-  }
-
-  /**
-   * Fold a confirmed stale hit's pending evidence into the same memory and
-   * return the delivery. A landed repair carries the new body, the head
-   * revision and a fresh snapshot, and drops the old nav card whose text
-   * predates the pending evidence. A failed or unbudgeted repair returns the
-   * existing readable body with its stale warning, so the topic never
-   * disappears and no second memory is minted about it.
-   */
-  async function attemptStaleRepair(attempt: {
-    target: { card: MemoryCard; freshness: Freshness; answer: string };
-    layer: LayerName;
-    current: Bundle;
-    base: RetrievalResult;
-    fallback_status: RetrievalStatus;
-  }): Promise<ResolveOutcome> {
-    const { card, freshness } = attempt.target;
-    const model = input.model;
-    const canCall =
-      repair === "inline" &&
-      model !== null &&
-      model !== undefined &&
-      !controller.signal.aborted &&
-      remaining() > 0 &&
-      ledger.canCallSummaryModel();
-    const repaired = canCall
-      ? await repairStaleMemory({
-          store: input.store,
-          card,
-          pending: freshness.pending,
-          answer: attempt.target.answer,
-          excerpts: await staleHitExcerpts(freshness.pending),
-          expected_revision: freshness.head_revision,
-          model,
-          model_id: input.model_id,
-          signal: controller.signal,
-          at: new Date(wall()).toISOString(),
-          project: scope.kind === "project" ? scope.project_id : null,
-        })
-      : null;
-    if (repaired !== null) {
-      for (const call of repaired.calls) {
-        calls.push({
-          index: calls.length,
-          layer: attempt.layer,
-          purpose: "medium_summary",
-          model: call.model,
-          tokens_in: call.tokens_in,
-          tokens_out: call.tokens_out,
-          cost_usd: call.cost_usd,
-          elapsed_ms: call.elapsed_ms,
-          outcome: call.outcome,
-        });
-        ledger.recordModelCall(call, "summary");
-      }
-    }
-    const budget_used = {
-      elapsed_ms: mono() - started,
-      model_calls: ledger.model_calls,
-      tokens_in: ledger.tokens_in,
-      tokens_out: ledger.tokens_out,
-      cost_usd: ledger.cost_usd,
-    };
-    const deliver = (result: RetrievalResult): ResolveOutcome =>
-      finish(
-        { result, layers: attempt.current.layers },
-        continuationFor(attempt.current, attempt.layer),
-        false,
-        attempt.current.excerpts,
-      );
-
-    if (repaired !== null && repaired.status === "repaired" && repaired.memory !== null) {
-      const repairedMemory = repaired.memory;
-      const refreshed = input.store.readFreshness(repairedMemory.uri, repairedMemory.revision);
-      const evidence: SourceRef[] = [...attempt.base.evidence];
-      for (const source of repairedMemory.medium.sources) {
-        if (!evidence.some((existing) => sourceKey(existing) === sourceKey(source))) evidence.push(source);
-      }
-      const patched = parseRetrievalResult({
-        ...attempt.base,
-        status: "resolved",
-        // The old card's nav predates the folded evidence; drop only that card
-        // and keep any other candidates the walk gathered.
-        cards: attempt.base.cards.filter((entry) => entry.memory_id !== repairedMemory.memory_id),
-        memory_summary: repairedMemory.medium.body,
-        memory_uri: repairedMemory.uri,
-        revision: repairedMemory.revision,
-        persistence_status: "saved",
-        navigation_status: "pending",
-        evidence: evidence.slice(0, options.max_evidence_messages),
-        ...(refreshed === null ? {} : { freshness: refreshed }),
-        budget_used,
-      });
-      return deliver(patched);
-    }
-
-    const delivered = input.store.readMemory(card.uri, card.revision);
-    const patched = parseRetrievalResult({
-      ...attempt.base,
-      status: attempt.fallback_status,
-      answer: attempt.fallback_status === "resolved" ? attempt.base.answer : null,
-      memory_summary: delivered === null ? attempt.base.memory_summary : delivered.medium.body,
-      memory_uri: delivered === null ? attempt.base.memory_uri : delivered.uri,
-      revision: delivered === null ? attempt.base.revision : delivered.revision,
-      freshness,
-      budget_used,
-    });
-    return deliver(patched);
-  }
 
   function readBody(uri: string, current: Bundle): void {
     const card = current.cards.find((entry) => entry.uri === uri);

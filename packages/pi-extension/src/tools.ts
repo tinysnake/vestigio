@@ -26,7 +26,7 @@ import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/reso
 import type { MemoryStore } from "@vestigio/core/storage";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
-import { publishRevision, repairOnRead, type ReadRepairReport } from "./read-repair.js";
+import { publishRevision } from "./read-repair.js";
 import { stripInjectedNote } from "./stale-detector.js";
 import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
 
@@ -198,7 +198,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				signal,
 				session_resolves_used: usedBefore,
 				continuation: state.lastContinuation,
-				repair: state.config.repair_mode === "background" ? "defer" : "inline",
 			});
 			state.noteResolveUsed();
 			state.lastContinuation = outcome.continuation;
@@ -285,7 +284,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		description:
 			"Read the full long (medium) summary of one memory by URI. Use the URI from memory_search or from a hotspot note.",
 		parameters: readParameters,
-		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
 			if (store === null) {
 				return text(`memory_read unavailable: ${state.storeFailureReason ?? "no store configured"}`);
@@ -304,12 +303,8 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const at = nowIso();
 			const projectId = state.projectId(ctx.cwd);
 			let outcome = readMemoryResult({ store, uri, revision: params.revision });
-			// A read is the repair trigger: the agent already has this memory in
-			// front of it, so folding the pending change in here is the one place
-			// repair is guaranteed to be reached. Pinned-revision reads skip it.
-			// In `background` mode the read touches nothing; the pending events are
-			// folded in by the `agent_end` pass.
-			let repair: ReadRepairReport | null = null;
+			// A read never repairs: the stored body is delivered as-is and the
+			// pending events are folded in by the `agent_end` pass.
 			let deferredPending: number | null = null;
 			if (
 				params.revision === undefined &&
@@ -317,33 +312,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				outcome.result.freshness !== undefined &&
 				outcome.result.freshness.is_stale
 			) {
-				if (state.config.repair_mode === "background") {
-					deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
-				} else {
-					try {
-						repair = await repairOnRead({
-							state,
-							store,
-							uri,
-							freshness: outcome.result.freshness,
-							project_id: projectId,
-							at,
-							signal,
-						});
-					} catch (error) {
-						state.writeDecision({
-							ts: at,
-							kind: "error",
-							status: "read_repair_failed",
-							session_id: state.currentSessionId,
-							project_id: projectId,
-							error: errorText(error),
-						});
-					}
-					if (repair !== null && repair.revision !== null) {
-						outcome = readMemoryResult({ store, uri });
-					}
-				}
+				deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
 			}
 			state.noteMemorySeen(ids.memoryId);
 			let recorded: { recorded: boolean; membership: boolean } | null = null;
@@ -377,10 +346,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: `tool:${toolCallId}`,
-				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false} repair=${repair?.status ?? "none"}`,
+				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false}`,
 			});
 			return {
-				content: [{ type: "text", text: renderRead(params.uri, outcome, repair, deferredPending) }],
+				content: [{ type: "text", text: renderRead(params.uri, outcome, deferredPending) }],
 				details: {
 					status: outcome.result.status,
 					memory_uri: outcome.memory_uri,
@@ -391,7 +360,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					next_action: outcome.result.next_action,
 					access_recorded: recorded?.recorded ?? false,
 					freshness: outcome.result.freshness ?? null,
-					repair,
 					measured: outcome.measured,
 				},
 			};
@@ -441,24 +409,6 @@ function sourceContext(state: VestigioState, ctx: ExtensionContext) {
 	};
 }
 
-/**
- * The repair line is the difference between "the body you are reading is the
- * current one" and "you are still reading the stale body". Never soften a
- * `nav_pending` into a success: until the nav is bound to the new revision,
- * search cannot return this memory.
- */
-function renderRepair(repair: ReadRepairReport): string {
-	const acknowledged = repair.acknowledged_event_ids.length;
-	switch (repair.status) {
-		case "repaired":
-			return `repair: repaired r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); published and findable)`;
-		case "nav_pending":
-			return `repair: nav_pending r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); body saved, nav job queued, not findable by search yet${repair.reason === null ? "" : `: ${repair.reason}`})`;
-		case "repair_failed":
-			return `repair: repair_failed (${repair.reason ?? "unknown"}); the stored body and every pending event are unchanged`;
-	}
-}
-
 function renderPendingEvent(event: StaleEventSummary): string[] {
 	const lines = [
 		`  - event ${event.event_id} observed r${event.observed_revision} (${event.producer}): ${event.reason}`,
@@ -493,12 +443,60 @@ function renderFreshness(freshness: Freshness | undefined): string[] {
 	return lines;
 }
 
+/**
+ * Value-looking tokens in a reason: numbers with optional separators, units or
+ * a percent sign, clock and date forms, weekdays and slash-separated paths.
+ * The grammar is deliberately wide, because the guard only has to notice a
+ * reason whose values appear in no evidence text at all.
+ */
+const REASON_VALUE =
+	/(?:\d[\d,_]*(?:[:.]\d+)*)\s*(?:%|[kK]|万|亿|MB|GB|KB|ms|毫秒|秒|分钟|小时|天|次|个|人|元)?|周[一二三四五六日天]|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+/gu;
+
+/**
+ * Comparison form: full-width digits folded to ASCII, whitespace and numeric
+ * separators dropped, case folded, so `5,678` and `5 678` compare equal to
+ * `5678` and `MB` compares equal to `mb`.
+ */
+function flattenForCompare(text: string): string {
+	return text
+		.replace(/[０-９]/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+		.replace(/[\s,_]/gu, "")
+		.toLowerCase();
+}
+
+function containsToken(haystack: string, token: string): boolean {
+	const escaped = token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+	// The boundaries stop `16` from matching inside `2016`.
+	return new RegExp(`(?<![0-9a-z])${escaped}(?![0-9a-z])`, "u").test(haystack);
+}
+
+/**
+ * The values a reason names that its evidence does not carry, or null when the
+ * reason is grounded. A reason with no value token is qualitative and passes,
+ * and one carried value is enough: agents write the value they replaced next to
+ * the new one. A reason that names values and matches none of them is a report
+ * with no basis, and it is rejected before it becomes a pending event every
+ * later session has to read.
+ */
+function unanchoredValues(reason: string, evidence: string): string[] | null {
+	const named: string[] = [];
+	for (const match of reason.matchAll(REASON_VALUE)) {
+		const token = match[0];
+		named.push(token);
+		const numeric = /^\d[\d,_]*(?:[:.]\d+)*/u.exec(token)?.[0];
+		if (numeric !== undefined && numeric !== token) named.push(numeric);
+	}
+	if (named.length === 0) return null;
+	const haystack = flattenForCompare(evidence);
+	return named.some((token) => containsToken(haystack, flattenForCompare(token))) ? null : named;
+}
+
 function registerStaleTools(pi: ExtensionAPI, state: VestigioState): void {
 	pi.registerTool({
 		name: "memory_mark_stale",
 		label: "Memory mark stale",
 		description:
-			"Record that a stored memory summary has not absorbed later evidence. Idempotent: re-marking the same logical change stores one durable event. This never rewrites the summary, and you cannot rewrite a stored memory: marking only reports staleness. Repair happens on retrieval — the next memory_resolve that hits this memory folds the pending evidence into the summary and acknowledges the event.",
+			"Record that a stored memory summary has not absorbed later evidence. Idempotent: re-marking the same logical change stores one durable event. This never rewrites the summary, and you cannot rewrite a stored memory: marking only reports staleness. Repair happens on retrieval — the next memory_resolve that hits this memory folds the pending evidence into the summary and acknowledges the event. The reason must name a value the evidence you pass actually carries, so quote the later evidence that states the new value.",
 		parameters: markStaleParameters,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
@@ -540,6 +538,12 @@ function registerStaleTools(pi: ExtensionAPI, state: VestigioState): void {
 				const detail = unknown.length > 0 ? unknown.join(", ") : "(none given)";
 				return text(
 					`memory_mark_stale rejected: no session entry for ${detail}. Pass real entry ids from this conversation that carry text.`,
+				);
+			}
+			const unanchored = unanchoredValues(params.reason, excerpts.join("\n"));
+			if (unanchored !== null) {
+				return text(
+					`memory_mark_stale rejected: the reason names ${unanchored.join(", ")}, but no evidence text contains any of them. Quote the later evidence that carries the new value, or pass source_message_ids for the entries that do.`,
 				);
 			}
 			const at = nowIso();
@@ -769,7 +773,6 @@ export function renderResolve(
 export function renderRead(
 	uri: string,
 	outcome: MemoryReadOutcome,
-	repair: ReadRepairReport | null = null,
 	deferredPending: number | null = null,
 ): string {
 	const result: RetrievalResult = outcome.result;
@@ -784,7 +787,6 @@ export function renderRead(
 		`memory_read(${uri}) -> resolved | revision=${result.revision ?? "?"}`,
 		`title: ${result.cards[0]?.title ?? "(untitled)"}`,
 	];
-	if (repair !== null) lines.push(renderRepair(repair));
 	if (deferredPending !== null) {
 		lines.push(`repair: deferred (repaired when this session ends; ${deferredPending} pending event(s))`);
 	}

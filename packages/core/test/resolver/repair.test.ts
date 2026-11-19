@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parseMemory } from "../../src/contracts/index.js";
-import { REPAIR_MAX_CORRECTIONS, repairStaleMemory, resolveMemory } from "../../src/resolver/index.js";
+import { REPAIR_MAX_CORRECTIONS, repairStaleMemory } from "../../src/resolver/index.js";
 import type { StaleEventSummary } from "../../src/contracts/index.js";
 import type { MemoryStore } from "../../src/storage/index.js";
 import { bodyWith, openTempStore, storedMemory } from "../storage/support.js";
-import { PROJECT_A, seedMemory } from "../retrieval/support.js";
 import { makeMemoryCard, makeSourceRef, measuredNonWhitespace } from "../support.js";
 import { bodyOfLength, makeScriptedModel } from "../extraction/support.js";
 
@@ -295,145 +294,50 @@ describe("repairStaleMemory", () => {
     expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(2);
   });
 
+  it("retries once after a gateway 5xx and writes the corrected body", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind, index) => {
+      if (kind !== "summary") return { text: "{}" };
+      if (index === 0) return { fail: "failed", reason: "http 502: bad gateway" };
+      return { text: JSON.stringify({ body: bodyOfLength(600, fixture.first.event_id) }) };
+    });
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("repaired");
+    expect(model.summary_calls).toBe(2);
+    expect(model.requests[1]!.messages.at(-1)?.content).toContain("correction:");
+  });
+
+  it("retries an unparseable answer the port reported as invalid_response", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind, index) => {
+      if (kind !== "summary") return { text: "{}" };
+      if (index === 0) return { fail: "invalid_response", reason: "response is not JSON: <html>" };
+      return { text: JSON.stringify({ body: bodyOfLength(600, fixture.first.event_id) }) };
+    });
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("repaired");
+    expect(model.summary_calls).toBe(2);
+  });
+
+  it("does not retry a 4xx failure that the next ask cannot fix", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind) =>
+      kind === "summary" ? { fail: "failed", reason: "http 400: bad request" } : { text: "{}" },
+    );
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("failed");
+    expect(model.summary_calls).toBe(1);
+    expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(2);
+  });
+
   it("is not applicable when there is nothing pending", async () => {
     const fixture = seed();
     const model = makeScriptedModel(() => ({ text: "{}" }));
     const outcome = await repairStaleMemory(repairInput(fixture, model, { pending: [] }));
     expect(outcome.status).toBe("not_applicable");
     expect(model.requests).toHaveLength(0);
-  });
-});
-
-describe("resolver walk repairs the memory it cites", () => {
-  it("updates the same memory instead of writing a second one", async () => {
-    const store = newStore();
-    const memory = seedMemory(store, { memory_id: "mem-active" });
-    const first = store.markStale({
-      memory_id: memory.memory_id,
-      observed_revision: 1,
-      reason: "端口后来改成 9090",
-      excerpt: "the default port changed to 9090",
-      sources: [anchor("m-30")],
-      producer: "detector",
-      at: "2026-11-18T01:00:00Z",
-    });
-    store.markStale({
-      memory_id: memory.memory_id,
-      observed_revision: 1,
-      reason: "回滚顺序变了",
-      excerpt: "rollback now reverts the image first",
-      sources: [anchor("m-31")],
-      producer: "detector",
-      at: "2026-11-18T02:00:00Z",
-    });
-
-    const model = makeScriptedModel((kind, index) => {
-      if (kind === "summary") {
-        return { text: JSON.stringify({ body: bodyOfLength(600, first.event.event_id) }) };
-      }
-      if (index === 0) {
-        return {
-          text: JSON.stringify({
-            sufficient: true,
-            answer: "The default port is now 9090.",
-            evidence_ids: [memory.memory_id],
-            read_uris: [],
-            next_queries: [],
-            conflicts: [],
-            descend: false,
-          }),
-        };
-      }
-      return {
-        text: JSON.stringify({
-          sufficient: false,
-          answer: null,
-          evidence_ids: [],
-          read_uris: [],
-          next_queries: [],
-          conflicts: [],
-          descend: true,
-        }),
-      };
-    });
-
-    const outcome = await resolveMemory({
-      store,
-      question: "端口",
-      scope: { kind: "project", project_id: PROJECT_A },
-      model: model.port,
-      model_id: "scripted",
-    });
-
-    expect(outcome.result.status).toBe("resolved");
-    expect(outcome.result.memory_uri).toBe(memory.uri);
-    expect(outcome.result.revision).toBe(2);
-    expect(outcome.result.persistence_status).toBe("saved");
-    expect(outcome.result.memory_summary).toBe(bodyOfLength(600, first.event.event_id));
-    expect(outcome.result.freshness?.pending_count).toBe(1);
-    expect(outcome.calls.some((call) => call.purpose === "medium_summary")).toBe(true);
-    expect(store.listHeads({ kind: "project", project_id: PROJECT_A })).toHaveLength(1);
-    expect(store.readMemory(memory.uri)?.revision).toBe(2);
-  });
-
-  it("keeps the old body and pending events when the repair call fails", async () => {
-    const store = newStore();
-    const memory = seedMemory(store, { memory_id: "mem-active" });
-    const event = store.markStale({
-      memory_id: memory.memory_id,
-      observed_revision: 1,
-      reason: "端口后来改成 9090",
-      excerpt: "the default port changed to 9090",
-      sources: [anchor("m-30")],
-      producer: "detector",
-      at: "2026-11-18T01:00:00Z",
-    });
-
-    const model = makeScriptedModel((kind, index) => {
-      if (kind === "summary") return { fail: "unavailable", reason: "down" };
-      if (index === 0) {
-        return {
-          text: JSON.stringify({
-            sufficient: true,
-            answer: "The default port is now 9090.",
-            evidence_ids: [memory.memory_id],
-            read_uris: [],
-            next_queries: [],
-            conflicts: [],
-            descend: false,
-          }),
-        };
-      }
-      return {
-        text: JSON.stringify({
-          sufficient: false,
-          answer: null,
-          evidence_ids: [],
-          read_uris: [],
-          next_queries: [],
-          conflicts: [],
-          descend: true,
-        }),
-      };
-    });
-
-    const outcome = await resolveMemory({
-      store,
-      question: "端口",
-      scope: { kind: "project", project_id: PROJECT_A },
-      model: model.port,
-      model_id: "scripted",
-    });
-
-    expect(outcome.result.status).toBe("resolved");
-    expect(outcome.result.revision).toBe(1);
-    expect(outcome.result.memory_uri).toBe(memory.uri);
-    expect(outcome.result.memory_summary).toBe(memory.medium.body);
-    expect(outcome.result.persistence_status).toBe("not_attempted");
-    expect(outcome.result.freshness?.pending_count).toBe(1);
-    expect(store.readMemory(memory.uri)?.revision).toBe(1);
-    expect(store.countPendingStaleEvents(memory.memory_id)).toBe(1);
-    expect(store.listHeads({ kind: "project", project_id: PROJECT_A })).toHaveLength(1);
-    expect(event.inserted).toBe(true);
   });
 });

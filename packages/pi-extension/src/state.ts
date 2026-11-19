@@ -54,8 +54,7 @@ export class VestigioState {
 	private branchRef = "root";
 	private sessionManager: SessionLike | null = null;
 	private readonly seen: Set<string> = new Set();
-	private readonly repairAttempted: Set<string> = new Set();
-	private readonly backgroundAttempted: Set<string> = new Set();
+	private readonly backgroundAttempts: Map<string, number> = new Map();
 	private detectorCheckpoint: string | null = null;
 	private userInput: { text: string } | null = null;
 
@@ -128,8 +127,7 @@ export class VestigioState {
 			this.detectorCheckpoint = null;
 		}
 		this.seen.clear();
-		this.repairAttempted.clear();
-		this.backgroundAttempted.clear();
+		this.backgroundAttempts.clear();
 		try {
 			this.ledger = loadLedger(sessionManager);
 		} catch {
@@ -168,30 +166,16 @@ export class VestigioState {
 	}
 
 	/**
-	 * A read repairs at most once per memory per session. The attempt is
-	 * recorded before the model call, so a failed or cancelled repair is not
-	 * retried by the next read in the same session; a later session retries.
+	 * How many times the background pass has tried this exact pending set in
+	 * this session. The pass reads the count to cap its own retries and to
+	 * report a memory it can no longer attempt instead of dropping it.
 	 */
-	repairAttemptedFor(memoryId: string): boolean {
-		return this.repairAttempted.has(memoryId);
-	}
-
-	noteRepairAttempt(memoryId: string): void {
-		this.repairAttempted.add(memoryId);
-	}
-
-	/**
-	 * The background pass keys its one attempt per pending set rather than per
-	 * memory: a change recorded later in the same session is a new signature and
-	 * still needs absorbing, while a failed attempt on the same set is not
-	 * repeated by the next `agent_end`.
-	 */
-	backgroundAttemptedFor(signature: string): boolean {
-		return this.backgroundAttempted.has(signature);
+	backgroundAttemptsFor(signature: string): number {
+		return this.backgroundAttempts.get(signature) ?? 0;
 	}
 
 	noteBackgroundAttempt(signature: string): void {
-		this.backgroundAttempted.add(signature);
+		this.backgroundAttempts.set(signature, this.backgroundAttemptsFor(signature) + 1);
 	}
 
 	/** The last entry the detector inspected, so a turn is judged once. */

@@ -335,13 +335,14 @@ export async function runStaleDetector(input: DetectorRunInput): Promise<Detecto
 }
 
 /**
- * True when the detector's model reply could not be turned into findings: an
- * unparseable body (`invalid`) or a client error naming a bad response shape.
- * A cancellation, a timeout or a transport failure is not retried.
+ * True when the detector's model reply could not be turned into findings: the
+ * reader rejected the reply (`invalid`), or the client rejected its shape
+ * (`invalid_response`). The decision reads the typed failure status, not the
+ * `reason` prose. A cancellation, a timeout or a transport failure is not
+ * retried.
  */
 function unparseableReply(result: DetectorResult): boolean {
-	if (result.status === "invalid") return true;
-	return result.status === "failed" && (result.reason ?? "").includes("invalid_response");
+	return result.status === "invalid" || result.failure_status === "invalid_response";
 }
 
 function firstExcerpt(ids: readonly string[], byId: Map<string, DetectorEvidenceRow>): string {

@@ -68,6 +68,10 @@
       "note": "Two distinct changes in one turn: one supersedes a stored fact, the other adds a fact the memory did not carry. A single merged event is a failure."
     }
   ],
+  "resolve_probe": [
+    "我们现在的发布窗口、灰度比例和发布时长上限分别是多少？",
+    "上线时段安排在什么时候，首轮放量比例是多少，出问题按哪个脚本回退？"
+  ],
   "session2": {
     "question": "我们现在的发布窗口、灰度比例和发布时长上限分别是多少？",
     "expected": {

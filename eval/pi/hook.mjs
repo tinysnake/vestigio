@@ -20,6 +20,7 @@ const BARE = {
 	"@vestigio/core/storage": `${CORE}/storage/index.ts`,
 	"@vestigio/core/hotspots": `${CORE}/hotspots/index.ts`,
 	"@vestigio/core/retrieval": `${CORE}/retrieval/index.ts`,
+	"@vestigio/core/resolver": `${CORE}/resolver/index.ts`,
 };
 
 registerHooks({

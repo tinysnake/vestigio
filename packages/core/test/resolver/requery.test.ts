@@ -136,6 +136,35 @@ describe("memory.resolve: re-gathering the judged layer", () => {
     expect(outcome.result.answer).toBe("并发上限是 8。");
   });
 
+  it("searches past the first few concepts of a phrasing on the re-ask", async () => {
+    const store = newStore();
+    // Only `maxWorkers` is indexed. The phrasing names it fifth, after four
+    // concepts the memory never has; a three-variant re-ask stops before it.
+    seedMemory(store, {
+      memory_id: "mem-active",
+      title: "部署脚本并发上限",
+      keywords: ["部署", "并发"],
+      nav_text: "并发上限 maxWorkers=8",
+    });
+    const searches = countSearches(store);
+    const model = makeResponderModel((_call, request) => {
+      if (judgedLayer(request) !== "active") return judgeJson({ descend: true });
+      return judgeMessage(request).includes("mem-active")
+        ? judgeJson({ sufficient: true, answer: "并发上限是 8。", evidence_ids: ["mem-active"] })
+        : judgeJson({
+            next_queries: ["alphaOne betaTwo gammaThree deltaFour maxWorkers"],
+            descend: true,
+          });
+    });
+
+    const outcome = await resolve({ store, question: QUESTION, scope: projectA, model: model.port });
+
+    expect(searches.queries).toContain("deltaFour");
+    expect(searches.queries).toContain("maxWorkers");
+    expect(outcome.result.status).toBe("resolved");
+    expect(outcome.result.answer).toBe("并发上限是 8。");
+  });
+
   it("stops re-gathering when the judge repeats the same phrasings, and still descends", async () => {
     const store = newStore();
     seedDeployMemory(store);

@@ -93,7 +93,7 @@ Deterministic F5 checks, per repeat, computed from those two snapshots and the t
 | `repair_rate` | second sessions whose head revision advanced ÷ repeats with a `session2` | high |
 | `pending_drained` | second sessions ending with an empty pending-event set ÷ repeats | high |
 | `repaired_in_place` | second sessions ending with `countMemories() == 1` ÷ repeats | high |
-| `fact_fidelity` | second sessions whose new body carries every `required_strings` entry, the path token of every `stable` string, and 500–1000 non-whitespace code points ÷ repeats | high |
+| `fact_fidelity` | second sessions whose new body carries every `required_strings` entry and the path token of every `stable` string ÷ repeats | high |
 | `retrieval_drove_repair` | repaired second sessions in which `memory_resolve` or `memory_read` ran before the head advanced ÷ repeats | high |
 | `navigation_updated` | repaired second sessions whose `nav.source_revision` equals the new head ÷ repeats | high |
 | `published_after` | second sessions ending with the memory's state `published` ÷ repeats | high |
@@ -101,12 +101,13 @@ Deterministic F5 checks, per repeat, computed from those two snapshots and the t
 | `judge_pass` | second sessions the judge accepted (`verdict == "pass"`) ÷ repeats | high |
 
 `fact_fidelity` uses the same path-token rule as `seedStore`: the whitespace token containing
-`/` inside each `stable` string must appear in the new body. Two retrieval paths repair a memory
-now: `memory_read` folds the pending events in and publishes the new head inline, and
-`memory_resolve` repairs the same way but leaves the navigation job for `vestigio jobs run` when
-the product has not published it yet. Session 2 therefore reports which tool ran
-(`repair_trigger`: the first call whose result reports the new head revision, `null` when no
-repair happened), and `published_after` / `searchable_after_repair` separate the two outcomes.
+`/` inside each `stable` string must appear in the new body. Repair happens once, at the end of
+the session that left pending events: `agent_end` folds them in and publishes the new head, so
+session 2 normally finds a current memory and has nothing to repair. Session 2 reports which tool
+ran (`repair_trigger`: the first call whose result reports the new head revision, `null` when no
+repair happened) and `repair_source` reports whether the end-of-session pass repaired the memory
+(`background`) or nothing did (`none`); `published_after` / `searchable_after_repair` observe
+whether the write ended published.
 
 **No nav drain.** The harness no longer runs `vestigio jobs run` between the two sessions or after
 session 2. A repair is a product write: it must end with the new revision published and a

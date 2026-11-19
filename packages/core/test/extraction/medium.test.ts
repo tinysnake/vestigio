@@ -40,6 +40,34 @@ function extractWith(text: string, allowed = ["h-1"]) {
 }
 
 describe("extractMediumSummary", () => {
+  it("appends the rewrite note to the system prompt only on a repair call", async () => {
+    const body = bodyOfLength(600, "h-1");
+    const run = async (extra: {
+      guidance?: string;
+      correction?: string;
+    }): Promise<string> => {
+      const model = makeScriptedModel(() => ({ text: JSON.stringify({ body }) }));
+      await extractMediumSummary({
+        model: model.port,
+        model_id: "stub/model",
+        evidence: { question: "默认端口是多少", project: "/tmp/proj-a", evidence },
+        allowed_ids: ["h-1"],
+        max_output_tokens: 1600,
+        signal: new AbortController().signal,
+        ...extra,
+      });
+      return String(model.requests[0]?.messages.find((message) => message.role === "system")?.content ?? "");
+    };
+
+    const rewrite = await run({ guidance: "This rewrite folds 1 pending change(s)." });
+    const initial = await run({});
+    expect(rewrite).toContain("do not narrate the repair");
+    expect(rewrite).toContain("does not apply");
+    expect(initial).not.toContain("do not narrate the repair");
+    // The shared instructions the note qualifies are still present.
+    expect(initial).toContain("which facts are still uncertain");
+  });
+
   it("returns the validated body with its count and citations", async () => {
     const body = bodyOfLength(600, "h-1");
     const { run } = extractWith(JSON.stringify({ body }));
@@ -58,6 +86,7 @@ describe("extractMediumSummary", () => {
     expect(result.body).toBe(body);
     expect(result.body_char_count).toBe(499);
     expect(result.reason).toBe("medium_below_min:499");
+    expect(result.failure).toEqual({ kind: "body", failure: { kind: "too_short", measured: 499 } });
   });
 
   it("rejects malformed output without inventing a body", async () => {
@@ -65,6 +94,7 @@ describe("extractMediumSummary", () => {
     expect(result.status).toBe("invalid");
     expect(result.body).toBeNull();
     expect(result.call.outcome).toBe("malformed");
+    expect(result.failure).toEqual({ kind: "malformed_output" });
   });
 
   it("rejects a foreign citation id", async () => {
@@ -85,6 +115,7 @@ describe("extractMediumSummary", () => {
     });
     expect(failed.status).toBe("failed");
     expect(failed.reason).toBe("model_unavailable:down");
+    expect(failed.failure).toEqual({ kind: "model", status: "unavailable", http_status: null });
 
     const cancelled = makeScriptedModel(() => ({ fail: "cancelled", reason: "aborted" }));
     const outcome = await extractMediumSummary({
@@ -96,6 +127,21 @@ describe("extractMediumSummary", () => {
       signal: new AbortController().signal,
     });
     expect(outcome.status).toBe("cancelled");
+    expect(outcome.failure).toEqual({ kind: "model", status: "cancelled", http_status: null });
+  });
+
+  it("reads the HTTP status out of the port's failure reason once", async () => {
+    const gateway = makeScriptedModel(() => ({ fail: "failed", reason: "http 502: bad gateway" }));
+    const failed = await extractMediumSummary({
+      model: gateway.port,
+      model_id: "stub/model",
+      evidence: { question: "q", project: null, evidence },
+      allowed_ids: ["h-1"],
+      max_output_tokens: 1600,
+      signal: new AbortController().signal,
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.failure).toEqual({ kind: "model", status: "failed", http_status: 502 });
   });
 
   it("sends bounded evidence and the length rule to the model", async () => {

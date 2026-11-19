@@ -46,6 +46,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
+import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -958,6 +959,12 @@ function bodyFacts(body, session2) {
 	return { requiredPresent, stablePaths, stablePresent, inBand, satisfied: requiredPresent && stablePresent && inBand };
 }
 
+/**
+ * Deterministic F5 verdicts for one second session. Every number is measured at
+ * the end of session 2, so every field carries the `_s2` window suffix. The
+ * session-1-end window (background repair) is scored separately in `scoreRepeat`
+ * with `_s1` fields; `repair_source` names which window a repeat used.
+ */
 function scoreSession2({ before, after, navSourceRevision, searchable, session2, toolCalls }) {
 	const body = after.body ?? "";
 	const bodyChars = nonWhitespaceCodePointCount(body);
@@ -969,29 +976,29 @@ function scoreSession2({ before, after, navSourceRevision, searchable, session2,
 	);
 	const facts = bodyFacts(body, session2);
 	return {
-		repair_rate: repaired,
-		pending_drained: after.pending_ids.length === 0,
-		repaired_in_place: after.memory_count === 1,
-		fact_fidelity: facts.satisfied,
-		retrieval_drove_repair: repaired && retrievalRan,
-		navigation_updated: repaired && navSourceRevision === headAfter,
+		repair_rate_s2: repaired,
+		pending_drained_s2: after.pending_ids.length === 0,
+		repaired_in_place_s2: after.memory_count === 1,
+		fact_fidelity_s2: facts.satisfied,
+		retrieval_drove_repair_s2: repaired && retrievalRan,
+		navigation_updated_s2: repaired && navSourceRevision === headAfter,
 		// Gated on a repair: a memory that was already published and findable says
 		// nothing about whether the repair left it that way.
-		published_after: repaired ? after.state === "published" : null,
-		searchable_after_repair: repaired ? searchable.returned : null,
+		published_after_s2: repaired ? after.state === "published" : null,
+		searchable_after_repair_s2: repaired ? searchable.returned : null,
 		// Ungated, so a repair window outside session 2 (background mode) can still
 		// read whether the memory was findable afterwards.
-		search_returned: searchable.returned,
-		state_after: after.state,
-		search_query: searchable.query,
-		search_status: searchable.status,
-		search_returned_cards: searchable.cards,
-		body_char_count: bodyChars,
-		required_strings_present: facts.requiredPresent,
-		stable_paths: facts.stablePaths,
-		stable_paths_present: facts.stablePresent,
-		body_in_band: facts.inBand,
-		retrieval_ran: retrievalRan,
+		search_returned_s2: searchable.returned,
+		state_after_s2: after.state,
+		search_query_s2: searchable.query,
+		search_status_s2: searchable.status,
+		search_returned_cards_s2: searchable.cards,
+		body_char_count_s2: bodyChars,
+		required_strings_present_s2: facts.requiredPresent,
+		stable_paths_s2: facts.stablePaths,
+		stable_paths_present_s2: facts.stablePresent,
+		body_in_band_s2: facts.inBand,
+		retrieval_ran_s2: retrievalRan,
 	};
 }
 
@@ -1033,6 +1040,94 @@ async function searchableAfterRepair({ storePath, projectId, memoryId, query }) 
 	}
 }
 
+/**
+ * A `ModelPort` for the resolve probe. It posts through the same recording
+ * proxy the agent, extension and judge use, so a probe call is logged and
+ * counted like any other real model call; it is not a mock.
+ */
+function probeModelPort({ proxyUrl, key, model, thinking }) {
+	return {
+		async complete(request) {
+			const body = {
+				model: request.model ?? model,
+				messages: request.messages,
+				max_tokens: request.max_output_tokens,
+				temperature: 0,
+				stream: false,
+			};
+			if (request.expect_json === true) body.response_format = { type: "json_object" };
+			if (typeof thinking === "string" && thinking.length > 0 && thinking !== "off") body.reasoning_effort = thinking;
+			const call = await postChat({ proxyUrl, key, body, signal: request.signal, timeoutMs: TURN_TIMEOUT_MS });
+			const aborted = request.signal?.aborted === true;
+			if (call.content === null) {
+				const status = aborted ? "cancelled" : call.status === 0 || call.status >= 500 ? "unavailable" : "failed";
+				return { ok: false, status, reason: call.error ?? `http ${call.status}` };
+			}
+			return {
+				ok: true,
+				value: {
+					text: call.content,
+					model: call.json?.model ?? model,
+					finish_reason: call.json?.choices?.[0]?.finish_reason ?? null,
+					usage: {
+						tokens_in: call.json?.usage?.prompt_tokens ?? 0,
+						tokens_out: call.json?.usage?.completion_tokens ?? 0,
+						cost_usd: null,
+					},
+				},
+			};
+		},
+	};
+}
+
+/**
+ * The resolver re-gather regression, run directly through the core
+ * `resolveMemory` the `memory_resolve` tool calls, on a fresh store seeded from
+ * the corpus. No agent chooses the tool here, so the layer walk a natural
+ * question produces is observed directly and repeatably. `repair: "defer"`
+ * keeps the probe about retrieval: it never rewrites the memory.
+ */
+async function runResolveProbe({ corpus, question, index, repeat, config, key, proxy, scratchRoot, runDir }) {
+	const projectId = join(scratchRoot, `probe-${corpus.name}-r${repeat}-${index}`);
+	const storePath = join(scratchRoot, `${corpus.name}-probe-r${repeat}-${index}.sqlite`);
+	mkdirSync(projectId, { recursive: true });
+	seedStore({ storePath, corpus, projectId });
+	const store = openStore({ path: storePath });
+	try {
+		const outcome = await resolveMemory({
+			store,
+			question,
+			scope: { kind: "project", project_id: projectId },
+			model: probeModelPort({
+				proxyUrl: proxy.url,
+				key,
+				model: config.extension_model,
+				thinking: config.extension_thinking,
+			}),
+			model_id: config.extension_model,
+			signal: new AbortController().signal,
+			repair: "defer",
+		});
+		const record = {
+			corpus: corpus.name,
+			repeat,
+			index,
+			question,
+			status: outcome.result.status,
+			answer: outcome.result.answer ?? null,
+			cards: outcome.result.cards.map((card) => card.memory_id),
+			missing: outcome.result.missing,
+			model_calls: outcome.measured.model_calls,
+			elapsed_ms: outcome.measured.elapsed_ms,
+			layers: outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`),
+		};
+		appendJsonl(join(runDir, "resolve_probe.jsonl"), record);
+		return record;
+	} finally {
+		store.close();
+	}
+}
+
 function resultText(result) {
 	if (typeof result === "string") return result;
 	if (result === null || typeof result !== "object") return "";
@@ -1042,11 +1137,12 @@ function resultText(result) {
 }
 
 /**
- * The tool call that triggered the repair: the first call that ran and whose
- * result already reports the new head revision. The head move alone is not
- * attribution, so a repair that advanced it without any recorded call
- * reporting the new revision falls back to the first repair-capable call
- * (`memory_read` or `memory_resolve`); a repeat with no repair has no trigger.
+ * The tool call that triggered the repair, labelled by how it was attributed.
+ * `observed` is the first ran call whose result already reports the new head
+ * revision. The head move alone is not attribution, so a repair that advanced
+ * it without any recorded call reporting the new revision falls back to the
+ * first repair-capable call (`memory_read` or `memory_resolve`) and labels that
+ * `inferred`; a repeat with no repair has no trigger.
  */
 function repairTrigger({ toolCalls, repaired, headAfter }) {
 	if (!repaired) return null;
@@ -1054,7 +1150,7 @@ function repairTrigger({ toolCalls, repaired, headAfter }) {
 	for (const call of toolCalls) {
 		if (!call.ran) continue;
 		if (marker.test(resultText(call.result))) {
-			return { tool_call_id: call.tool_call_id, tool_name: call.tool_name, args: call.args };
+			return { attribution: "observed", tool_call_id: call.tool_call_id, tool_name: call.tool_name, args: call.args };
 		}
 	}
 	const capable = toolCalls.find(
@@ -1062,7 +1158,7 @@ function repairTrigger({ toolCalls, repaired, headAfter }) {
 	);
 	return capable === undefined
 		? null
-		: { tool_call_id: capable.tool_call_id, tool_name: capable.tool_name, args: capable.args };
+		: { attribution: "inferred", tool_call_id: capable.tool_call_id, tool_name: capable.tool_name, args: capable.args };
 }
 
 /**
@@ -1077,9 +1173,9 @@ function sawRepairFailedLine({ toolCalls, stderr }) {
 }
 
 /**
- * Wall time of the tool call that carried the repair, in milliseconds. This is
- * the number to look at when deciding whether an inline repair is cheap enough
- * to keep synchronous; it includes every model call the repair made.
+ * Wall time of the tool call that carried a repair, in milliseconds. With the
+ * single repair path this is the resolver read's repair, if a session 2 read
+ * performed one; the `agent_end` pass is measured from its own session entry.
  */
 function repairWallMs({ toolCalls }) {
 	// `repair: deferred (… repaired when this session ends…)` is not a repair.
@@ -1173,7 +1269,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 		state_after: after.state,
 		old_body: before.body,
 		new_body: after.body,
-		new_body_char_count: deterministic.body_char_count,
+		new_body_char_count: deterministic.body_char_count_s2,
 		pending_event_ids_after: after.pending_ids,
 		memory_count: after.memory_count,
 		nav_source_revision: after.nav_source_revision,
@@ -1188,7 +1284,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 	return record;
 }
 
-async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode }) {
+async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot }) {
 	const label = `${corpus.name}-r${repeat}`;
 	const storePath = join(scratchRoot, `${label}.sqlite`);
 	const projectDir = join(scratchRoot, "project", label);
@@ -1217,7 +1313,6 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 		VESTIGIO_MODEL_ID: config.extension_model,
 		VESTIGIO_MODEL_THINKING: config.extension_thinking,
 		VESTIGIO_MODEL_API_KEY: key,
-		VESTIGIO_REPAIR_MODE: repairMode,
 	};
 	const args = [
 		"--mode",
@@ -1480,7 +1575,7 @@ function turnHandled(turn) {
 	return distinct.size >= expected;
 }
 
-function scoreRepeat(result, corpus, repairMode) {
+function scoreRepeat(result, corpus) {
 	const turns = result.turns;
 	const changeTurns = turns.filter((turn) => turn.label === "CHANGE");
 	const agentMarked = changeTurns.filter((turn) => turn.new_events.some((event) => event.producer === "agent"));
@@ -1541,37 +1636,37 @@ function scoreRepeat(result, corpus, repairMode) {
 		session1 === null || session1.head_revision === null || result.head_at_start === undefined
 			? null
 			: session1.head_revision > result.head_at_start;
-	// Background mode repairs at the first session's `agent_end`, so the repair
-	// window is session 1's end. Scoring session 2 there would report that nothing
-	// was repaired, which is what the mode is designed to do.
-	const window =
-		repairMode === "background" && s1Repaired === true && session1 !== null && corpus.session2 !== undefined
+	// The pass repairs at the first session's `agent_end`, so the repair window is
+	// session 1's end, not session 2's. Scoring session 2 would report that
+	// nothing was repaired, which is exactly what a deferred repair looks like.
+	// Every number here carries an `_s1` suffix so no name can be read as the
+	// other window's.
+	const s1Window =
+		s1Repaired === true && session1 !== null && corpus.session2 !== undefined
 			? {
-					repair_rate: true,
-					pending_drained: session1.pending_ids.length === 0,
-					repaired_in_place: session1.memory_count === 1,
-					fact_fidelity: bodyFacts(session1.body ?? "", corpus.session2).satisfied,
-					retrieval_drove_repair: false,
-					navigation_updated: session1.nav_source_revision === session1.head_revision,
-					published_after: session1.state === "published",
-					searchable_after_repair: f5 === null ? null : f5.search_returned,
-					state_after: session1.state,
-					body_char_count: nonWhitespaceCodePointCount(session1.body ?? ""),
-					head_revision_before: result.head_at_start ?? null,
-					head_revision_after: session1.head_revision,
+					repair_rate_s1: true,
+					pending_drained_s1: session1.pending_ids.length === 0,
+					repaired_in_place_s1: session1.memory_count === 1,
+					fact_fidelity_s1: bodyFacts(session1.body ?? "", corpus.session2).satisfied,
+					retrieval_drove_repair_s1: false,
+					navigation_updated_s1: session1.nav_source_revision === session1.head_revision,
+					published_after_s1: session1.state === "published",
+					state_after_s1: session1.state,
+					body_char_count_s1: nonWhitespaceCodePointCount(session1.body ?? ""),
+					head_revision_before_s1: result.head_at_start ?? null,
+					head_revision_after_s1: session1.head_revision,
 			  }
 			: null;
-	const repaired = (field) => (window === null ? (f5 === null ? null : f5[field]) : window[field]);
-	const repairSource =
-		f5 === null && !(repairMode === "background" && s1Repaired === true)
-			? null
-			: repairMode === "background"
-				? s1Repaired === true
-					? "background"
-					: "none"
-				: f5?.repair_rate === true
-					? "retrieval"
-					: "none";
+	// `_s1` is session 1's end (`s1Window`) and `_s2` is session 2's end (`f5`),
+	// which only a session 2 read repair produces. `searchable_after_repair` is
+	// the exception: the post-repair store search runs once session 2 has
+	// settled, so it reads session 2's ungated result.
+	const repairWindow = (field) => {
+		if (s1Window === null) return f5 === null ? null : f5[`${field}_s2`];
+		if (field === "searchable_after_repair") return f5 === null ? null : f5.search_returned_s2;
+		return s1Window[`${field}_s1`];
+	};
+	const repairSource = s1Repaired === null ? null : s1Repaired ? "background" : "none";
 	return {
 		corpus: result.corpus,
 		repeat: result.repeat,
@@ -1593,23 +1688,22 @@ function scoreRepeat(result, corpus, repairMode) {
 		update_rejected_per_turn: ratio(updateRejected, turns.length),
 		mark_stale_recorded: markRecorded,
 		mark_stale_rejected: markRejected,
-		repair_rate: repaired("repair_rate"),
-		pending_drained: repaired("pending_drained"),
-		repaired_in_place: repaired("repaired_in_place"),
-		fact_fidelity: repaired("fact_fidelity"),
-		retrieval_drove_repair: repaired("retrieval_drove_repair"),
+		repair_rate: repairWindow("repair_rate"),
+		pending_drained: repairWindow("pending_drained"),
+		repaired_in_place: repairWindow("repaired_in_place"),
+		fact_fidelity: repairWindow("fact_fidelity"),
+		retrieval_drove_repair: repairWindow("retrieval_drove_repair"),
 		repair_source: repairSource,
-		navigation_updated: repaired("navigation_updated"),
-		published_after: repaired("published_after"),
-		searchable_after_repair: repaired("searchable_after_repair"),
-		f5_state_after: repaired("state_after"),
-		f5_repair_ms: session2 === null ? null : (session2.repair_ms ?? null),
-		f5_background_repair_ms: background === null ? null : background.elapsed_ms,
-		f5_search_query: f5 === null ? null : f5.search_query,
+		navigation_updated: repairWindow("navigation_updated"),
+		published_after: repairWindow("published_after"),
+		searchable_after_repair: repairWindow("searchable_after_repair"),
+		repair_window_state_after: repairWindow("state_after"),
+		f5_repair_ms: background === null ? null : background.elapsed_ms,
+		s2_search_query: f5 === null ? null : f5.search_query_s2,
 		judge_pass: session2 === null ? null : session2.judge.pass,
-		f5_body_char_count: repaired("body_char_count"),
-		f5_head_revision_before: repaired("head_revision_before"),
-		f5_head_revision_after: repaired("head_revision_after"),
+		repair_window_body_char_count: repairWindow("body_char_count"),
+		repair_window_head_revision_before: repairWindow("head_revision_before"),
+		repair_window_head_revision_after: repairWindow("head_revision_after"),
 		s1_pending_drained: session1 === null ? null : session1.pending_ids.length === 0,
 		s1_repaired: s1Repaired,
 		cost: {
@@ -1642,11 +1736,21 @@ function formatBool(value) {
 	return value === null || value === undefined ? "n/a" : value ? "true" : "false";
 }
 
-function printTable(metricsByCorpus, variantName, repairMode) {
-	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}, repair ${repairMode}) ===`);
+/**
+ * Booleans are counted, not averaged: the median of [false, true, true] is
+ * `true`, which hides a third of the repeats failing.
+ */
+function passRate(block, metric) {
+	const values = block.repeats.map((item) => item[metric]).filter((value) => value !== null && value !== undefined);
+	if (values.length === 0) return "n/a";
+	return `${values.filter((value) => value === true).length}/${values.length}`;
+}
+
+function printTable(metricsByCorpus, variantName) {
+	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}) ===`);
 	for (const [corpus, block] of Object.entries(metricsByCorpus)) {
 		console.log(`\ncorpus ${corpus}  (${block.repeats.length} repeat(s))`);
-		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "median"];
+		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "summary"];
 		const f1Rows = [
 			["system_recall", ...block.repeats.map((item) => formatMetric(item.system_recall)), formatMetric(block.distribution.system_recall)],
 			["handled_rate", ...block.repeats.map((item) => formatMetric(item.handled_rate)), formatMetric(block.distribution.handled_rate)],
@@ -1668,22 +1772,21 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 			["wall_ms", ...block.repeats.map((item) => String(item.cost.wall_ms)), String(block.distribution.wall_ms ?? "n/a")],
 		];
 		const f5Rows = [
-			["repair_rate", ...block.repeats.map((item) => formatBool(item.repair_rate)), formatMetric(block.distribution.repair_rate)],
-			["pending_drained", ...block.repeats.map((item) => formatBool(item.pending_drained)), formatMetric(block.distribution.pending_drained)],
-			["repaired_in_place", ...block.repeats.map((item) => formatBool(item.repaired_in_place)), formatMetric(block.distribution.repaired_in_place)],
-			["fact_fidelity", ...block.repeats.map((item) => formatBool(item.fact_fidelity)), formatMetric(block.distribution.fact_fidelity)],
-			["retrieval_drove_repair", ...block.repeats.map((item) => formatBool(item.retrieval_drove_repair)), formatMetric(block.distribution.retrieval_drove_repair)],
+			["repair_rate", ...block.repeats.map((item) => formatBool(item.repair_rate)), passRate(block, "repair_rate")],
+			["pending_drained", ...block.repeats.map((item) => formatBool(item.pending_drained)), passRate(block, "pending_drained")],
+			["repaired_in_place", ...block.repeats.map((item) => formatBool(item.repaired_in_place)), passRate(block, "repaired_in_place")],
+			["fact_fidelity", ...block.repeats.map((item) => formatBool(item.fact_fidelity)), passRate(block, "fact_fidelity")],
+			["retrieval_drove_repair", ...block.repeats.map((item) => formatBool(item.retrieval_drove_repair)), passRate(block, "retrieval_drove_repair")],
 			["repair_source", ...block.repeats.map((item) => String(item.repair_source ?? "n/a")), "n/a"],
-			["navigation_updated", ...block.repeats.map((item) => formatBool(item.navigation_updated)), formatMetric(block.distribution.navigation_updated)],
-			["published_after", ...block.repeats.map((item) => formatBool(item.published_after)), formatMetric(block.distribution.published_after)],
-			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), formatMetric(block.distribution.searchable_after_repair)],
-			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), formatMetric(block.distribution.judge_pass)],
-			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), formatMetric(block.distribution.s1_pending_drained)],
-			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), formatMetric(block.distribution.s1_repaired)],
-			["f5_state_after", ...block.repeats.map((item) => String(item.f5_state_after ?? "n/a")), String(block.distribution.f5_state_after ?? "n/a")],
+			["navigation_updated", ...block.repeats.map((item) => formatBool(item.navigation_updated)), passRate(block, "navigation_updated")],
+			["published_after", ...block.repeats.map((item) => formatBool(item.published_after)), passRate(block, "published_after")],
+			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), passRate(block, "searchable_after_repair")],
+			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), passRate(block, "judge_pass")],
+			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), passRate(block, "s1_pending_drained")],
+			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), passRate(block, "s1_repaired")],
+			["repair_window_state_after", ...block.repeats.map((item) => String(item.repair_window_state_after ?? "n/a")), String(block.distribution.repair_window_state_after ?? "n/a")],
 			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
-			["f5_background_repair_ms", ...block.repeats.map((item) => (item.f5_background_repair_ms === null ? "n/a" : String(item.f5_background_repair_ms))), "n/a"],
-			["f5_body_chars", ...block.repeats.map((item) => formatMetric(item.f5_body_char_count)), formatMetric(median(block.repeats.map((item) => item.f5_body_char_count).filter((value) => value !== null)))],
+			["repair_window_body_chars", ...block.repeats.map((item) => formatMetric(item.repair_window_body_char_count)), formatMetric(median(block.repeats.map((item) => item.repair_window_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
 		const widths = header.map((cell, column) => Math.max(cell.length, ...allRows.map((row) => row[column].length)));
@@ -1696,21 +1799,18 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 }
 
 function parseArgs(argv) {
-	const options = { only: null, repeat: 3, help: false, variant: "agent", repairMode: "inline" };
+	const options = { only: null, repeat: 3, help: false, variant: "agent", probeOnly: false };
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--only") options.only = argv[++index];
 		else if (arg === "--repeat") options.repeat = Number(argv[++index]);
 		else if (arg === "--variant") options.variant = argv[++index];
-		else if (arg === "--repair-mode") options.repairMode = argv[++index];
+		else if (arg === "--probe-only") options.probeOnly = true;
 		else if (arg === "--help" || arg === "-h") options.help = true;
 		else throw new Error(`unknown argument: ${arg}`);
 	}
 	if (!Number.isInteger(options.repeat) || options.repeat < 1) {
 		throw new Error("--repeat must be a positive integer");
-	}
-	if (options.repairMode !== "inline" && options.repairMode !== "background") {
-		throw new Error('--repair-mode must be "inline" or "background"');
 	}
 	return options;
 }
@@ -1726,7 +1826,7 @@ function sleep(ms) {
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
 	if (options.help) {
-		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--repair-mode inline|background]");
+		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--probe-only]");
 		return 0;
 	}
 	const baseConfig = loadConfig();
@@ -1797,6 +1897,7 @@ async function main() {
 
 	const wallDeadline = Date.now() + config.wall_clock_ms;
 	const results = [];
+	const probeRecords = [];
 	let aborted = false;
 	for (const corpus of corpora) {
 		for (let repeat = 1; repeat <= options.repeat; repeat += 1) {
@@ -1810,14 +1911,30 @@ async function main() {
 				budget.reason = `wall_clock_ms ${config.wall_clock_ms} exceeded`;
 				break;
 			}
+			if (Array.isArray(corpus.resolve_probe) && corpus.resolve_probe.length > 0) {
+				for (let index = 0; index < corpus.resolve_probe.length; index += 1) {
+					const question = corpus.resolve_probe[index];
+					if (typeof question !== "string" || question.trim().length === 0) continue;
+					console.log(`resolver probe ${corpus.name} r${repeat} [${index}] ...`);
+					const probe = await runResolveProbe({ corpus, question, index, repeat, config, key, proxy, scratchRoot, runDir });
+					probeRecords.push(probe);
+					console.log(`  resolve ${probe.status}; layers: ${probe.layers.join(" ")}`);
+				}
+			}
+			if (options.probeOnly) break;
 			console.log(`running ${corpus.name} repeat ${repeat}/${options.repeat} ...`);
-			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode: options.repairMode });
+			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot });
 			results.push(result);
 			if (result.exit_code !== 0) {
 				console.log(`  pi exited with code ${result.exit_code}`);
 			}
 		}
 		if (aborted) break;
+	}
+
+	if (options.probeOnly) {
+		console.log(`resolve probes done: ${probeRecords.length}`);
+		return;
 	}
 
 	const mergedDecisions = [];
@@ -1871,7 +1988,7 @@ async function main() {
 	for (const corpus of corpora) {
 		const repeats = results
 			.filter((result) => result.corpus === corpus.name)
-			.map((result) => scoreRepeat(result, corpus, options.repairMode));
+			.map((result) => scoreRepeat(result, corpus));
 		const distribution = {};
 		const numeric = ["system_recall", "handled_rate", "agent_mark_rate", "detector_catch_rate", "false_mark_rate", "multiplicity", "revision_correctness", "update_saved", "update_rejected", "update_saved_per_turn", "update_rejected_per_turn", "mark_stale_recorded", "mark_stale_rejected", "multi_events", "multi_expected_events"];
 		for (const metric of numeric) {
@@ -1932,7 +2049,6 @@ async function main() {
 		pi_version: piVersion,
 		harness_version: HARNESS_VERSION,
 		variant: options.variant,
-		repair_mode: options.repairMode,
 		provider: config.provider,
 		agent_model: config.agent_model,
 		agent_thinking: config.agent_thinking,
@@ -1959,6 +2075,7 @@ async function main() {
 			unchanged: obeliskUnchanged,
 		},
 		model_usage: proxy.stats,
+		resolve_probe: probeRecords,
 	});
 
 	await proxy.close();
@@ -1969,7 +2086,7 @@ async function main() {
 		writeFileSync(path, records.map((record) => JSON.stringify(redactValue(record))).join("\n") + (records.length > 0 ? "\n" : ""), "utf8");
 	}
 
-	printTable(metricsByCorpus, options.variant, options.repairMode);
+	printTable(metricsByCorpus, options.variant);
 	console.log(`\nrun directory: ${runDir}`);
 	console.log(`real Obelisk index unchanged: ${obeliskUnchanged}`);
 	if (!obeliskUnchanged) {
@@ -1989,13 +2106,20 @@ function childFirstLine(command, args, cwd) {
 	return result.stdout.split("\n")[0].trim();
 }
 
-main()
-	.then((code) => {
-		// The recording proxy is closed, but a spawned pi or a lingering socket can
-		// keep the event loop alive; every artifact is already written synchronously.
-		process.exit(code);
-	})
-	.catch((error) => {
+/**
+ * The harness owns the process exit, and it is the only owner. `main` closes the
+ * recording proxy, but a spawned pi or a lingering socket can still keep the
+ * event loop alive long after `main` resolves; every artifact is written
+ * synchronously, so the process ends here with the one code `main` computed.
+ */
+async function run() {
+	let code = 2;
+	try {
+		code = await main();
+	} catch (error) {
 		console.error("live harness error:", error);
-		process.exit(2);
-	});
+	}
+	process.exit(code);
+}
+
+await run();
