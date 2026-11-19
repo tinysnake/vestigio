@@ -61,6 +61,16 @@ describe("matchHotspots", () => {
     expect(matchHotspots({ entries, text: "端口" })).toHaveLength(3);
   });
 
+  it("counts a run of overlapping bigrams as one piece of evidence", () => {
+    // 默认 in the input yields the bigrams 的默 and 默认: one word, one signal.
+    // The title is a default in makeEntry, so clear it: only the nav shares a word.
+    const shared = makeEntry({ title: "灰度说明", keywords: ["灰度"], nav_text: "灰度开关的默认值" });
+    expect(matchHotspots({ entries: [shared], text: "更新部署脚本的默认端口" })).toEqual([]);
+    // Two separate words really are two signals.
+    const separated = makeEntry({ title: "其它说明", keywords: ["其它"], nav_text: "部署与默认值" });
+    expect(matchHotspots({ entries: [separated], text: "更新部署的默认端口" })).toHaveLength(1);
+  });
+
   it("never matches a short English identifier inside an unrelated word", () => {
     const entry = makeEntry({ keywords: ["id"], nav_text: "无" });
     expect(matchHotspots({ entries: [entry], text: "identity provided" })).toEqual([]);

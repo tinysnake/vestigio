@@ -157,6 +157,38 @@ function containsPhrase(haystack: readonly string[], needle: readonly string[]):
   return false;
 }
 
+/**
+ * Two adjacent CJK bigrams share a character (的默 + 默认 out of 默认), so they
+ * are one piece of evidence, not two. A run of three adjacent bigrams is two.
+ */
+function independentTokens(matched: readonly string[], inputTokens: readonly string[]): number {
+  const positions = new Map<string, number>();
+  for (const [index, token] of inputTokens.entries()) {
+    if (!positions.has(token)) positions.set(token, index);
+  }
+  const ordered = matched
+    .map((token) => ({ token, index: positions.get(token) ?? -1 }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index);
+  const isBigram = (token: string) => codePointCount(token) === 2 && /[\u3400-\u9fff]/.test(token);
+  let count = 0;
+  let last: { token: string; index: number } | null = null;
+  for (const item of ordered) {
+    // Overlap is a shared character at the seam, not array adjacency: the
+    // tokenizer also emits the single characters between bigrams.
+    const overlapsPrevious =
+      last !== null &&
+      isBigram(item.token) &&
+      isBigram(last.token) &&
+      (last.token[1] === item.token[0] || item.token[1] === last.token[0]);
+    if (!overlapsPrevious) {
+      count += 1;
+      last = item;
+    }
+  }
+  return count;
+}
+
 export function matchHotspots(input: MatchInput): HotspotMatch[] {
   const inputTokens = matchTokens(input.text);
   if (inputTokens.length === 0) {
@@ -202,7 +234,7 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
     }
     const score = matched.length + (phrase ? PHRASE_BONUS : 0);
     // A weak hit is one shared non-alias token with no phrase: too common to act on.
-    const strong = phrase || aliasHits > 0 || matched.length >= 2;
+    const strong = phrase || aliasHits > 0 || independentTokens(matched, inputTokens) >= 2;
     if (score < minScore || !strong) {
       continue;
     }
