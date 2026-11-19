@@ -1,8 +1,9 @@
 /**
  * PR-07 length, citation and action-claim rules, at the exact boundaries.
  *
- * 499/1000/1001 are the interesting points: the floor cannot be padded, the
- * ceiling cannot be exceeded, and whitespace never counts toward either.
+ * 499/500, 1000 and 2000 are the interesting points: the floor cannot be padded,
+ * a body over the band is still accepted up to the ceiling the repair path
+ * tolerates, and whitespace never counts toward either.
  */
 
 import { describe, expect, it } from "vitest";
@@ -23,14 +24,24 @@ describe("medium body length", () => {
     if (atFloor.ok) expect(atFloor.body_char_count).toBe(500);
   });
 
-  it("accepts 1000 and rejects 1001", () => {
-    const atCeiling = validateMediumBody(bodyOfLength(1000), allowed);
-    expect(atCeiling.ok).toBe(true);
-    if (atCeiling.ok) expect(atCeiling.body_char_count).toBe(1000);
+  it("accepts a body over the band up to the accepted ceiling, and rejects beyond it", () => {
+    const atBand = validateMediumBody(bodyOfLength(1000), allowed);
+    expect(atBand.ok).toBe(true);
+    if (atBand.ok) expect(atBand.body_char_count).toBe(1000);
 
-    const above = validateMediumBody(bodyOfLength(1001), allowed);
-    expect(above.ok).toBe(false);
-    if (!above.ok) expect(above.failure).toEqual({ kind: "too_long", measured: 1001 });
+    // Over the band, inside the accepted ceiling: the repair path asks for a
+    // rewrite while its corrections last, then stores this body.
+    const overBand = validateMediumBody(bodyOfLength(1389), allowed);
+    expect(overBand.ok).toBe(true);
+    if (overBand.ok) expect(overBand.body_char_count).toBe(1389);
+
+    const atAccepted = validateMediumBody(bodyOfLength(2000), allowed);
+    expect(atAccepted.ok).toBe(true);
+
+    const beyond = validateMediumBody(bodyOfLength(2001), allowed);
+    expect(beyond.ok).toBe(false);
+    if (!beyond.ok) expect(beyond.failure).toEqual({ kind: "too_long", measured: 2001 });
+    expect(describeMediumFailure({ kind: "too_long", measured: 2001 })).toBe("medium_above_max:2001");
   });
 
   it("does not count whitespace as padding", () => {

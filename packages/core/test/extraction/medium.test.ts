@@ -103,7 +103,7 @@ describe("extractMediumSummary", () => {
     await run;
     const user = requests[0]?.messages[1]?.content ?? "";
     expect(user).toContain("id=h-1");
-    expect(user).toContain("500-1000");
+    expect(user).toContain("500-660");
     expect(requests[0]?.max_output_tokens).toBe(1600);
   });
 });

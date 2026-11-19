@@ -6,7 +6,8 @@
  * the matching `parse*` function in `./parse.ts` before it is trusted.
  *
  * Invariants enforced by the parsers, not expressible in the type:
- * - medium body: 500-1000 non-whitespace Unicode code points, count must match
+ * - medium body: 500-2000 non-whitespace Unicode code points, count must match;
+ *   the prompt asks for 500-660, and 1000 is the ceiling a rewrite stays under
  * - nav text: 1-200 Unicode code points, count must match
  * - nav.source_revision must equal the owning memory revision
  * - a medium_ready memory has no nav yet; a published one always has it

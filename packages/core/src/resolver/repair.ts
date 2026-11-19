@@ -17,7 +17,8 @@
 
 import {
   MEDIUM_BODY_MAX,
-  MEDIUM_BODY_MIN,
+  MEDIUM_BODY_TARGET_MAX,
+  MEDIUM_BODY_TARGET_MIN,
   nonWhitespaceCodePointCount,
   parseMemory,
   parseTimestamp,
@@ -200,8 +201,10 @@ export async function repairStaleMemory(input: RepairInput): Promise<RepairOutco
   // corrections with the measured count fix it. The caller's deadline bounds
   // the total, so a slow endpoint still cannot stall the read forever.
   for (let attempt = 0; attempt < REPAIR_MAX_CORRECTIONS; attempt += 1) {
-    if (input.signal.aborted || !retryableExtraction(extraction)) break;
-    extraction = await ask(correctionMessage(pending, extraction.reason));
+    if (input.signal.aborted) break;
+    const over = overrun(extraction);
+    if (!retryableExtraction(extraction) && over === null) break;
+    extraction = await ask(correctionMessage(pending, extraction.reason, over));
   }
 
   if (extraction.status === "cancelled") {
@@ -284,12 +287,30 @@ function retryableExtraction(extraction: MediumExtraction): boolean {
   return /http (?:5\d\d)\b/iu.test(reason);
 }
 
-function correctionMessage(pending: readonly StaleEventSummary[], reason: string | null): string {
+/**
+ * How far a usable body sits over the ceiling, or null when it is inside it.
+ * An overrun buys a rewrite, not a rejection: a body up to
+ * `MEDIUM_BODY_ACCEPT_MAX` is stored once the corrections run out.
+ */
+function overrun(extraction: MediumExtraction): number | null {
+  if (extraction.status !== "ok" || extraction.body === null) return null;
+  const measured = nonWhitespaceCodePointCount(extraction.body);
+  return measured > MEDIUM_BODY_MAX ? measured : null;
+}
+
+function correctionMessage(
+  pending: readonly StaleEventSummary[],
+  reason: string | null,
+  over: number | null,
+): string {
   const ids = pending.map((event) => event.event_id).join(", ");
   const count = /medium_(?:above|below)_(?:max|min):(\d+)/u.exec(reason ?? "")?.[1];
-  const size = count === undefined
-    ? `The body must be ${MEDIUM_BODY_MIN}-${MEDIUM_BODY_MAX} non-whitespace Unicode code points of plain Chinese prose.`
-    : `Your body was ${count} non-whitespace Unicode code points. Rewrite it to ${MEDIUM_BODY_MIN}-${MEDIUM_BODY_MAX}: keep every fact and citation, drop padding and repeated phrasing.`;
+  const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain Chinese prose`;
+  const size = over !== null
+    ? `Your body was ${over} non-whitespace Unicode code points, over the ${MEDIUM_BODY_MAX} ceiling. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`
+    : count === undefined
+      ? `The body must be ${band}.`
+      : `Your body was ${count} non-whitespace Unicode code points. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`;
   return [
     `Your previous reply was not usable: ${reason ?? "unreadable"}.`,
     `Reply with exactly one JSON object {"body": "..."} and nothing else.`,
@@ -298,10 +319,11 @@ function correctionMessage(pending: readonly StaleEventSummary[], reason: string
   ].join("\n");
 }
 
-// Four pending events pushed the first attempt to 1389 code points and two
-// corrections could not pull it under the ceiling, so the read repaired nothing.
-// The judges then failed bodies that narrated the repair ("结合此前摘要",
-// "旧摘要的缺口") and bodies that dropped a path the changes never touched.
+// Four pending events pushed the first attempt to 1389 code points, far over the
+// band, and two corrections only walked it part of the way down. The guidance
+// below is what makes the first attempt land near the band, and the judges then
+// failed bodies that narrated the repair ("结合此前摘要", "旧摘要的缺口") and
+// bodies that dropped a path the changes never touched.
 function repairGuidance(pendingCount: number): string {
   return [
     `This rewrite folds ${pendingCount} pending change(s) into an existing summary.`,
@@ -313,7 +335,7 @@ function repairGuidance(pendingCount: number): string {
     "Never extend a rule further than the summary states it: a drill required after window or ratio changes does not become a drill after every change.",
     "Never name a revision, an id, or the evidence set.",
     "Do not hedge or raise an open question about a value the evidence settles.",
-    `Aim for ${MEDIUM_BODY_MIN + 100}-${MEDIUM_BODY_MAX - 250} non-whitespace code points so the body stays inside the limit.`,
+    `Aim for ${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace code points.`,
   ].join(" ");
 }
 

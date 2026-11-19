@@ -48,6 +48,20 @@ import { usageEventId } from "./usage-event-id.js";
 
 export const MEDIUM_BODY_MIN = 500;
 export const MEDIUM_BODY_MAX = 1000;
+/**
+ * What the prompt asks for, 50-66% of the ceiling. A model that overruns the
+ * band it was given usually lands 1.5-2x past it, so a band drawn at the
+ * ceiling would put the accepted body out of range; a band at half to two
+ * thirds leaves room for the overrun.
+ */
+export const MEDIUM_BODY_TARGET_MIN = 500;
+export const MEDIUM_BODY_TARGET_MAX = 660;
+/**
+ * The accepted ceiling, 100% over `MEDIUM_BODY_MAX`. A body between the two is
+ * stored once the rewrites run out: rejecting it loses the whole repair, while
+ * keeping it costs a summary that is longer than the band asked for.
+ */
+export const MEDIUM_BODY_ACCEPT_MAX = 2000;
 export const NAV_TEXT_MAX = 200;
 
 export const MEMORY_STATES = ["medium_ready", "published", "archived"] as const;
@@ -159,11 +173,11 @@ export function parseMediumSummary(value: unknown, path = "$"): MediumSummary {
   const record = readRecord(value, path);
   const body = readString(readField(record, "body", path), `${path}.body`);
   const measured = nonWhitespaceCodePointCount(body);
-  if (measured < MEDIUM_BODY_MIN || measured > MEDIUM_BODY_MAX) {
+  if (measured < MEDIUM_BODY_MIN || measured > MEDIUM_BODY_ACCEPT_MAX) {
     fail(
       `${path}.body`,
       "out_of_range",
-      `medium body must be ${MEDIUM_BODY_MIN}-${MEDIUM_BODY_MAX} non-whitespace Unicode code points; got ${measured}`,
+      `medium body must be ${MEDIUM_BODY_MIN}-${MEDIUM_BODY_ACCEPT_MAX} non-whitespace Unicode code points; got ${measured}`,
     );
   }
   const body_char_count = readInteger(

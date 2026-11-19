@@ -232,8 +232,36 @@ describe("repairStaleMemory", () => {
     const first = model.requests[0]!.messages.at(-1)?.content ?? "";
     expect(first).toContain("this rewrite:");
     expect(first).toContain("folds 2 pending change(s)");
-    expect(first).toContain("600-750");
+    expect(first).toContain("500-660");
     expect(first).not.toContain("correction:");
+  });
+
+  it("asks for a rewrite while the body is over the band, then stores it", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind) =>
+      kind === "summary" ? { text: JSON.stringify({ body: bodyOfLength(1389, fixture.first.event_id) }) } : { text: "{}" },
+    );
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(model.summary_calls).toBe(REPAIR_MAX_CORRECTIONS + 1);
+    expect(model.requests[1]!.messages.at(-1)?.content).toContain("over the 1000 ceiling");
+    expect(outcome.status).toBe("repaired");
+    expect(fixture.store.readMemory(fixture.memory.uri)?.medium.body_char_count).toBe(1389);
+    // The body cites the first event only, so the second one stays pending.
+    expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(1);
+  });
+
+  it("writes nothing when the body stays beyond the accepted ceiling", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind) =>
+      kind === "summary" ? { text: JSON.stringify({ body: bodyOfLength(2001, fixture.first.event_id) }) } : { text: "{}" },
+    );
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("invalid");
+    expect(outcome.reason).toBe("medium_above_max:2001");
+    expect(fixture.store.readMemory(fixture.memory.uri)?.revision).toBe(1);
+    expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(2);
   });
 
   it("gives up after the correction budget and leaves every event pending", async () => {

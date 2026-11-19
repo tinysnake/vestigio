@@ -174,7 +174,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		name: "memory_resolve",
 		label: "Memory resolve",
 		description:
-			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-1000 character medium summary, returns that exact body with its URI and revision, and generates the short nav before the tool returns, so the memory is findable by memory_search immediately; if that nav step fails, the memory stays unsearchable until `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
+			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-660 character medium summary, returns that exact body with its URI and revision, and generates the short nav before the tool returns, so the memory is findable by memory_search immediately; if that nav step fails, the memory stays unsearchable until `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
 		parameters: resolveParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const store = state.ensureStore();

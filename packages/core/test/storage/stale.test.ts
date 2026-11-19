@@ -10,7 +10,7 @@ function anchor(overrides: Partial<SourceRef> = {}): SourceRef {
   return makeSourceRef({ message_id: `m-${Math.random().toString(16).slice(2, 10)}`, ...overrides });
 }
 
-/** A body that validates: 500-1000 non-whitespace chars, at least one citation. */
+/** A body that validates: 500-660 non-whitespace chars, at least one citation. */
 function repairableBody(prefix: string, source: SourceRef): string {
   return bodyWith(`${prefix} [来源:${source.message_id}]`);
 }

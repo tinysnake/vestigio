@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MEDIUM_BODY_ACCEPT_MAX,
   MEDIUM_BODY_MAX,
   MEDIUM_BODY_MIN,
   NAV_TEXT_MAX,
@@ -26,15 +27,24 @@ function expectError(run: () => unknown, code: string, pathPart: string): void {
   expect((error as ValidationError).path).toContain(pathPart);
 }
 
-describe("medium body length: 500-1000 non-whitespace Unicode code points", () => {
+describe("medium body length: 500 to the accepted ceiling, 2000", () => {
   it("rejects 499 and accepts 500", () => {
     expectError(() => parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_MIN - 1))), "out_of_range", "body");
     expect(parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_MIN))).body_char_count).toBe(500);
   });
 
-  it("accepts 1000 and rejects 1001", () => {
+  it("accepts a body over the band up to the accepted ceiling", () => {
     expect(parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_MAX))).body_char_count).toBe(1000);
-    expectError(() => parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_MAX + 1))), "out_of_range", "body");
+    expect(parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_MAX + 1))).body_char_count).toBe(1001);
+  });
+
+  it("accepts 2000 and rejects 2001", () => {
+    expect(parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_ACCEPT_MAX))).body_char_count).toBe(2000);
+    expectError(
+      () => parseMediumSummary(makeMedium("a".repeat(MEDIUM_BODY_ACCEPT_MAX + 1))),
+      "out_of_range",
+      "body",
+    );
   });
 
   it("counts code points, not UTF-16 units", () => {

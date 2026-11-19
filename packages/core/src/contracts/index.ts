@@ -44,8 +44,11 @@ export {
 export type { ValidationCode } from "./primitives.js";
 
 export {
+  MEDIUM_BODY_ACCEPT_MAX,
   MEDIUM_BODY_MAX,
   MEDIUM_BODY_MIN,
+  MEDIUM_BODY_TARGET_MAX,
+  MEDIUM_BODY_TARGET_MIN,
   MEMORY_STATES,
   NAV_TEXT_MAX,
   NAVIGATION_STATUSES,

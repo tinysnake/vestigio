@@ -2,7 +2,7 @@
  * The forced medium summary (PR-07, stage one).
  *
  * One model call turns the evidence a `memory.resolve` walk actually used into
- * the 500-1000 non-whitespace code point body that answers "我们之前讨论了什么，
+ * the 500-660 non-whitespace code point body that answers "我们之前讨论了什么，
  * 得出了什么结论？" and, when the evidence supports it, the current question.
  * The body and its sources are then persisted by the resolver; this module only
  * produces and validates text, so a rejected body can never reach the store.
