@@ -1173,9 +1173,9 @@ function sawRepairFailedLine({ toolCalls, stderr }) {
 }
 
 /**
- * Wall time of the tool call that carried the repair, in milliseconds. This is
- * the number to look at when deciding whether an inline repair is cheap enough
- * to keep synchronous; it includes every model call the repair made.
+ * Wall time of the tool call that carried a repair, in milliseconds. With the
+ * single repair path this is the resolver read's repair, if a session 2 read
+ * performed one; the `agent_end` pass is measured from its own session entry.
  */
 function repairWallMs({ toolCalls }) {
 	// `repair: deferred (… repaired when this session ends…)` is not a repair.
@@ -1284,7 +1284,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 	return record;
 }
 
-async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode }) {
+async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot }) {
 	const label = `${corpus.name}-r${repeat}`;
 	const storePath = join(scratchRoot, `${label}.sqlite`);
 	const projectDir = join(scratchRoot, "project", label);
@@ -1313,7 +1313,6 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 		VESTIGIO_MODEL_ID: config.extension_model,
 		VESTIGIO_MODEL_THINKING: config.extension_thinking,
 		VESTIGIO_MODEL_API_KEY: key,
-		VESTIGIO_REPAIR_MODE: repairMode,
 	};
 	const args = [
 		"--mode",
@@ -1576,7 +1575,7 @@ function turnHandled(turn) {
 	return distinct.size >= expected;
 }
 
-function scoreRepeat(result, corpus, repairMode) {
+function scoreRepeat(result, corpus) {
 	const turns = result.turns;
 	const changeTurns = turns.filter((turn) => turn.label === "CHANGE");
 	const agentMarked = changeTurns.filter((turn) => turn.new_events.some((event) => event.producer === "agent"));
@@ -1637,13 +1636,13 @@ function scoreRepeat(result, corpus, repairMode) {
 		session1 === null || session1.head_revision === null || result.head_at_start === undefined
 			? null
 			: session1.head_revision > result.head_at_start;
-	// Background mode repairs at the first session's `agent_end`, so its repair
-	// window is session 1's end, not session 2's. Scoring session 2 there would
-	// report that nothing was repaired, which is what the mode is designed to do.
+	// The pass repairs at the first session's `agent_end`, so the repair window is
+	// session 1's end, not session 2's. Scoring session 2 would report that
+	// nothing was repaired, which is exactly what a deferred repair looks like.
 	// Every number here carries an `_s1` suffix so no name can be read as the
 	// other window's.
 	const s1Window =
-		repairMode === "background" && s1Repaired === true && session1 !== null && corpus.session2 !== undefined
+		s1Repaired === true && session1 !== null && corpus.session2 !== undefined
 			? {
 					repair_rate_s1: true,
 					pending_drained_s1: session1.pending_ids.length === 0,
@@ -1658,27 +1657,16 @@ function scoreRepeat(result, corpus, repairMode) {
 					head_revision_after_s1: session1.head_revision,
 			  }
 			: null;
-	// The repair window each metric is read from: `_s2` (session 2's end, from
-	// `f5`) for inline mode, `_s1` (session 1's end, from `s1Window`) for
-	// background mode. `repair_source` names which window a repeat used.
-	// `searchable_after_repair` is the one exception: the post-repair store search
-	// runs once session 2 has settled, so background mode reads session 2's
-	// ungated result rather than session 1's window.
+	// `_s1` is session 1's end (`s1Window`) and `_s2` is session 2's end (`f5`),
+	// which only a session 2 read repair produces. `searchable_after_repair` is
+	// the exception: the post-repair store search runs once session 2 has
+	// settled, so it reads session 2's ungated result.
 	const repairWindow = (field) => {
 		if (s1Window === null) return f5 === null ? null : f5[`${field}_s2`];
 		if (field === "searchable_after_repair") return f5 === null ? null : f5.search_returned_s2;
 		return s1Window[`${field}_s1`];
 	};
-	const repairSource =
-		f5 === null && !(repairMode === "background" && s1Repaired === true)
-			? null
-			: repairMode === "background"
-				? s1Repaired === true
-					? "background"
-					: "none"
-				: f5?.repair_rate_s2 === true
-					? "retrieval"
-					: "none";
+	const repairSource = s1Repaired === null ? null : s1Repaired ? "background" : "none";
 	return {
 		corpus: result.corpus,
 		repeat: result.repeat,
@@ -1710,8 +1698,7 @@ function scoreRepeat(result, corpus, repairMode) {
 		published_after: repairWindow("published_after"),
 		searchable_after_repair: repairWindow("searchable_after_repair"),
 		repair_window_state_after: repairWindow("state_after"),
-		f5_repair_ms: session2 === null ? null : (session2.repair_ms ?? null),
-		f5_background_repair_ms: background === null ? null : background.elapsed_ms,
+		f5_repair_ms: background === null ? null : background.elapsed_ms,
 		s2_search_query: f5 === null ? null : f5.search_query_s2,
 		judge_pass: session2 === null ? null : session2.judge.pass,
 		repair_window_body_char_count: repairWindow("body_char_count"),
@@ -1759,8 +1746,8 @@ function passRate(block, metric) {
 	return `${values.filter((value) => value === true).length}/${values.length}`;
 }
 
-function printTable(metricsByCorpus, variantName, repairMode) {
-	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}, repair ${repairMode}) ===`);
+function printTable(metricsByCorpus, variantName) {
+	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}) ===`);
 	for (const [corpus, block] of Object.entries(metricsByCorpus)) {
 		console.log(`\ncorpus ${corpus}  (${block.repeats.length} repeat(s))`);
 		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "summary"];
@@ -1799,7 +1786,6 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), passRate(block, "s1_repaired")],
 			["repair_window_state_after", ...block.repeats.map((item) => String(item.repair_window_state_after ?? "n/a")), String(block.distribution.repair_window_state_after ?? "n/a")],
 			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
-			["f5_background_repair_ms", ...block.repeats.map((item) => (item.f5_background_repair_ms === null ? "n/a" : String(item.f5_background_repair_ms))), "n/a"],
 			["repair_window_body_chars", ...block.repeats.map((item) => formatMetric(item.repair_window_body_char_count)), formatMetric(median(block.repeats.map((item) => item.repair_window_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
@@ -1813,22 +1799,18 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 }
 
 function parseArgs(argv) {
-	const options = { only: null, repeat: 3, help: false, variant: "agent", repairMode: "inline", probeOnly: false };
+	const options = { only: null, repeat: 3, help: false, variant: "agent", probeOnly: false };
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--only") options.only = argv[++index];
 		else if (arg === "--repeat") options.repeat = Number(argv[++index]);
 		else if (arg === "--variant") options.variant = argv[++index];
-		else if (arg === "--repair-mode") options.repairMode = argv[++index];
 		else if (arg === "--probe-only") options.probeOnly = true;
 		else if (arg === "--help" || arg === "-h") options.help = true;
 		else throw new Error(`unknown argument: ${arg}`);
 	}
 	if (!Number.isInteger(options.repeat) || options.repeat < 1) {
 		throw new Error("--repeat must be a positive integer");
-	}
-	if (options.repairMode !== "inline" && options.repairMode !== "background") {
-		throw new Error('--repair-mode must be "inline" or "background"');
 	}
 	return options;
 }
@@ -1844,7 +1826,7 @@ function sleep(ms) {
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
 	if (options.help) {
-		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--repair-mode inline|background] [--probe-only]");
+		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--probe-only]");
 		return 0;
 	}
 	const baseConfig = loadConfig();
@@ -1941,7 +1923,7 @@ async function main() {
 			}
 			if (options.probeOnly) break;
 			console.log(`running ${corpus.name} repeat ${repeat}/${options.repeat} ...`);
-			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode: options.repairMode });
+			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot });
 			results.push(result);
 			if (result.exit_code !== 0) {
 				console.log(`  pi exited with code ${result.exit_code}`);
@@ -2006,7 +1988,7 @@ async function main() {
 	for (const corpus of corpora) {
 		const repeats = results
 			.filter((result) => result.corpus === corpus.name)
-			.map((result) => scoreRepeat(result, corpus, options.repairMode));
+			.map((result) => scoreRepeat(result, corpus));
 		const distribution = {};
 		const numeric = ["system_recall", "handled_rate", "agent_mark_rate", "detector_catch_rate", "false_mark_rate", "multiplicity", "revision_correctness", "update_saved", "update_rejected", "update_saved_per_turn", "update_rejected_per_turn", "mark_stale_recorded", "mark_stale_rejected", "multi_events", "multi_expected_events"];
 		for (const metric of numeric) {
@@ -2067,7 +2049,6 @@ async function main() {
 		pi_version: piVersion,
 		harness_version: HARNESS_VERSION,
 		variant: options.variant,
-		repair_mode: options.repairMode,
 		provider: config.provider,
 		agent_model: config.agent_model,
 		agent_thinking: config.agent_thinking,
@@ -2105,7 +2086,7 @@ async function main() {
 		writeFileSync(path, records.map((record) => JSON.stringify(redactValue(record))).join("\n") + (records.length > 0 ? "\n" : ""), "utf8");
 	}
 
-	printTable(metricsByCorpus, options.variant, options.repairMode);
+	printTable(metricsByCorpus, options.variant);
 	console.log(`\nrun directory: ${runDir}`);
 	console.log(`real Obelisk index unchanged: ${obeliskUnchanged}`);
 	if (!obeliskUnchanged) {

@@ -29,7 +29,6 @@ cd eval/pi
 node --import ./hook.mjs ./run.mjs              # all scenarios + performance
 node --import ./hook.mjs ./run.mjs --only new_session # memory delivery only
 node --import ./hook.mjs ./run.mjs --only stale # complete stale lifecycle
-node --import ./hook.mjs ./run.mjs --only stale-background # stale lifecycle with VESTIGIO_REPAIR_MODE=background
 node --import ./hook.mjs ./run.mjs --only steer # steering only
 node --import ./hook.mjs ./run.mjs --dump new-session   # raw wire bodies
 VESTIGIO_HARNESS_DEBUG=1 ...                    # print every RPC event type
@@ -62,6 +61,5 @@ node --import ./hook.mjs ./seed.mjs <store.sqlite> <project_id> <perf_project_id
 | `queued` | a `follow_up` while streaming injects its own memory, never the base one |
 | `steer` | a `steer` while streaming injects its own memory at the tail |
 | `handler-error` | a second extension throwing from `input` still lets the block through intact; no truncated or duplicated block |
-| `stale` | completed tool evidence triggers `agent_end` marking; unchanged snapshots stay deduped after resume; explicit marking resolves real entry IDs; a new session repairs the original memory and acknowledges incorporated events |
-| `stale-background` | with `VESTIGIO_REPAIR_MODE=background` a read returns the stale body and `repair: deferred`, `agent_end` then repairs and publishes the memory, and a current memory is read without a repair |
+| `stale` | completed tool evidence triggers `agent_end` marking; the same pass absorbs the change; explicit marking resolves real entry IDs; a change that arrives after the pass defers its read, and a later session reads the repaired memory without another repair |
 | `perf-*` | baseline with the extension disabled, matching-off cost, full-match p50/p95, added tokens per turn, zero repeated blocks |

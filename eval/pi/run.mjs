@@ -22,7 +22,6 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarioStale } from "./stale.mjs";
-import { scenarioStaleBackground } from "./stale-background.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
@@ -637,7 +636,7 @@ async function main() {
 
 		const onlyIndex = process.argv.indexOf("--only");
 		const only = onlyIndex === -1 ? null : process.argv[onlyIndex + 1];
-		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "stale-background", "perf"];
+		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "perf"];
 		if (only !== null && !scenarios.includes(only)) throw new Error(`unknown scenario: ${only}`);
 		const maybe = async (name, fn) => {
 			if (only === null || only === name) await fn();
@@ -651,8 +650,7 @@ async function main() {
 		await maybe("queued", scenarioQueuedInput);
 		await maybe("steer", scenarioSteer);
 		await maybe("handler-error", scenarioHandlerError);
-		await maybe("stale", () => scenarioStale({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, chatRequests, systemText, lastUserText }));
-		await maybe("stale-background", () => scenarioStaleBackground({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, chatRequests, systemText, reseed: () => copyFileSyncData(SEED_STORE, RUN_STORE) }));
+		await maybe("stale", () => scenarioStale({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, chatRequests, systemText, lastUserText, reseed: () => copyFileSyncData(SEED_STORE, RUN_STORE) }));
 
 		const perfEnabled = only === null || only === "perf";
 		const baseline = perfEnabled ? await perfBaselineDisabled(32) : [];
