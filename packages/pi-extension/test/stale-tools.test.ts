@@ -6,7 +6,6 @@ import type { Memory, MemoryUri } from "@vestigio/core";
 import { countSummaryJobs } from "@vestigio/core/jobs";
 import type { HistoryHit, HistoryPort } from "@vestigio/core/retrieval";
 import { layeredSearch } from "@vestigio/core/retrieval";
-import { REPAIR_MAX_CORRECTIONS } from "@vestigio/core/resolver";
 import type { ModelPort, ModelRequest } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
 import { afterEach, describe, expect, it } from "vitest";
@@ -315,72 +314,11 @@ describe("memory_read freshness", () => {
 			.execute("call-read", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
 		const text = result.content[0]!.text;
 		expect(text).toContain("freshness: STALE pending=1");
+		expect(text).toContain("repair: deferred (repaired when this session ends; 1 pending event(s))");
 		expect(text).toContain("event ");
 		expect(text).toContain("默认端口已从 8080 改为 18080");
 		expect(text).toContain("sources: s-stale/e-1");
 		expect(text).toContain("18080");
-		store.close();
-	});
-
-	it("repairs a stale memory on read, acknowledges only the cited event and returns the new revision", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) =>
-			kind === "summary"
-				? { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已经同步。 [来源:${cited}]`) }) }
-				: { text: JSON.stringify({ nav: "部署脚本的默认端口已经改为 18080，改端口前值得读。" }) },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		const second = await markStale(tools, ctx, {
-			reason: "回滚顺序也变了",
-			excerpt: "回滚顺序改为先恢复镜像，再恢复配置。",
-			source_message_ids: ["e-3"],
-		});
-		expect(second.content[0]!.text).toContain("recorded");
-		const events = store.listPendingStaleEvents("mem-deploy");
-		expect(events).toHaveLength(2);
-		cited = events[0]!.event_id;
-
-		const result = await tools
-			.get("memory_read")!
-			.execute("call-repair", { uri: "memory://vestigio/mem-deploy" }, new AbortController().signal, undefined, ctx);
-		const text = result.content[0]!.text;
-
-		expect(text).toContain("revision=2");
-		expect(text).toContain("repair: repaired r1 -> r2 (acknowledged 1 pending event(s); published and findable)");
-		expect(text).not.toContain("STALE pending=2");
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-		expect(head.revision).toBe(2);
-		expect(head.medium.body).toContain("18080");
-		expect(head.medium.sources.map((ref) => ref.message_id)).toContain("e-1");
-		const remaining = store.listPendingStaleEvents("mem-deploy");
-		expect(remaining.map((event) => event.event_id)).toEqual([events[1]!.event_id]);
-		store.close();
-	});
-
-	it("publishes the repaired memory with a nav bound to the new revision so search finds it", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) =>
-			kind === "summary"
-				? { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已经同步。 [来源:${cited}]`) }) }
-				: { text: JSON.stringify({ nav: "部署脚本的默认端口已经改为 18080，改端口前值得读。" }) },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
-
-		await tools
-			.get("memory_read")!
-			.execute("call-publish", { uri: "memory://vestigio/mem-deploy" }, new AbortController().signal, undefined, ctx);
-
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-		expect(head.state).toBe("published");
-		expect(head.nav?.source_revision).toBe(2);
-		const search = await tools
-			.get("memory_search")!
-			.execute("call-search-after", { query: "部署 端口" }, undefined, undefined, ctx);
-		expect(search.content[0]!.text).toContain("memory://vestigio/mem-deploy");
-		expect(search.content[0]!.text).not.toContain("stale:");
 		store.close();
 	});
 
@@ -393,99 +331,6 @@ describe("memory_read freshness", () => {
 		expect(result.content[0]!.text).toContain("revision=1");
 		expect(model.stats.summary_calls).toBe(0);
 		expect(model.stats.nav_calls).toBe(0);
-		store.close();
-	});
-
-	it("does not attempt a second repair for the same memory in the same session", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) =>
-			kind === "summary"
-				? { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已经同步。 [来源:${cited}]`) }) }
-				: { text: JSON.stringify({ nav: "部署脚本的默认端口已经改为 18080，改端口前值得读。" }) },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		await markStale(tools, ctx, {
-			reason: "回滚顺序也变了",
-			excerpt: "回滚顺序改为先恢复镜像，再恢复配置。",
-			source_message_ids: ["e-3"],
-		});
-		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
-		await tools
-			.get("memory_read")!
-			.execute("call-once", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
-		const afterFirst = model.stats.summary_calls;
-
-		const second = await tools
-			.get("memory_read")!
-			.execute("call-twice", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
-		expect(model.stats.summary_calls).toBe(afterFirst);
-		expect(second.content[0]!.text).toContain("STALE pending=1");
-		expect(second.content[0]!.text).not.toContain("repair:");
-		expect(store.listPendingStaleEvents("mem-deploy")).toHaveLength(1);
-		store.close();
-	});
-
-	it("retries an invalid repair answer within the correction budget, then reports repair_failed and leaves every event pending", async () => {
-		const model = scriptedModel((kind) =>
-			kind === "summary" ? { text: "这不是 JSON" } : { text: "{}" },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		const result = await tools
-			.get("memory_read")!
-			.execute("call-invalid", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
-		const text = result.content[0]!.text;
-
-		expect(model.stats.summary_calls).toBe(REPAIR_MAX_CORRECTIONS + 1);
-		expect(text).toContain("repair: repair_failed");
-		expect(text).toContain("repair_invalid");
-		expect(store.readMemory("memory://vestigio/mem-deploy")?.revision).toBe(1);
-		expect(store.listPendingStaleEvents("mem-deploy")).toHaveLength(1);
-		store.close();
-	});
-
-	it("leaves the body and every event pending when the repair call is cancelled", async () => {
-		const model = scriptedModel((kind) =>
-			kind === "summary" ? { fail: "cancelled" } : { text: "{}" },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		const result = await tools
-			.get("memory_read")!
-			.execute("call-cancelled", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
-
-		expect(result.content[0]!.text).toContain("repair: repair_failed");
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-		expect(head.revision).toBe(1);
-		expect(head.medium.body).toContain("8080");
-		expect(store.listPendingStaleEvents("mem-deploy")).toHaveLength(1);
-		store.close();
-	});
-
-	it("keeps the repaired body and reports nav_pending when the nav step fails", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) =>
-			kind === "summary"
-				? { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已经同步。 [来源:${cited}]`) }) }
-				: { fail: "unavailable" },
-		);
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
-		const result = await tools
-			.get("memory_read")!
-			.execute("call-nav", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
-		const text = result.content[0]!.text;
-
-		expect(text).toContain("repair: nav_pending r1 -> r2");
-		expect(text).not.toContain("published and findable");
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-		expect(head.revision).toBe(2);
-		expect(head.state).toBe("medium_ready");
-		expect(head.nav).toBeNull();
-		expect(head.medium.body).toContain("18080");
-		expect(store.listPendingStaleEvents("mem-deploy")).toHaveLength(0);
 		store.close();
 	});
 
@@ -613,70 +458,39 @@ describe("memory_resolve publication", () => {
 		store.close();
 	});
 
-	it("publishes a stale memory the resolver repairs and leaves no pending evidence", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) => {
-			if (kind === "judge") return { text: judgeDecision({ descend: false }) };
-			if (kind === "summary") {
-				return { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已同步。 [来源:${cited}]`) }) };
-			}
-			return { text: JSON.stringify({ nav: "部署脚本的默认端口已经改为 18080。" }) };
-		});
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
-
-		const result = await tools
-			.get("memory_resolve")!
-			.execute("call-resolve-repair", { question: "部署 端口" }, undefined, undefined, ctx);
-		const text = result.content[0]!.text;
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-
-		expect(head.revision).toBe(2);
-		expect(head.state).toBe("published");
-		expect(head.nav?.source_revision).toBe(2);
-		expect(result.details.navigation_status).toBe("ready");
-		const freshness = result.details.freshness as { pending_count: number };
-		expect(freshness.pending_count).toBe(0);
-		expect(text).not.toContain("nav=pending");
-		expect(await findInStore(store, "部署 端口")).toContain("memory://vestigio/mem-deploy");
-		expect(model.stats.nav_calls).toBe(1);
-		store.close();
-	});
-
 	it("keeps the answer and reports nav_pending when the nav step returns unusable text", async () => {
-		let cited: string | null = null;
-		const model = scriptedModel((kind) => {
+		const model = scriptedModel((kind, index) => {
 			if (kind === "judge") {
-				return {
-					text: judgeDecision({
-						sufficient: true,
-						answer: "默认端口现在是 18080，部署脚本也已同步。",
-						evidence_ids: ["mem-deploy"],
-					}),
-				};
+				return index === 2
+					? {
+							text: judgeDecision({
+								sufficient: true,
+								answer: "回滚顺序是先恢复镜像，再恢复配置。",
+								evidence_ids: ["h-rollback"],
+							}),
+						}
+					: { text: judgeDecision({ descend: true }) };
 			}
 			if (kind === "summary") {
-				return { text: JSON.stringify({ body: body(`默认端口现在是 18080，部署脚本也已同步。 [来源:${cited}]`) }) };
+				return { text: JSON.stringify({ body: body("回滚顺序改为先恢复镜像，再恢复配置。 [来源:e1]") }) };
 			}
 			return { text: "这不是 JSON，也没有 nav 字段。" };
 		});
-		const { store, tools, ctx } = setup({ model: model.port });
-		await markStale(tools, ctx);
-		cited = store.listPendingStaleEvents("mem-deploy")[0]!.event_id;
+		const { store, tools, ctx } = setup({ model: model.port, history: fakeHistory(historyHit()) });
 
 		const result = await tools
 			.get("memory_resolve")!
-			.execute("call-resolve-nav-fail", { question: "部署 端口" }, undefined, undefined, ctx);
+			.execute("call-resolve-nav-fail", { question: "回滚顺序 镜像" }, undefined, undefined, ctx);
 		const text = result.content[0]!.text;
+		const uri = result.details.memory_uri as MemoryUri;
 
 		expect(result.details.status).toBe("resolved");
+		expect(result.details.persistence_status).toBe("saved");
 		expect(result.details.navigation_status).toBe("pending");
 		expect(text).toContain("nav pending: nav_not_generated");
-		expect(text).toContain("18080");
+		expect(text).toContain("回滚顺序");
 		expect(text).toContain("answer:");
-		const head = store.readMemory("memory://vestigio/mem-deploy")!;
-		expect(head.revision).toBe(2);
+		const head = store.readMemory(uri)!;
 		expect(head.state).toBe("medium_ready");
 		expect(head.nav).toBeNull();
 		expect(countSummaryJobs(store.database())).toBe(1);

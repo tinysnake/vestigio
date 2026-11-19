@@ -23,23 +23,7 @@ describe("readConfig", () => {
 		expect(config.min_score).toBe(VESTIGIO_DEFAULTS.min_score);
 		expect(config.pool_capacity).toBe(VESTIGIO_DEFAULTS.pool_capacity);
 		expect(config.timeout_ms).toBe(VESTIGIO_DEFAULTS.timeout_ms);
-		expect(config.repair_mode).toBe("inline");
 		expect(config.decision_log).toBeNull();
-	});
-
-	it("accepts the background repair mode", () => {
-		const config = readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_REPAIR_MODE: "background" });
-		expect(config.repair_mode).toBe("background");
-	});
-
-	it("tolerates surrounding whitespace on the repair mode", () => {
-		const config = readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_REPAIR_MODE: "  background  " });
-		expect(config.repair_mode).toBe("background");
-	});
-
-	it("falls back to inline for a garbage repair mode", () => {
-		const config = readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_REPAIR_MODE: "maybe" });
-		expect(config.repair_mode).toBe("inline");
 	});
 
 	it("honours overrides", () => {

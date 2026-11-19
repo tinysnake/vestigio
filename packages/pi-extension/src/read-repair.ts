@@ -6,13 +6,13 @@ import type { MemoryStore } from "@vestigio/core/storage";
 import { errorText, type VestigioState } from "./state.js";
 
 /**
- * Hard ceiling for the whole read-triggered repair, both model calls included.
- * Measured on the live gateway: a repair completion took 20-30 s typically and
- * was still generating at 90 s on one run, which aborted the call and lost the
- * repair. 150 s covers the observed tail; above that the read reports
- * `repair_failed` rather than blocking the turn forever.
+ * Hard ceiling for one repair attempt, both model calls included. Measured on
+ * the live gateway: a repair completion took 20-30 s typically and was still
+ * generating at 90 s on one run, which aborted the call and lost the repair.
+ * 150 s covers the observed tail; above that the attempt reports
+ * `deadline_exceeded` rather than blocking the pass forever.
  */
-export const READ_REPAIR_DEADLINE_MS = 150_000;
+export const REPAIR_DEADLINE_MS = 150_000;
 
 export type ReadRepairStatus = "repaired" | "nav_pending" | "repair_failed";
 
@@ -39,24 +39,10 @@ export type ReadRepairInput = {
 };
 
 /**
- * Returns null when no attempt should be made (already attempted this session,
- * or the read carries no pending event). A returned report is always worth
- * telling the agent about: it either landed, landed without its nav, or wrote
- * nothing.
- */
-export async function repairOnRead(input: ReadRepairInput): Promise<ReadRepairReport | null> {
-  const { state, freshness } = input;
-  const memoryId = freshness.memory_id;
-  const pending = freshness.pending.filter((event) => event.event_id.length > 0);
-  if (pending.length === 0 || state.repairAttemptedFor(memoryId)) return null;
-  state.noteRepairAttempt(memoryId);
-  return repairStaleMemoryNow(input);
-}
-
-/**
- * The unguarded repair: one bounded attempt for this memory, whatever the
- * caller's bookkeeping says. `deadline_ms` overrides the default ceiling, so a
- * background pass can hand each memory a slice of its own total budget.
+ * One bounded attempt to fold a stale memory's pending events into the same
+ * summary and publish the new head. The `agent_end` background pass owns
+ * retries and per-memory budgeting; this function makes exactly one attempt.
+ * `deadline_ms` overrides the default ceiling (`REPAIR_DEADLINE_MS`).
  */
 export async function repairStaleMemoryNow(
   input: ReadRepairInput & { deadline_ms?: number },
@@ -76,7 +62,7 @@ export async function repairStaleMemoryNow(
     };
   }
 
-  const deadline = AbortSignal.timeout(input.deadline_ms ?? READ_REPAIR_DEADLINE_MS);
+  const deadline = AbortSignal.timeout(input.deadline_ms ?? REPAIR_DEADLINE_MS);
   const signal = input.signal === undefined ? deadline : AbortSignal.any([deadline, input.signal]);
   const failed = (reason: string): ReadRepairReport => ({
     status: "repair_failed",
@@ -156,7 +142,7 @@ export type PublishRevisionOutcome = {
  * Run the memory's own queued nav job and verify the head is searchable.
  *
  * One attempt, scoped to `memoryId`/`revision`, bounded by
- * `READ_REPAIR_DEADLINE_MS`. A failed nav is not an error the caller hides:
+ * `REPAIR_DEADLINE_MS`. A failed nav is not an error the caller hides:
  * the body is saved, the job stays queued, and search cannot find the memory
  * until the nav is bound to this revision. Callers that just wrote the memory
  * use the returned reason instead of claiming it is findable.
@@ -177,7 +163,7 @@ export async function publishRevision(
       memory_id: memoryId,
       revision,
       ...(signal === undefined ? {} : { signal }),
-      deadline_ms: READ_REPAIR_DEADLINE_MS,
+      deadline_ms: REPAIR_DEADLINE_MS,
     });
     const result = outcome.results.find((entry) => entry.memory_id === memoryId && entry.revision === revision);
     if (result?.state !== "done") {
@@ -216,9 +202,9 @@ function readHead(store: MemoryStore, uri: MemoryUri): { state: string; revision
 }
 
 /**
- * The repair prompt's "question": what the read cannot fix by itself. The
- * pending events are already in the evidence list with their excerpts, so this
- * only has to name the task.
+ * The repair prompt's "question": what the change is that the summary has not
+ * absorbed yet. The pending events are already in the evidence list with their
+ * excerpts, so this only has to name the task.
  */
 function describePending(pending: readonly StaleEventSummary[]): string {
   return `This memory was read while ${pending.length} later change(s) were still unabsorbed; fold them into the same summary.`;

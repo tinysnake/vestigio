@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import vestigio, { STALE_MAINTENANCE_INSTRUCTIONS, staleMaintenanceInstructions } from "../src/extension.js";
+import vestigio, { STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -60,23 +60,10 @@ describe("vestigio extension", () => {
 		expect(result.systemPrompt).toContain(STALE_MAINTENANCE_INSTRUCTIONS);
 	});
 
-	it("swaps only the stale-read sentence in background mode", () => {
-		const inline = staleMaintenanceInstructions("inline");
-		const background = staleMaintenanceInstructions("background");
-		expect(inline).toBe(STALE_MAINTENANCE_INSTRUCTIONS);
-		expect(background).not.toBe(inline);
-		expect(background).toContain("It is repaired automatically when this session ends");
-		expect(background).not.toContain("call memory_read on it first");
-		expect(background.split("\n")).toHaveLength(inline.split("\n").length);
-	});
-
-	it("uses the background instruction when the mode is background", () => {
-		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-bg-"));
-		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-		const { pi, handlers } = stubPi();
-		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite"), VESTIGIO_REPAIR_MODE: "background" }, () => vestigio(pi as never));
-		const result = handlers.get("before_agent_start")!({ systemPrompt: "HOST PROMPT" }, {}) as { systemPrompt: string };
-		expect(result.systemPrompt).toContain("It is repaired automatically when this session ends");
+	it("states the one repair path and the answer rule", () => {
+		expect(STALE_MAINTENANCE_INSTRUCTIONS).toContain("You cannot rewrite a stored memory");
+		expect(STALE_MAINTENANCE_INSTRUCTIONS).toContain("repaired at the end of the session");
+		expect(STALE_MAINTENANCE_INSTRUCTIONS).toContain("never repeat the stale value as current");
 	});
 
 	it("is inert without a store path", () => {

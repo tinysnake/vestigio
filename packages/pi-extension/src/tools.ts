@@ -26,7 +26,7 @@ import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/reso
 import type { MemoryStore } from "@vestigio/core/storage";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
-import { publishRevision, repairOnRead, type ReadRepairReport } from "./read-repair.js";
+import { publishRevision } from "./read-repair.js";
 import { stripInjectedNote } from "./stale-detector.js";
 import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
 
@@ -198,7 +198,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				signal,
 				session_resolves_used: usedBefore,
 				continuation: state.lastContinuation,
-				repair: state.config.repair_mode === "background" ? "defer" : "inline",
 			});
 			state.noteResolveUsed();
 			state.lastContinuation = outcome.continuation;
@@ -285,7 +284,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		description:
 			"Read the full long (medium) summary of one memory by URI. Use the URI from memory_search or from a hotspot note.",
 		parameters: readParameters,
-		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
 			if (store === null) {
 				return text(`memory_read unavailable: ${state.storeFailureReason ?? "no store configured"}`);
@@ -304,12 +303,8 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const at = nowIso();
 			const projectId = state.projectId(ctx.cwd);
 			let outcome = readMemoryResult({ store, uri, revision: params.revision });
-			// A read is the repair trigger: the agent already has this memory in
-			// front of it, so folding the pending change in here is the one place
-			// repair is guaranteed to be reached. Pinned-revision reads skip it.
-			// In `background` mode the read touches nothing; the pending events are
-			// folded in by the `agent_end` pass.
-			let repair: ReadRepairReport | null = null;
+			// A read never repairs: the stored body is delivered as-is and the
+			// pending events are folded in by the `agent_end` pass.
 			let deferredPending: number | null = null;
 			if (
 				params.revision === undefined &&
@@ -317,33 +312,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				outcome.result.freshness !== undefined &&
 				outcome.result.freshness.is_stale
 			) {
-				if (state.config.repair_mode === "background") {
-					deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
-				} else {
-					try {
-						repair = await repairOnRead({
-							state,
-							store,
-							uri,
-							freshness: outcome.result.freshness,
-							project_id: projectId,
-							at,
-							signal,
-						});
-					} catch (error) {
-						state.writeDecision({
-							ts: at,
-							kind: "error",
-							status: "read_repair_failed",
-							session_id: state.currentSessionId,
-							project_id: projectId,
-							error: errorText(error),
-						});
-					}
-					if (repair !== null && repair.revision !== null) {
-						outcome = readMemoryResult({ store, uri });
-					}
-				}
+				deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
 			}
 			state.noteMemorySeen(ids.memoryId);
 			let recorded: { recorded: boolean; membership: boolean } | null = null;
@@ -377,10 +346,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: `tool:${toolCallId}`,
-				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false} repair=${repair?.status ?? "none"}`,
+				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false}`,
 			});
 			return {
-				content: [{ type: "text", text: renderRead(params.uri, outcome, repair, deferredPending) }],
+				content: [{ type: "text", text: renderRead(params.uri, outcome, deferredPending) }],
 				details: {
 					status: outcome.result.status,
 					memory_uri: outcome.memory_uri,
@@ -391,7 +360,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 					next_action: outcome.result.next_action,
 					access_recorded: recorded?.recorded ?? false,
 					freshness: outcome.result.freshness ?? null,
-					repair,
 					measured: outcome.measured,
 				},
 			};
@@ -439,24 +407,6 @@ function sourceContext(state: VestigioState, ctx: ExtensionContext) {
 		session_file: sessionFileOf(ctx.sessionManager),
 		project_id: state.projectId(ctx.cwd),
 	};
-}
-
-/**
- * The repair line is the difference between "the body you are reading is the
- * current one" and "you are still reading the stale body". Never soften a
- * `nav_pending` into a success: until the nav is bound to the new revision,
- * search cannot return this memory.
- */
-function renderRepair(repair: ReadRepairReport): string {
-	const acknowledged = repair.acknowledged_event_ids.length;
-	switch (repair.status) {
-		case "repaired":
-			return `repair: repaired r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); published and findable)`;
-		case "nav_pending":
-			return `repair: nav_pending r${repair.from_revision} -> r${repair.revision ?? "?"} (acknowledged ${acknowledged} pending event(s); body saved, nav job queued, not findable by search yet${repair.reason === null ? "" : `: ${repair.reason}`})`;
-		case "repair_failed":
-			return `repair: repair_failed (${repair.reason ?? "unknown"}); the stored body and every pending event are unchanged`;
-	}
 }
 
 function renderPendingEvent(event: StaleEventSummary): string[] {
@@ -823,7 +773,6 @@ export function renderResolve(
 export function renderRead(
 	uri: string,
 	outcome: MemoryReadOutcome,
-	repair: ReadRepairReport | null = null,
 	deferredPending: number | null = null,
 ): string {
 	const result: RetrievalResult = outcome.result;
@@ -838,7 +787,6 @@ export function renderRead(
 		`memory_read(${uri}) -> resolved | revision=${result.revision ?? "?"}`,
 		`title: ${result.cards[0]?.title ?? "(untitled)"}`,
 	];
-	if (repair !== null) lines.push(renderRepair(repair));
 	if (deferredPending !== null) {
 		lines.push(`repair: deferred (repaired when this session ends; ${deferredPending} pending event(s))`);
 	}
