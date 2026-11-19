@@ -44,9 +44,10 @@ baseline diff is never noise.
 
 ## Dataset
 
-`cases.jsonl` has one case per line. `catalog.mjs` holds the fixed 7-memory,
-2-project catalog, `seedStore`, and `HISTORY_SCENARIOS` + `scriptedHistoryPort`
-for the history surface. Changing the catalog means bumping `CATALOG_VERSION`
+`cases.jsonl` has one case per line. `catalog.mjs` holds the fixed 8-memory,
+2-project catalog, `seedStore` (which also records one pending stale event on
+`mem-stale-ttl`), and `HISTORY_SCENARIOS` + `scriptedHistoryPort` for the
+history surface. Changing the catalog means bumping `CATALOG_VERSION`
 and regenerating a baseline.
 
 Case fields:
@@ -60,12 +61,13 @@ Case fields:
 | `expected_memory_ids` | ids that must appear; empty means "nothing specific, only the forbidden set matters" |
 | `forbidden_memory_ids` | ids that must not appear; `["*"]` forbids any surfaced id |
 | `expected_source_refs` | `{session_id, message_id}` history excerpts that must surface |
+| `expected_stale_ids` | surfaced ids whose `freshness.is_stale` must be true |
 | `forbidden_source_refs` | excerpts that must not surface (used to prove foreign-project filtering) |
 | `expected_status` | optional `LayeredSearchStatus` (`partial`, `conflicted`, `not_found`, ...) |
 | `include_history` | enable the history layer for this case |
 | `history_scenario` | key into `HISTORY_SCENARIOS`; defaults to `none` |
 | `rank_ignored` | presence only, no rank credit or penalty (conflict cases, where order carries no information) |
-| `category` | `explicit-recall`, `implicit-recall`, `negative`, `cross-project`, `conflict`, `source-gap` |
+| `category` | `explicit-recall`, `implicit-recall`, `negative`, `cross-project`, `conflict`, `source-gap`, `stale` |
 | `note` | why the label is what it is |
 
 ## Annotation rules
@@ -94,6 +96,9 @@ The dataset is the ground truth, so the rules matter more than the runner.
    ranking regression.
 8. Record in `note` the mechanism, not the verdict: which token or reference
    made the case pass or fail.
+9. `expected_stale_ids` claims only that the pipeline marked the memory stale
+   when it surfaced it. It cannot claim the agent respected the flag, which is
+   why a stale case never replaces a usage judgment.
 
 ## Scoring
 
@@ -177,7 +182,9 @@ Matches by `case_id`, lists regressions (`hit`/`clean` → `miss`/`false_positiv
 - Latency and token cost: this harness makes no model call and does no index
   work, so it reports no timing. Both belong to a harness that runs the real
   pipeline.
-- Stale memory and freshness: no case exercises the freshness path yet.
+- Whether stale memory is *used*: `expected_stale_ids` only proves the pending
+  event reached the surface (the card and the ⚠ hint). Misuse Rate needs the
+  agent's answer, so it is out of scope here.
 - Multi-turn dedup and concurrency: each inject case gets a fresh
   `InjectionLedger` and each run a fresh store, with fixed seeded activity, so
   recency stays constant.

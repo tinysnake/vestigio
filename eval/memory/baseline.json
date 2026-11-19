@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T15:32:53.133Z",
-  "commit": "b0909f5",
-  "catalog_version": 2,
-  "dataset_sha256": "e59e020fff020ea4a23d4294ca04339c328b19cd4a6584ded9b5ada0f1a07895",
+  "generated_at": "2026-11-19T15:36:10.109Z",
+  "commit": "daf102b",
+  "catalog_version": 3,
+  "dataset_sha256": "20a110a4a0cfb31e1f5c53c0d89384acb7a2aa008bebaa789989304c91318833",
   "seed": {
     "store": "temporary",
-    "memories": 7
+    "memories": 8
   },
   "summary": {
-    "cases": 17,
-    "hit": 10,
+    "cases": 18,
+    "hit": 11,
     "clean": 5,
     "miss": 0,
     "false_positive": 2,
@@ -21,7 +21,7 @@
     "recall_at_3": 1,
     "recall_at_5": 1,
     "inject_hit_rate": 1,
-    "false_positive_rate": 0.11764705882352941,
+    "false_positive_rate": 0.1111111111111111,
     "source_gap_rescue_rate": 1
   },
   "cases": [
@@ -40,6 +40,8 @@
         "mem-port-rule-a"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "explicit-recall",
       "note": "用户直接提到过去的部署端口结论，热点应命中本项目记忆",
       "error": null
@@ -57,6 +59,8 @@
         "mem-migration"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "implicit-recall",
       "note": "当前任务依赖过去的回滚约定，没有点名记忆标题",
       "error": null
@@ -74,6 +78,8 @@
         "mem-cache"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "implicit-recall",
       "note": "过去定过的缓存写路径约定",
       "error": null
@@ -89,6 +95,8 @@
       "forbidden_present": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "纯计算，不依赖任何历史证据",
       "error": null
@@ -104,6 +112,8 @@
       "forbidden_present": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "归档记忆不得进入默认注入路径",
       "error": null
@@ -121,6 +131,8 @@
         "mem-deploy-port"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "与部署记忆只共享“配置”一个二元组，测注入精度",
       "error": null
@@ -140,6 +152,8 @@
         "mem-port-rule-a"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "两条同名端口约定只共享「端口」，与部署脚本默认端口无关：并列同名记忆不应自动注入",
       "error": null
@@ -157,6 +171,8 @@
         "mem-other-port"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "cross-project",
       "note": "同名热点短语只能注入当前项目的记忆",
       "error": null
@@ -174,6 +190,8 @@
         "mem-deploy-port"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "explicit-recall",
       "note": "Active 层应直接命中",
       "error": null
@@ -191,6 +209,8 @@
         "mem-migration"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "implicit-recall",
       "note": "查询词与标题不完全一致",
       "error": null
@@ -208,6 +228,8 @@
         "mem-cache"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "implicit-recall",
       "note": "正文事实出现在查询里",
       "error": null
@@ -223,6 +245,8 @@
       "forbidden_present": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "默认排序不得返回归档记忆",
       "error": null
@@ -240,6 +264,8 @@
         "mem-other-port"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "cross-project",
       "note": "项目作用域过滤",
       "error": null
@@ -258,6 +284,8 @@
         "mem-port-rule-a"
       ],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "conflict",
       "note": "两条同主题记忆应同时出现并判为冲突；并列顺序无意义，故不参与排名统计",
       "error": null
@@ -275,6 +303,8 @@
       "surfaced_refs": [
         "eval-session-history-gray/eval-message-history-gray-3"
       ],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "source-gap",
       "note": "记忆库没有该结论，原始历史有：应记为 Source Gap 并由历史层补位",
       "error": null
@@ -290,6 +320,8 @@
       "forbidden_present": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "历史层返回别的项目的命中时必须丢弃，不能当成证据",
       "error": null
@@ -305,8 +337,31 @@
       "forbidden_present": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
       "category": "negative",
       "note": "记忆库和历史都没有，应是 not_found 而不是误命中",
+      "error": null
+    },
+    {
+      "case_id": "inject-stale-flagged",
+      "surface": "inject",
+      "status": "hit",
+      "retrieval_status": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "forbidden_present": false,
+      "surfaced_ids": [
+        "mem-stale-ttl"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [
+        "mem-stale-ttl"
+      ],
+      "expected_stale_present": true,
+      "category": "stale",
+      "note": "待处理的过期事件必须随注入一起到达 Agent，否则过期判断无从谈起",
       "error": null
     }
   ]

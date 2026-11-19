@@ -65,7 +65,14 @@ async function runSurface(item) {
 			host_command: false,
 			ledger: new InjectionLedger(),
 		});
-		return { ids: plan.injected.map((match) => match.memory_id), refs: [], status: null };
+		return {
+			ids: plan.injected.map((match) => match.memory_id),
+			refs: [],
+			status: null,
+			stale: plan.injected
+				.filter((match) => match.freshness.is_stale)
+				.map((match) => match.memory_id),
+		};
 	}
 	if (item.surface === "search") {
 		const includeHistory = item.include_history === true;
@@ -81,6 +88,9 @@ async function runSurface(item) {
 			ids: outcome.result.cards.map((card) => card.memory_id),
 			refs: outcome.history.map((excerpt) => refKey(excerpt.source_ref)),
 			status: outcome.result.status,
+			stale: outcome.result.cards
+				.filter((card) => card.freshness?.is_stale === true)
+				.map((card) => card.memory_id),
 		};
 	}
 	throw new Error(`unknown surface: ${String(item.surface)}`);
@@ -90,13 +100,15 @@ function score(item, surfaced, error) {
 	const expected = item.expected_memory_ids ?? [];
 	const forbidden = item.forbidden_memory_ids ?? [];
 	const expectedRefs = (item.expected_source_refs ?? []).map(refKey);
+	const expectedStale = item.expected_stale_ids ?? [];
 	const forbiddenRefs = (item.forbidden_source_refs ?? []).map(refKey);
 	const first = surfaced.ids.findIndex((id) => expected.includes(id));
 	const forbiddenPresent =
 		forbidden.some((id) => (id === "*" ? surfaced.ids.length > 0 : surfaced.ids.includes(id))) ||
 		forbiddenRefs.some((ref) => surfaced.refs.includes(ref));
 	const refPresent = expectedRefs.some((ref) => surfaced.refs.includes(ref));
-	const expects = expected.length + expectedRefs.length > 0;
+	const expects = expected.length + expectedRefs.length + expectedStale.length > 0;
+	const staleOk = expectedStale.every((id) => surfaced.stale.includes(id));
 	const idsOk = expected.length === 0 || first !== -1;
 	const refsOk = expectedRefs.length === 0 || refPresent;
 	const statusMismatch = item.expected_status != null && item.expected_status !== surfaced.status;
@@ -105,7 +117,7 @@ function score(item, surfaced, error) {
 	else if (forbiddenPresent) status = "false_positive";
 	else if (statusMismatch) status = "miss";
 	else if (!expects) status = "clean";
-	else if (idsOk && refsOk) status = "hit";
+	else if (idsOk && refsOk && staleOk) status = "hit";
 	else status = "miss";
 	return {
 		case_id: item.id,
@@ -118,6 +130,8 @@ function score(item, surfaced, error) {
 		forbidden_present: forbiddenPresent,
 		surfaced_ids: surfaced.ids,
 		surfaced_refs: surfaced.refs,
+		surfaced_stale: surfaced.stale,
+		expected_stale_present: staleOk,
 		category: item.category,
 		note: item.note ?? "",
 		error,
@@ -126,7 +140,7 @@ function score(item, surfaced, error) {
 
 const results = [];
 for (const item of cases) {
-	let surfaced = { ids: [], refs: [], status: null };
+	let surfaced = { ids: [], refs: [], status: null, stale: [] };
 	let error = null;
 	try {
 		surfaced = await runSurface(item);

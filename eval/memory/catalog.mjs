@@ -1,14 +1,15 @@
 /**
  * Fixed memory catalog for the offline memory evaluation.
  *
- * One store, two projects, five memories. The case file refers to these
+ * One store, two projects, eight memories (one of them carries a pending
+ * stale event, so freshness is observable). The case file refers to these
  * memory ids, so a change here changes the dataset. Bump `CATALOG_VERSION`
  * whenever the catalog changes, and regenerate the baseline.
  */
 
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 
-export const CATALOG_VERSION = 2;
+export const CATALOG_VERSION = 3;
 export const PROJECT = "p-memory-eval";
 export const OTHER_PROJECT = "p-memory-eval-other";
 export const AT = "2026-11-17T12:00:00.000Z";
@@ -109,6 +110,14 @@ export const MEMORIES = [	memory({
 		prefix: "端口约定按 8080 开放在内网，对外只走网关，不再单独暴露。",
 	}),
 	memory({
+		id: "mem-stale-ttl",
+		project: PROJECT,
+		title: "会话保活时长",
+		keywords: ["会话超时", "空闲断开"],
+		nav: "会话保活时长，后来改短，仅作历史参考。",
+		prefix: "曾经约定空闲会话 30 分钟后自动断开，后来改成了 15 分钟。",
+	}),
+	memory({
 		id: "mem-port-rule-b",
 		project: PROJECT,
 		title: "端口约定（冲突）",
@@ -185,6 +194,17 @@ export function seedStore(store) {
 			recent_access_weight: 0,
 		});
 	}
+	// A pending stale event makes mem-stale-ttl report is_stale, which is what
+	// the freshness assertion in cases.jsonl reads.
+	store.markStale({
+		memory_id: "mem-stale-ttl",
+		observed_revision: 1,
+		reason: "later evidence: 空闲超时从 30 分钟改成 15 分钟",
+		excerpt: "2026-11-16 的配置评审把空闲会话超时改成 15 分钟。",
+		sources: [source("stale-ttl", PROJECT, 6)],
+		producer: "detector",
+		at: AT,
+	});
 	for (const projectId of [PROJECT, OTHER_PROJECT]) {
 		store.upsertProjectActivity({ project_id: projectId, activity_seq: 10, last_input_at: AT });
 	}
