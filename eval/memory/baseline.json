@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T16:19:46.410Z",
-  "commit": "2cb8419",
-  "catalog_version": 3,
-  "dataset_sha256": "712dbdf4b70d892122ab97d5b8e3b417a4750450f31d10b8cd9c76bc10b0cbb5",
+  "generated_at": "2026-11-19T16:41:11.491Z",
+  "commit": "74c1030",
+  "catalog_version": 4,
+  "dataset_sha256": "ad1013cf528f5c96ef7a41e892bb8f79e0fcdd1e33e937f23be8d83d2ae45ae7",
   "seed": {
     "store": "temporary",
-    "memories": 8
+    "memories": 20
   },
   "summary": {
     "cases": 18,
@@ -31,6 +31,7 @@
     {
       "case_id": "inject-explicit-deploy",
       "surface": "inject",
+      "text": "更新部署脚本的默认端口",
       "status": "hit",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -38,6 +39,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": true,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-deploy-port"
+      ],
       "has_forbidden": true,
       "candidate_ids": [
         "mem-deploy-port"
@@ -56,6 +62,7 @@
     {
       "case_id": "inject-implicit-migration",
       "surface": "inject",
+      "text": "迁移失败后先做什么",
       "status": "hit",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -63,6 +70,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": true,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-migration"
+      ],
       "has_forbidden": true,
       "candidate_ids": [
         "mem-migration"
@@ -81,6 +93,7 @@
     {
       "case_id": "inject-implicit-cache",
       "surface": "inject",
+      "text": "缓存失效策略要调整",
       "status": "hit",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -88,6 +101,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": true,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-cache"
+      ],
       "has_forbidden": true,
       "candidate_ids": [
         "mem-cache"
@@ -106,6 +124,7 @@
     {
       "case_id": "inject-negative-unrelated",
       "surface": "inject",
+      "text": "把 12 乘以 7 算一下",
       "status": "clean",
       "retrieval_status": "not_injected",
       "injection_reason": "no_match",
@@ -113,6 +132,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -127,6 +149,7 @@
     {
       "case_id": "inject-negative-archived",
       "surface": "inject",
+      "text": "旧版格式",
       "status": "clean",
       "retrieval_status": "not_injected",
       "injection_reason": "no_match",
@@ -134,6 +157,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -148,6 +174,7 @@
     {
       "case_id": "inject-negative-near-miss",
       "surface": "inject",
+      "text": "旧配置的字段名",
       "status": "clean",
       "retrieval_status": "not_injected",
       "injection_reason": "no_match",
@@ -155,6 +182,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -169,6 +199,7 @@
     {
       "case_id": "inject-near-miss-port-rule",
       "surface": "inject",
+      "text": "部署脚本默认端口",
       "status": "clean",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -176,6 +207,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [
         "mem-deploy-port"
@@ -194,6 +228,7 @@
     {
       "case_id": "inject-cross-project-other",
       "surface": "inject",
+      "text": "更新部署脚本的默认端口",
       "status": "hit",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -201,6 +236,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": true,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-other-port"
+      ],
       "has_forbidden": true,
       "candidate_ids": [
         "mem-other-port"
@@ -219,6 +259,7 @@
     {
       "case_id": "search-explicit-deploy",
       "surface": "search",
+      "text": "部署脚本默认端口",
       "status": "hit",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -226,6 +267,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-deploy-port"
+      ],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -242,6 +288,7 @@
     {
       "case_id": "search-implicit-migration",
       "surface": "search",
+      "text": "迁移失败",
       "status": "hit",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -249,6 +296,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-migration"
+      ],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -265,6 +317,7 @@
     {
       "case_id": "search-cache",
       "surface": "search",
+      "text": "读路径回填",
       "status": "hit",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -272,6 +325,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-cache"
+      ],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -288,6 +346,7 @@
     {
       "case_id": "search-archived-not-default",
       "surface": "search",
+      "text": "旧版格式",
       "status": "clean",
       "retrieval_status": "not_found",
       "injection_reason": null,
@@ -295,6 +354,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -309,6 +371,7 @@
     {
       "case_id": "search-cross-project-other",
       "surface": "search",
+      "text": "部署端口 9090",
       "status": "hit",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -316,6 +379,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-other-port"
+      ],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -332,6 +400,7 @@
     {
       "case_id": "search-conflict-port-rule",
       "surface": "search",
+      "text": "端口约定",
       "status": "hit",
       "retrieval_status": "conflicted",
       "injection_reason": null,
@@ -339,6 +408,12 @@
       "rank_ignored": true,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-port-rule-a",
+        "mem-port-rule-b"
+      ],
       "has_forbidden": false,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -356,6 +431,7 @@
     {
       "case_id": "history-rescue-gray-release",
       "surface": "search",
+      "text": "灰度发布怎么做",
       "status": "hit",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -363,6 +439,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": false,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -379,6 +458,7 @@
     {
       "case_id": "history-foreign-dropped",
       "surface": "search",
+      "text": "另一项目的部署端口",
       "status": "clean",
       "retrieval_status": "partial",
       "injection_reason": null,
@@ -386,6 +466,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": true,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -400,6 +483,7 @@
     {
       "case_id": "history-nothing-anywhere",
       "surface": "search",
+      "text": "从没记录过的问题",
       "status": "clean",
       "retrieval_status": "not_found",
       "injection_reason": null,
@@ -407,6 +491,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
       "has_forbidden": false,
       "candidate_ids": [],
       "candidate_leak": false,
@@ -421,6 +508,7 @@
     {
       "case_id": "inject-stale-flagged",
       "surface": "inject",
+      "text": "保活时长",
       "status": "hit",
       "retrieval_status": "injected",
       "injection_reason": null,
@@ -428,6 +516,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "expected_only": true,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-stale-ttl"
+      ],
       "has_forbidden": false,
       "candidate_ids": [
         "mem-stale-ttl"

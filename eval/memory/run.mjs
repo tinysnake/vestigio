@@ -111,6 +111,9 @@ function score(item, surfaced, error) {
 		forbidden.some((id) => (id === "*" ? ids.length > 0 : ids.includes(id)));
 	const forbiddenPresent = leaks(surfaced.ids) || forbiddenRefs.some((ref) => surfaced.refs.includes(ref));
 	const candidateLeak = leaks(surfaced.candidates);
+	// expected_only turns "these and nothing else" into a claim, so a narrow
+	// question cannot quietly collect three neighbours and still score a hit.
+	const extraIds = item.expected_only === true ? surfaced.ids.filter((id) => !expected.includes(id)) : [];
 	const refPresent = expectedRefs.some((ref) => surfaced.refs.includes(ref));
 	const expects = expected.length + expectedRefs.length + expectedStale.length > 0;
 	const staleOk = expectedStale.every((id) => surfaced.stale.includes(id));
@@ -119,7 +122,7 @@ function score(item, surfaced, error) {
 	const statusMismatch = item.expected_status != null && item.expected_status !== surfaced.status;
 	let status;
 	if (error) status = "error";
-	else if (forbiddenPresent) status = "false_positive";
+	else if (forbiddenPresent || extraIds.length > 0) status = "false_positive";
 	else if (statusMismatch) status = "miss";
 	else if (!expects) status = "clean";
 	else if (idsOk && refsOk && staleOk) status = "hit";
@@ -135,6 +138,8 @@ function score(item, surfaced, error) {
 		rank_ignored: item.rank_ignored === true,
 		expected_present: first !== -1,
 		forbidden_present: forbiddenPresent,
+		expected_only: item.expected_only === true,
+		extra_ids: extraIds,
 		expected_ids: expected,
 		has_forbidden: forbidden.length > 0 || forbiddenRefs.length > 0,
 		candidate_ids: surfaced.candidates,

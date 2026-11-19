@@ -67,6 +67,7 @@ Case fields:
 | `include_history` | enable the history layer for this case |
 | `history_scenario` | key into `HISTORY_SCENARIOS`; defaults to `none` |
 | `rank_ignored` | presence only, no rank credit or penalty (conflict cases, where order carries no information) |
+| `expected_only` | assert "these and nothing else": any other injected id scores `false_positive` and is listed in `extra_ids` |
 | `category` | `explicit-recall`, `implicit-recall`, `negative`, `cross-project`, `conflict`, `source-gap`, `stale` |
 | `note` | why the label is what it is |
 
@@ -94,9 +95,12 @@ The dataset is the ground truth, so the rules matter more than the runner.
 7. `rank_ignored` only for cases whose surfaced set is unordered by nature
    (two memories claiming the same subject). Never use it to hide a real
    ranking regression.
-8. Record in `note` the mechanism, not the verdict: which token or reference
+8. `expected_only` when the question is narrow enough that a neighbour appearing
+   is itself the defect (a specific port, one migration step). Do not set it
+   where a human would welcome related context.
+9. Record in `note` the mechanism, not the verdict: which token or reference
    made the case pass or fail.
-9. `expected_stale_ids` claims only that the pipeline marked the memory stale
+10. `expected_stale_ids` claims only that the pipeline marked the memory stale
    when it surfaced it. It cannot claim the agent respected the flag, which is
    why a stale case never replaces a usage judgment.
 
@@ -171,7 +175,7 @@ human moves it into `cases.jsonl` and fixes the label, so re-running the draft
 cannot quietly rewrite the dataset — and the drafts are never used as labels.
 
 The catalog, not the model, is what limits batch size: six candidates per
-memory means eight memories cap a batch near fifty. Growing to the proposal's
+memory means twenty memories cap a batch near one hundred and twenty. Growing to the proposal's
 100–200 rows means adding memories first.
 
 ## Usage evaluation
@@ -208,7 +212,7 @@ Two things to keep in mind before trusting a number:
 `experiments/nl-cases.jsonl` is the same dataset with the six card queries phrased
 as natural questions. It exists to show why the matcher is conjunctive: under the
 production `AND` mode five of six miss, and under `OR` recall returns while six of
-the eight memories enter the same result list.
+the twenty memories enter the same result list.
 
 The two false-positive rates share one denominator on purpose. For inject cases
 the pool can admit noise that the budget then drops, so `candidate` (from

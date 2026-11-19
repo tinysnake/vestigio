@@ -1,7 +1,7 @@
 /**
  * Fixed memory catalog for the offline memory evaluation.
  *
- * One store, two projects, eight memories (one of them carries a pending
+ * One store, two projects, twenty memories (one of them carries a pending
  * stale event, so freshness is observable). The case file refers to these
  * memory ids, so a change here changes the dataset. Bump `CATALOG_VERSION`
  * whenever the catalog changes, and regenerate the baseline.
@@ -9,7 +9,7 @@
 
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 
-export const CATALOG_VERSION = 3;
+export const CATALOG_VERSION = 4;
 export const PROJECT = "p-memory-eval";
 export const OTHER_PROJECT = "p-memory-eval-other";
 export const AT = "2026-11-17T12:00:00.000Z";
@@ -124,6 +124,102 @@ export const MEMORIES = [	memory({
 		keywords: ["端口约定", "port-rule"],
 		nav: "与另一条端口约定同名，两条并列时应先澄清。",
 		prefix: "端口约定改成 18080，旧的 8080 只保留一周用于回滚。",
+	}),
+	memory({
+		id: "mem-build-cache",
+		project: PROJECT,
+		title: "构建产物缓存",
+		keywords: ["构建缓存", "build-cache"],
+		nav: "构建产物缓存的位置与命中条件，改构建前值得读取。",
+		prefix: "构建产物放在 .cache/build，命中条件是 lockfile 与编译参数都不变。",
+	}),
+	memory({
+		id: "mem-flaky-test",
+		project: PROJECT,
+		title: "偶发失败的测试",
+		keywords: ["偶发失败", "flaky"],
+		nav: "已知偶发失败的测试清单与重跑方式。",
+		prefix: "collector 的时序测试偶发失败，重跑单文件即可，不要整体重跑。",
+	}),
+	memory({
+		id: "mem-auth-token",
+		project: PROJECT,
+		title: "访问令牌刷新",
+		keywords: ["令牌刷新", "token-refresh"],
+		nav: "访问令牌刷新流程与过期处理。",
+		prefix: "访问令牌过期前五分钟刷新，失败时保留旧令牌一次重试。",
+	}),
+	memory({
+		id: "mem-log-retention",
+		project: PROJECT,
+		title: "日志保留周期",
+		keywords: ["日志保留", "log-retention"],
+		nav: "日志保留周期与清理任务的时间点。",
+		prefix: "应用日志保留 14 天，审计日志保留 180 天，清理任务每天凌晨三点跑。",
+	}),
+	memory({
+		id: "mem-feature-flag",
+		project: PROJECT,
+		title: "灰度开关",
+		keywords: ["灰度开关", "feature-flag"],
+		nav: "灰度开关的默认值与关闭顺序。",
+		prefix: "灰度开关默认关闭，关闭顺序是先摘流量再改配置。",
+	}),
+	memory({
+		id: "mem-api-version",
+		project: PROJECT,
+		title: "接口版本策略",
+		keywords: ["接口版本", "api-version"],
+		nav: "接口版本兼容策略与弃用窗口。",
+		prefix: "旧接口版本保留两个发布周期，弃用前必须先在响应头里标记。",
+	}),
+	memory({
+		id: "mem-conn-pool",
+		project: PROJECT,
+		title: "连接池参数",
+		keywords: ["连接池", "pool-size"],
+		nav: "连接池大小与超时参数。",
+		prefix: "连接池上限 20，空闲超时 30 秒，不要按并发数等比放大。",
+	}),
+	memory({
+		id: "mem-docker-image",
+		project: PROJECT,
+		title: "镜像标签规则",
+		keywords: ["镜像标签", "image-tag"],
+		nav: "镜像标签与推送规则。",
+		prefix: "镜像标签用提交短哈希，latest 只在主分支成功后覆盖。",
+	}),
+	memory({
+		id: "mem-monorepo",
+		project: PROJECT,
+		title: "仓库目录约定",
+		keywords: ["目录约定", "monorepo"],
+		nav: "仓库目录与包边界约定。",
+		prefix: "包放在 packages 下，跨包引用只允许走公开入口，不许深引。",
+	}),
+	memory({
+		id: "mem-i18n",
+		project: PROJECT,
+		title: "文案与翻译",
+		keywords: ["文案翻译", "i18n"],
+		nav: "文案与翻译文件的位置和校验方式。",
+		prefix: "文案在 locales 目录，缺 key 由构建期校验拦住。",
+	}),
+	memory({
+		id: "mem-secret-rotation",
+		project: PROJECT,
+		title: "密钥轮换",
+		keywords: ["密钥轮换", "secret-rotation"],
+		nav: "密钥轮换周期与灰度顺序。",
+		prefix: "密钥每 90 天轮换一次，先加新密钥再删旧密钥。",
+	}),
+	memory({
+		id: "mem-timeout-default",
+		project: PROJECT,
+		title: "默认超时设置",
+		keywords: ["超时"],
+		nav: "默认超时设置与上层覆盖方式。",
+		prefix: "默认超时 5 秒，调用方可以覆盖，但不能低于 1 秒。",
 	}),
 ];
 
