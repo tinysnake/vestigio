@@ -90,6 +90,45 @@ const STALE_READ_AFTER = 3;
 const MAX_LAYER_GATHERS = 2;
 /** Re-gathers one resolve may spend; each one costs the judge call it triggers. */
 export const MAX_LAYER_REQUERIES = 2;
+
+/**
+ * The judge answers with whole phrasings, e.g. "发布窗口 灰度比例 发布时长上限".
+ * One query matches every token ANDed (`packages/core/src/storage/tokenize.ts`),
+ * so a phrasing that names several concepts can never match a memory that states
+ * them in separate clauses, and the re-ask would come back as empty as the first
+ * gather. Split a phrasing on whitespace and list punctuation so each concept is
+ * searched on its own; the store unions the hits and the judge still decides
+ * sufficiency.
+ */
+const PHRASING_SEPARATORS = /[\s、，,；;·|/]+/u;
+/**
+ * How many of those fragments one re-ask may spend. A re-ask is a few cheap
+ * index lookups and no extra model call, but the caller's variant budget is not
+ * the right ceiling for it: the judge can name one concept per phrasing, so a
+ * three-fragment re-ask drops the concept that finally matches. The judge still
+ * filters whatever the wider net pulls in.
+ */
+const MAX_REQUERY_VARIANTS = 8;
+
+/**
+ * Fragments ordered by length: a two-to-four character fragment is a keyword
+ * and ANDs the fewest tokens, while a longer one is closer to a sentence and a
+ * conjunctive index rarely matches it whole.
+ */
+function expandPhrasings(queries: readonly string[]): string[] {
+  const expanded: string[] = [];
+  const seen = new Set<string>();
+  for (const query of queries) {
+    for (const segment of query.split(PHRASING_SEPARATORS)) {
+      const trimmed = segment.trim();
+      const key = trimmed.toLocaleLowerCase();
+      if (Array.from(trimmed).length < 2 || seen.has(key)) continue;
+      seen.add(key);
+      expanded.push(trimmed);
+    }
+  }
+  return expanded.sort((left, right) => Array.from(left).length - Array.from(right).length);
+}
 const STALE_READ_BUDGET = 2;
 const STALE_EXCERPT_CHARS = 1200;
 
@@ -334,14 +373,18 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
    * whether the history port is touched at all, so a sufficient Active answer
    * never searches Archived or raw history.
    */
-  async function gather(queries: readonly string[], layer: LayerName): Promise<{ bundle: Bundle; coldRefresh: boolean }> {
+  async function gather(
+    queries: readonly string[],
+    layer: LayerName,
+    variants: number = options.max_query_variants,
+  ): Promise<{ bundle: Bundle; coldRefresh: boolean }> {
     const bundle = emptyBundle();
     const port = measuringPort();
     const historyWanted = layer === "history" && port !== null && scope.kind === "project";
     const archivedWanted = layer !== "active";
     let coldRefresh = false;
     const list = queries.length === 0 ? [question] : [...queries];
-    for (const query of list.slice(0, options.max_query_variants)) {
+    for (const query of list.slice(0, variants)) {
       const before = mono();
       const beforeHistory = historyReadMs;
       const outcome = await layeredSearch({
@@ -768,8 +811,12 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     return queries.slice(0, options.max_query_variants).join("\u0000");
   }
 
-  async function gatherLayer(layer: LayerName): Promise<void> {
-    const gathered = await gather(querySet, layer);
+  async function gatherLayer(
+    layer: LayerName,
+    queries: readonly string[] = querySet,
+    variants: number = options.max_query_variants,
+  ): Promise<void> {
+    const gathered = await gather(queries, layer, variants);
     bundle = absorb(bundle, gathered.bundle);
     bundle.gathered.add(layer);
     gatherCounts.set(layer, (gatherCounts.get(layer) ?? 0) + 1);
@@ -983,7 +1030,11 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     // layer already searched is never a candidate.
     if (shouldRequery(layer)) {
       requeries += 1;
-      await gatherLayer(layer);
+      const fragments = expandPhrasings(lastDecision.next_queries).slice(0, MAX_REQUERY_VARIANTS);
+      // The re-ask gets its own variant budget: `max_query_variants` bounds the
+      // caller's question and the descent, not the recall pass that exists to
+      // spend one more cheap lookup per concept the judge named.
+      await gatherLayer(layer, [question, ...fragments], 1 + fragments.length);
       currentLayers = bundle.layers;
       continue;
     }

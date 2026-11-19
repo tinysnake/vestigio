@@ -21,7 +21,7 @@ export function bodyOfLength(n: number, citationId = "h-1"): string {
   return `${[...filler].slice(0, pad).join("")}${citation}`;
 }
 
-export type ScriptedReply = { text: string } | { fail: "unavailable" | "failed" | "cancelled"; reason: string };
+export type ScriptedReply = { text: string } | { fail: "unavailable" | "failed" | "cancelled" | "invalid_response"; reason: string };
 
 export type ScriptedModel = {
   port: ModelPort;

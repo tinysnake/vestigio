@@ -18,7 +18,9 @@ import {
   MEDIUM_BODY_TARGET_MIN,
   nonWhitespaceCodePointCount,
 } from "../contracts/index.js";
-import type { MediumEvidenceInput } from "./types.js";
+import type { MediumBodyFailure, MediumEvidenceInput } from "./types.js";
+
+export type { MediumBodyFailure };
 
 export const MEDIUM_SUMMARY_SYSTEM_PROMPT = [
   "You write one 中期摘要 (medium summary) of an earlier debugging/engineering discussion.",
@@ -32,6 +34,20 @@ export const MEDIUM_SUMMARY_SYSTEM_PROMPT = [
   "Do not invent facts, do not use outside knowledge, and do not claim any action was taken (no 已完成/已修改/已部署/已保存/已提交 style claims) unless the evidence shows it.",
   "Reply with exactly one JSON object and nothing else:",
   '{"body": "..."}',
+].join("\n");
+
+/**
+ * Appended to the system prompt on a rewrite (repair) call. The shared prompt
+ * asks for the discussion and the open questions, which is right for a first
+ * summary and wrong for a rewrite: live bodies narrated the repair and closed
+ * with a hedge paragraph even though the user-message guidance forbids it. The
+ * contradiction has to be resolved where it is stated, in the system prompt.
+ */
+export const MEDIUM_REWRITE_SYSTEM_NOTE = [
+  "This call rewrites an existing summary after new evidence superseded part of it.",
+  "The sentence above about saying what was discussed, what was tried, and which facts are still uncertain does not apply.",
+  "Write the resulting current state only, as if nothing had ever been pending: do not describe the discussion or the previous summary, do not narrate the repair, and do not close with open questions.",
+  "Keep the facts, paths and procedures the new evidence does not replace.",
 ].join("\n");
 
 function scopeLabel(project: string | null): string {
@@ -63,13 +79,6 @@ export function buildMediumUserMessage(input: MediumEvidenceInput, correction?: 
   }
   return lines.join("\n");
 }
-
-export type MediumBodyFailure =
-  | { kind: "too_short"; measured: number }
-  | { kind: "too_long"; measured: number }
-  | { kind: "missing_citation" }
-  | { kind: "foreign_source"; ids: string[] }
-  | { kind: "action_claim"; phrase: string };
 
 export type MediumBodyValidation =
   | { ok: true; body: string; body_char_count: number; cited_ids: string[] }

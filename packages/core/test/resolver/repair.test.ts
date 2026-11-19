@@ -295,6 +295,45 @@ describe("repairStaleMemory", () => {
     expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(2);
   });
 
+  it("retries once after a gateway 5xx and writes the corrected body", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind, index) => {
+      if (kind !== "summary") return { text: "{}" };
+      if (index === 0) return { fail: "failed", reason: "http 502: bad gateway" };
+      return { text: JSON.stringify({ body: bodyOfLength(600, fixture.first.event_id) }) };
+    });
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("repaired");
+    expect(model.summary_calls).toBe(2);
+    expect(model.requests[1]!.messages.at(-1)?.content).toContain("correction:");
+  });
+
+  it("retries an unparseable answer the port reported as invalid_response", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind, index) => {
+      if (kind !== "summary") return { text: "{}" };
+      if (index === 0) return { fail: "invalid_response", reason: "response is not JSON: <html>" };
+      return { text: JSON.stringify({ body: bodyOfLength(600, fixture.first.event_id) }) };
+    });
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("repaired");
+    expect(model.summary_calls).toBe(2);
+  });
+
+  it("does not retry a 4xx failure that the next ask cannot fix", async () => {
+    const fixture = seed();
+    const model = makeScriptedModel((kind) =>
+      kind === "summary" ? { fail: "failed", reason: "http 400: bad request" } : { text: "{}" },
+    );
+    const outcome = await repairStaleMemory(repairInput(fixture, model));
+
+    expect(outcome.status).toBe("failed");
+    expect(model.summary_calls).toBe(1);
+    expect(fixture.store.countPendingStaleEvents(fixture.memory.memory_id)).toBe(2);
+  });
+
   it("is not applicable when there is nothing pending", async () => {
     const fixture = seed();
     const model = makeScriptedModel(() => ({ text: "{}" }));

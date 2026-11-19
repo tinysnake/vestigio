@@ -23,4 +23,5 @@ export type {
   MediumExtractInput,
   MediumExtraction,
   MediumExtractionStatus,
+  MediumFailure,
 } from "./types.js";
