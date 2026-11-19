@@ -46,6 +46,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
+import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1033,6 +1034,94 @@ async function searchableAfterRepair({ storePath, projectId, memoryId, query }) 
 	}
 }
 
+/**
+ * A `ModelPort` for the resolve probe. It posts through the same recording
+ * proxy the agent, extension and judge use, so a probe call is logged and
+ * counted like any other real model call; it is not a mock.
+ */
+function probeModelPort({ proxyUrl, key, model, thinking }) {
+	return {
+		async complete(request) {
+			const body = {
+				model: request.model ?? model,
+				messages: request.messages,
+				max_tokens: request.max_output_tokens,
+				temperature: 0,
+				stream: false,
+			};
+			if (request.expect_json === true) body.response_format = { type: "json_object" };
+			if (typeof thinking === "string" && thinking.length > 0 && thinking !== "off") body.reasoning_effort = thinking;
+			const call = await postChat({ proxyUrl, key, body, signal: request.signal, timeoutMs: TURN_TIMEOUT_MS });
+			const aborted = request.signal?.aborted === true;
+			if (call.content === null) {
+				const status = aborted ? "cancelled" : call.status === 0 || call.status >= 500 ? "unavailable" : "failed";
+				return { ok: false, status, reason: call.error ?? `http ${call.status}` };
+			}
+			return {
+				ok: true,
+				value: {
+					text: call.content,
+					model: call.json?.model ?? model,
+					finish_reason: call.json?.choices?.[0]?.finish_reason ?? null,
+					usage: {
+						tokens_in: call.json?.usage?.prompt_tokens ?? 0,
+						tokens_out: call.json?.usage?.completion_tokens ?? 0,
+						cost_usd: null,
+					},
+				},
+			};
+		},
+	};
+}
+
+/**
+ * The resolver re-gather regression, run directly through the core
+ * `resolveMemory` the `memory_resolve` tool calls, on a fresh store seeded from
+ * the corpus. No agent chooses the tool here, so the layer walk a natural
+ * question produces is observed directly and repeatably. `repair: "defer"`
+ * keeps the probe about retrieval: it never rewrites the memory.
+ */
+async function runResolveProbe({ corpus, question, index, repeat, config, key, proxy, scratchRoot, runDir }) {
+	const projectId = join(scratchRoot, `probe-${corpus.name}-r${repeat}-${index}`);
+	const storePath = join(scratchRoot, `${corpus.name}-probe-r${repeat}-${index}.sqlite`);
+	mkdirSync(projectId, { recursive: true });
+	seedStore({ storePath, corpus, projectId });
+	const store = openStore({ path: storePath });
+	try {
+		const outcome = await resolveMemory({
+			store,
+			question,
+			scope: { kind: "project", project_id: projectId },
+			model: probeModelPort({
+				proxyUrl: proxy.url,
+				key,
+				model: config.extension_model,
+				thinking: config.extension_thinking,
+			}),
+			model_id: config.extension_model,
+			signal: new AbortController().signal,
+			repair: "defer",
+		});
+		const record = {
+			corpus: corpus.name,
+			repeat,
+			index,
+			question,
+			status: outcome.result.status,
+			answer: outcome.result.answer ?? null,
+			cards: outcome.result.cards.map((card) => card.memory_id),
+			missing: outcome.result.missing,
+			model_calls: outcome.measured.model_calls,
+			elapsed_ms: outcome.measured.elapsed_ms,
+			layers: outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`),
+		};
+		appendJsonl(join(runDir, "resolve_probe.jsonl"), record);
+		return record;
+	} finally {
+		store.close();
+	}
+}
+
 function resultText(result) {
 	if (typeof result === "string") return result;
 	if (result === null || typeof result !== "object") return "";
@@ -1642,11 +1731,21 @@ function formatBool(value) {
 	return value === null || value === undefined ? "n/a" : value ? "true" : "false";
 }
 
+/**
+ * Booleans are counted, not averaged: the median of [false, true, true] is
+ * `true`, which hides a third of the repeats failing.
+ */
+function passRate(block, metric) {
+	const values = block.repeats.map((item) => item[metric]).filter((value) => value !== null && value !== undefined);
+	if (values.length === 0) return "n/a";
+	return `${values.filter((value) => value === true).length}/${values.length}`;
+}
+
 function printTable(metricsByCorpus, variantName, repairMode) {
 	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}, repair ${repairMode}) ===`);
 	for (const [corpus, block] of Object.entries(metricsByCorpus)) {
 		console.log(`\ncorpus ${corpus}  (${block.repeats.length} repeat(s))`);
-		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "median"];
+		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "summary"];
 		const f1Rows = [
 			["system_recall", ...block.repeats.map((item) => formatMetric(item.system_recall)), formatMetric(block.distribution.system_recall)],
 			["handled_rate", ...block.repeats.map((item) => formatMetric(item.handled_rate)), formatMetric(block.distribution.handled_rate)],
@@ -1668,18 +1767,18 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 			["wall_ms", ...block.repeats.map((item) => String(item.cost.wall_ms)), String(block.distribution.wall_ms ?? "n/a")],
 		];
 		const f5Rows = [
-			["repair_rate", ...block.repeats.map((item) => formatBool(item.repair_rate)), formatMetric(block.distribution.repair_rate)],
-			["pending_drained", ...block.repeats.map((item) => formatBool(item.pending_drained)), formatMetric(block.distribution.pending_drained)],
-			["repaired_in_place", ...block.repeats.map((item) => formatBool(item.repaired_in_place)), formatMetric(block.distribution.repaired_in_place)],
-			["fact_fidelity", ...block.repeats.map((item) => formatBool(item.fact_fidelity)), formatMetric(block.distribution.fact_fidelity)],
-			["retrieval_drove_repair", ...block.repeats.map((item) => formatBool(item.retrieval_drove_repair)), formatMetric(block.distribution.retrieval_drove_repair)],
+			["repair_rate", ...block.repeats.map((item) => formatBool(item.repair_rate)), passRate(block, "repair_rate")],
+			["pending_drained", ...block.repeats.map((item) => formatBool(item.pending_drained)), passRate(block, "pending_drained")],
+			["repaired_in_place", ...block.repeats.map((item) => formatBool(item.repaired_in_place)), passRate(block, "repaired_in_place")],
+			["fact_fidelity", ...block.repeats.map((item) => formatBool(item.fact_fidelity)), passRate(block, "fact_fidelity")],
+			["retrieval_drove_repair", ...block.repeats.map((item) => formatBool(item.retrieval_drove_repair)), passRate(block, "retrieval_drove_repair")],
 			["repair_source", ...block.repeats.map((item) => String(item.repair_source ?? "n/a")), "n/a"],
-			["navigation_updated", ...block.repeats.map((item) => formatBool(item.navigation_updated)), formatMetric(block.distribution.navigation_updated)],
-			["published_after", ...block.repeats.map((item) => formatBool(item.published_after)), formatMetric(block.distribution.published_after)],
-			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), formatMetric(block.distribution.searchable_after_repair)],
-			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), formatMetric(block.distribution.judge_pass)],
-			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), formatMetric(block.distribution.s1_pending_drained)],
-			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), formatMetric(block.distribution.s1_repaired)],
+			["navigation_updated", ...block.repeats.map((item) => formatBool(item.navigation_updated)), passRate(block, "navigation_updated")],
+			["published_after", ...block.repeats.map((item) => formatBool(item.published_after)), passRate(block, "published_after")],
+			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), passRate(block, "searchable_after_repair")],
+			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), passRate(block, "judge_pass")],
+			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), passRate(block, "s1_pending_drained")],
+			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), passRate(block, "s1_repaired")],
 			["f5_state_after", ...block.repeats.map((item) => String(item.f5_state_after ?? "n/a")), String(block.distribution.f5_state_after ?? "n/a")],
 			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
 			["f5_background_repair_ms", ...block.repeats.map((item) => (item.f5_background_repair_ms === null ? "n/a" : String(item.f5_background_repair_ms))), "n/a"],
@@ -1696,13 +1795,14 @@ function printTable(metricsByCorpus, variantName, repairMode) {
 }
 
 function parseArgs(argv) {
-	const options = { only: null, repeat: 3, help: false, variant: "agent", repairMode: "inline" };
+	const options = { only: null, repeat: 3, help: false, variant: "agent", repairMode: "inline", probeOnly: false };
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--only") options.only = argv[++index];
 		else if (arg === "--repeat") options.repeat = Number(argv[++index]);
 		else if (arg === "--variant") options.variant = argv[++index];
 		else if (arg === "--repair-mode") options.repairMode = argv[++index];
+		else if (arg === "--probe-only") options.probeOnly = true;
 		else if (arg === "--help" || arg === "-h") options.help = true;
 		else throw new Error(`unknown argument: ${arg}`);
 	}
@@ -1726,7 +1826,7 @@ function sleep(ms) {
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
 	if (options.help) {
-		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--repair-mode inline|background]");
+		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--repair-mode inline|background] [--probe-only]");
 		return 0;
 	}
 	const baseConfig = loadConfig();
@@ -1797,6 +1897,7 @@ async function main() {
 
 	const wallDeadline = Date.now() + config.wall_clock_ms;
 	const results = [];
+	const probeRecords = [];
 	let aborted = false;
 	for (const corpus of corpora) {
 		for (let repeat = 1; repeat <= options.repeat; repeat += 1) {
@@ -1810,6 +1911,17 @@ async function main() {
 				budget.reason = `wall_clock_ms ${config.wall_clock_ms} exceeded`;
 				break;
 			}
+			if (Array.isArray(corpus.resolve_probe) && corpus.resolve_probe.length > 0) {
+				for (let index = 0; index < corpus.resolve_probe.length; index += 1) {
+					const question = corpus.resolve_probe[index];
+					if (typeof question !== "string" || question.trim().length === 0) continue;
+					console.log(`resolver probe ${corpus.name} r${repeat} [${index}] ...`);
+					const probe = await runResolveProbe({ corpus, question, index, repeat, config, key, proxy, scratchRoot, runDir });
+					probeRecords.push(probe);
+					console.log(`  resolve ${probe.status}; layers: ${probe.layers.join(" ")}`);
+				}
+			}
+			if (options.probeOnly) break;
 			console.log(`running ${corpus.name} repeat ${repeat}/${options.repeat} ...`);
 			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode: options.repairMode });
 			results.push(result);
@@ -1818,6 +1930,11 @@ async function main() {
 			}
 		}
 		if (aborted) break;
+	}
+
+	if (options.probeOnly) {
+		console.log(`resolve probes done: ${probeRecords.length}`);
+		return;
 	}
 
 	const mergedDecisions = [];
@@ -1959,6 +2076,7 @@ async function main() {
 			unchanged: obeliskUnchanged,
 		},
 		model_usage: proxy.stats,
+		resolve_probe: probeRecords,
 	});
 
 	await proxy.close();
