@@ -376,3 +376,63 @@ Each run writes `eval/live/runs/<timestamp>/`:
 - `judge.json` — the judge model, thinking level, and one entry per repeat with the prompt hash,
   the parsed verdict fields and the raw reply.
 - `failures/` — full request and response for any non-2xx or unparseable call.
+
+## Conflict evaluation (`conflicts.mjs`)
+
+`conflicts.mjs` drives the real
+`pi` binary in RPC mode against the same local gateway and scores the agent's
+final prose for the two behaviours the maintenance prompt asserts:
+
+- **Convergence.** A later, definite, effective change wins: the agent reports
+  the new value and does *not* call the pair a conflict. Two variants:
+  `ordered-revision` (one memory, head revision is current) and
+  `ordered-effective-change` (two same-scope memories where the newer one states
+  an effective change; the deterministic subject guard fires, so only the prompt
+  can adjudicate).
+- **Unresolved contradiction.** Genuinely contradictory current memories (same
+  project and subject, neither superseding) are reported as unresolved with both
+  values and both sources retained. `contradiction-same-title` is caught by the
+  deterministic subject guard; `contradiction-different-title` is not, so only
+  the agent's reading and the model judge can see it.
+- `scoped-nonconflict` is the control: the same title in two different project
+  scopes must not read as a conflict.
+
+The agent runs with only `memory_search`, `memory_read` and `memory_resolve`
+(no writes, no stale marking). The candidate sees organic project names only:
+tmp paths, `.sqlite` files and session dirs are named by the scenario's project
+name, and no case key or rubric text reaches the prompt or the cwd. Each run
+gets a private agent home (`/tmp/vestigio-live/agent-<stamp>`, a copy of
+`~/.pi/agent` with magpie pointed at the proxy) and a private work tree
+(`/tmp/vestigio-live/work/<stamp>/`) holding each scenario's store, session dir
+and empty Obelisk home. It leaves the shared f1f2 home
+`/tmp/vestigio-live/agent` untouched and deletes its private agent home when the
+run ends. The operator's real `~/.obelisk/obelisk.sqlite` is never touched and
+its mtime is asserted unchanged.
+
+```sh
+cd eval/live
+node --import ../pi/hook.mjs ./conflicts.mjs --selftest      # offline: bodies, seeding, scorer
+node --import ../pi/hook.mjs ./conflicts.mjs                 # all five scenarios, one repeat
+node --import ../pi/hook.mjs ./conflicts.mjs --only ordered-effective-change,contradiction-different-title
+node --import ../pi/hook.mjs ./conflicts.mjs --repeat 3
+
+# the same commands work from the repo root
+node --import ./eval/pi/hook.mjs ./eval/live/conflicts.mjs --selftest
+```
+
+Config is the same gitignored `config.local.json` `run.mjs` reads; missing keys
+fall back to the defaults in `conflicts.mjs` (tighter budgets: 150 model calls /
+1.5M tokens / 15 min). Results land in `runs/<stamp>-conflicts/` as
+`summary.json`, per-scenario `results/*.json`, `prose/*.txt`, `tools/*.txt`,
+`decisions/*.jsonl` and `requests.jsonl`; all redacted, no secrets.
+
+Scoring is outcome-based on the **agent's own final prose** plus source
+retention, never on the resolver's internal status: required and forbidden
+values in the prose, explicit uncertainty language (`reportsUnresolved`,
+negation-aware), both memory ids cited in unresolved answers and present in the
+transcript, both memories still readable in the store, and the head revision
+for the ordered case. The language check is a heuristic; inspect saved prose
+for semantic correctness before claiming success. The tool
+statuses the extension logged (`memory_search`/`memory_resolve`) are recorded as
+`resolver_status` for diagnosis but are deliberately not consulted by the
+scorer. No internal product strings are asserted.

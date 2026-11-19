@@ -43,7 +43,7 @@ import {
 import { createServer, request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
 import { resolveMemory } from "@vestigio/core/resolver";
@@ -2122,4 +2122,20 @@ async function run() {
 	process.exit(code);
 }
 
-await run();
+export {
+	PiClient,
+	appendJsonl,
+	childFirstLine,
+	readMagpieKey,
+	redactText,
+	redactValue,
+	registerSecret,
+	sha256,
+	startProxy,
+	textContent,
+	timestamp,
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolvePath(process.argv[1])).href) {
+	await run();
+}

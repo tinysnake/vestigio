@@ -30,7 +30,10 @@ export const JUDGE_SYSTEM_PROMPT = [
   "- evidence_ids must be ids or anchors copied from the candidates, never new values.",
   "- read_uris must be uris copied from the candidates; list a uri only when you need its full body before deciding.",
   "- next_queries are alternative search phrasings for a lower layer, at most three.",
-  "- conflicts lists disagreements you can see between candidates; leave it empty when they agree.",
+  "- conflicts lists real disagreements between candidates: same subject or property, same scope or environment, overlapping time. Leave it empty when they agree.",
+  "- A later definite effective change supersedes an older value. That is history, not a conflict. A newer record, revision or summary alone does not prove a supersession.",
+  "- A plan, a hypothesis or an attempted change that was rolled back is not an effective change. Claims about different scopes, environments or properties do not contradict each other.",
+  "- Report an unresolved conflict in one line: name both alternatives with their evidence ids, and say the current value is unknown. Never pick one side silently.",
   "- descend=true asks to look in a lower layer; set it false when you are answering or when more search cannot help.",
 ].join("\n");
 
