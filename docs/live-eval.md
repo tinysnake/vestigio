@@ -241,7 +241,8 @@ mode because no tool call carried the repair.
   session updated the existing memory instead of adding a second topic.
 - `fact_fidelity` — repeats where the new body contains every
   `required_strings` entry, still contains the path token of every `stable`
-  string, and sits inside the 500–1000 non-whitespace code point band.
+  string, and sits inside the 500–660 non-whitespace code point band the prompt
+  asks for.
 - `retrieval_drove_repair` — repeats where the second session called
   `memory_resolve` or `memory_read` before the head advanced.
 - `navigation_updated` — repeats where `nav.source_revision` equals the new

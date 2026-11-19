@@ -156,11 +156,14 @@ match `[A-Za-z0-9][A-Za-z0-9._~-]*`, so the URI cannot be ambiguous.
 **Length and counting.** These use Unicode code points, not UTF-16 units, so
 astral characters count once.
 
-- Medium body: 500–1000 non-whitespace code points. Whitespace is stripped
-  before counting, so padding with whitespace can never reach the 500 floor.
-  `body_char_count` must equal the measured count; a padded or inflated declared
-  count is rejected. Never pad to reach 500 — the validator cannot read intent,
-  but it will not accept a count that hides padding.
+- Medium body: 500 non-whitespace code points minimum, 2000 maximum. The
+  prompt asks for 500–660, which is 50–66% of the 1000-point ceiling, so a
+  normal overrun still lands under the ceiling; a body between 1000 and 2000 is
+  accepted, and one over 1000 is asked for a rewrite first. Whitespace is
+  stripped before counting, so padding with whitespace can never reach the 500
+  floor. `body_char_count` must equal the measured count; a padded or inflated
+  declared count is rejected. Never pad to reach 500 — the validator cannot read
+  intent, but it will not accept a count that hides padding.
 - Nav text: 1–200 code points, punctuation and spaces included (whitespace is
   not stripped here). `char_count` must equal the measured count.
 
