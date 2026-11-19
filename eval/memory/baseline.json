@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T15:36:10.109Z",
-  "commit": "daf102b",
+  "generated_at": "2026-11-19T15:37:06.607Z",
+  "commit": "4f68fb2",
   "catalog_version": 3,
   "dataset_sha256": "20a110a4a0cfb31e1f5c53c0d89384acb7a2aa008bebaa789989304c91318833",
   "seed": {
@@ -22,6 +22,9 @@
     "recall_at_5": 1,
     "inject_hit_rate": 1,
     "false_positive_rate": 0.1111111111111111,
+    "candidate_false_positive_rate": 0.25,
+    "injection_false_positive_rate": 0.25,
+    "budget_rescued": 0,
     "source_gap_rescue_rate": 1
   },
   "cases": [
@@ -34,6 +37,13 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-deploy-port",
         "mem-port-rule-b",
@@ -55,6 +65,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-migration"
+      ],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-migration"
       ],
@@ -74,6 +89,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-cache"
+      ],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-cache"
       ],
@@ -93,6 +113,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -110,6 +133,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -127,6 +153,11 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": true,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-deploy-port"
+      ],
+      "candidate_leak": true,
       "surfaced_ids": [
         "mem-deploy-port"
       ],
@@ -146,6 +177,13 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": true,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "candidate_leak": true,
       "surfaced_ids": [
         "mem-deploy-port",
         "mem-port-rule-b",
@@ -167,6 +205,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-other-port"
+      ],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-other-port"
       ],
@@ -186,6 +229,9 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-deploy-port"
       ],
@@ -205,6 +251,9 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-migration"
       ],
@@ -224,6 +273,9 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-cache"
       ],
@@ -243,6 +295,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -260,6 +315,9 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-other-port"
       ],
@@ -279,6 +337,9 @@
       "rank_ignored": true,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-port-rule-b",
         "mem-port-rule-a"
@@ -299,6 +360,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [
         "eval-session-history-gray/eval-message-history-gray-3"
@@ -318,6 +382,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -335,6 +402,9 @@
       "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
       "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -352,6 +422,11 @@
       "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-stale-ttl"
+      ],
+      "candidate_leak": false,
       "surfaced_ids": [
         "mem-stale-ttl"
       ],

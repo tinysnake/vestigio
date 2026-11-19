@@ -103,7 +103,9 @@ The dataset is the ground truth, so the rules matter more than the runner.
 ## Scoring
 
 `surfaced_ids` is `plan.injected` memory ids for inject, and card `memory_id`s in
-rank order for search. `surfaced_refs` is `session_id/message_id` for history
+rank order for search. `candidate_ids` is `plan.matched` for inject (everything
+retrieval admitted, before budget and dedup) and empty for search, where the
+cards already are the final set. `surfaced_refs` is `session_id/message_id` for history
 excerpts that survived filtering. `rank` is the 1-based position of the first
 expected id.
 
@@ -123,7 +125,17 @@ Metrics use non-error cases only:
 | `recall_at_K` | cases with expected ids, minus `rank_ignored` ones |
 | `inject_hit_rate` | the same set, restricted to `inject` |
 | `false_positive_rate` | every non-error case |
+| `candidate_false_positive_rate` | `inject` cases that name a forbidden id |
+| `injection_false_positive_rate` | the same set: forbidden ids that reached `plan.injected` |
+| `budget_rescued` | count of cases where the cap dropped a leaked candidate |
 | `source_gap_rescue_rate` | cases with `expected_source_refs` |
+
+The two false-positive rates share one denominator on purpose. For inject cases
+the pool can admit noise that the budget then drops, so `candidate` (from
+`plan.matched`) and `injection` (from `plan.injected`) answer different
+questions: is retrieval admitting noise, and does the budget hide it. When the
+two numbers are equal the cap is not saving anything, and `budget_rescued` says
+how often it did.
 
 A zero denominator yields `null`, never NaN.
 

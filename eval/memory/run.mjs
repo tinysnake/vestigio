@@ -67,6 +67,7 @@ async function runSurface(item) {
 		});
 		return {
 			ids: plan.injected.map((match) => match.memory_id),
+			candidates: plan.matched.map((match) => match.memory_id),
 			refs: [],
 			status: null,
 			stale: plan.injected
@@ -86,6 +87,7 @@ async function runSurface(item) {
 		});
 		return {
 			ids: outcome.result.cards.map((card) => card.memory_id),
+			candidates: [],
 			refs: outcome.history.map((excerpt) => refKey(excerpt.source_ref)),
 			status: outcome.result.status,
 			stale: outcome.result.cards
@@ -103,9 +105,10 @@ function score(item, surfaced, error) {
 	const expectedStale = item.expected_stale_ids ?? [];
 	const forbiddenRefs = (item.forbidden_source_refs ?? []).map(refKey);
 	const first = surfaced.ids.findIndex((id) => expected.includes(id));
-	const forbiddenPresent =
-		forbidden.some((id) => (id === "*" ? surfaced.ids.length > 0 : surfaced.ids.includes(id))) ||
-		forbiddenRefs.some((ref) => surfaced.refs.includes(ref));
+	const leaks = (ids) =>
+		forbidden.some((id) => (id === "*" ? ids.length > 0 : ids.includes(id)));
+	const forbiddenPresent = leaks(surfaced.ids) || forbiddenRefs.some((ref) => surfaced.refs.includes(ref));
+	const candidateLeak = leaks(surfaced.candidates);
 	const refPresent = expectedRefs.some((ref) => surfaced.refs.includes(ref));
 	const expects = expected.length + expectedRefs.length + expectedStale.length > 0;
 	const staleOk = expectedStale.every((id) => surfaced.stale.includes(id));
@@ -128,6 +131,9 @@ function score(item, surfaced, error) {
 		rank_ignored: item.rank_ignored === true,
 		expected_present: first !== -1,
 		forbidden_present: forbiddenPresent,
+		has_forbidden: forbidden.length > 0 || forbiddenRefs.length > 0,
+		candidate_ids: surfaced.candidates,
+		candidate_leak: candidateLeak,
 		surfaced_ids: surfaced.ids,
 		surfaced_refs: surfaced.refs,
 		surfaced_stale: surfaced.stale,
@@ -140,7 +146,7 @@ function score(item, surfaced, error) {
 
 const results = [];
 for (const item of cases) {
-	let surfaced = { ids: [], refs: [], status: null, stale: [] };
+	let surfaced = { ids: [], candidates: [], refs: [], status: null, stale: [] };
 	let error = null;
 	try {
 		surfaced = await runSurface(item);
@@ -154,6 +160,11 @@ for (const item of cases) {
 const labeled = new Map(cases.map((item) => [item.id, (item.expected_memory_ids ?? []).length]));
 const refLabeled = new Set(cases.filter((item) => (item.expected_source_refs ?? []).length > 0).map((item) => item.id));
 const scored = results.filter((item) => item.status !== "error");
+// Candidate and injection FP share a denominator: cases that name a forbidden
+// memory, so a leak has something to violate.
+// Both rates share this denominator (inject cases that forbid something) so the
+// pair reads as "admitted by retrieval" versus "actually injected".
+const candidateLabeled = scored.filter((item) => item.has_forbidden === true && item.surface === "inject");
 const recallable = scored.filter((item) => labeled.get(item.case_id) > 0 && item.rank_ignored !== true);
 const injectable = recallable.filter((item) => item.surface === "inject");
 const rate = (numerator, denominator) => (denominator === 0 ? null : numerator / denominator);
@@ -183,6 +194,17 @@ const report = {
 		recall_at_5: recallAt(5),
 		inject_hit_rate: rate(injectable.filter((item) => item.status === "hit").length, injectable.length),
 		false_positive_rate: rate(summary.false_positive, scored.length),
+		// Split the proposal's two FP tiers: what retrieval admitted versus what
+		// the budget actually injected.
+		candidate_false_positive_rate: rate(
+			candidateLabeled.filter((item) => item.candidate_leak).length,
+			candidateLabeled.length,
+		),
+		injection_false_positive_rate: rate(
+			candidateLabeled.filter((item) => item.forbidden_present).length,
+			candidateLabeled.length,
+		),
+		budget_rescued: candidateLabeled.filter((item) => item.candidate_leak && !item.forbidden_present).length,
 		source_gap_rescue_rate: rate(
 			scored.filter((item) => refLabeled.has(item.case_id) && item.expected_present === false && item.status === "hit")
 				.length,
@@ -193,7 +215,7 @@ const report = {
 };
 
 const rows = [
-	["case", "surface", "status", "retrieval", "rank", "expected", "forbidden", "surfaced", "refs", "category"],
+	["case", "surface", "status", "retrieval", "rank", "expected", "forbidden", "candidate", "surfaced", "refs", "category"],
 	...results.map((item) => [
 		item.case_id,
 		item.surface,
@@ -201,7 +223,8 @@ const rows = [
 		item.retrieval_status ?? "-",
 		item.rank ?? "-",
 		item.expected_present ? "yes" : "no",
-		item.forbidden_present ? "LEAK" : "no",
+		item.forbidden_present ? "LEAK" : item.candidate_leak ? "cap" : "no",
+		item.candidate_ids.join(" ") || "-",
 		item.surfaced_ids.join(" ") || "-",
 		item.surfaced_refs.length,
 		item.category,
