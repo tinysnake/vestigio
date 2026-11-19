@@ -158,8 +158,12 @@ label and what the pipeline did, so a reviewer reads causes instead of rows.
   documented property above, not a labelling question.
 - `label-question` — the draft contradicts the text it wrote.
 
-Batch 1 is 45 rows from 8 memories for about $0.009: 32 agree, 3
-precision-leak, 2 recall-gap, 8 matcher-weak. The committed sheet is
+Batch 1 is 45 rows from 8 memories for about $0.009. Its first pass produced 3
+precision-leaks; the pool-frequency rule above removed the nginx-upstream one,
+and the remaining 2 are label mistakes (a git `回滚` that is not a database
+migration, and a `deploy-port` question asked inside the project that owns that
+memory). Current tally: 33 agree, 2 precision-leak, 2 recall-gap, 8
+matcher-weak. The committed sheet is
 `docs/memory-eval-candidates-review.md`.
 
 Nothing flows back automatically. A candidate becomes a real case only when a
@@ -227,7 +231,9 @@ Two cases started life as labelled false positives, and both are now clean:
 
 The fix is in `matchHotspots` (packages/core/src/hotspots/match.ts): a hit now
 needs a whole one-token alias, a contiguous alias phrase, or two independent
-tokens, so a lone shared summary token is not enough. Both cases flipped to
+tokens, so a lone shared summary token is not enough. A single-token alias that
+most of the pool also declares is demoted as well, unless the whole input is
+that word. Both cases flipped to
 clean with no labelled recall lost, and `packages/core/test/hotspots/match.test.ts`
 pins the rule from both sides.
 

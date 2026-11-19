@@ -25,7 +25,9 @@
  *    independent tokens. A lone shared nav/title token is not enough, because
  *    "配置" or "端口" alone appears in half the summaries and would drag an
  *    unrelated memory into the prompt. Aliases are the escape hatch: a memory
- *    that really is about a word declares it in `keywords`.
+ *    that really is about a word declares it in `keywords` — but an alias that
+ *    most of the pool also declares is demoted, because it says nothing about
+ *    which memory is the right one.
  * 5. An entry is returned at most once per turn no matter how many tokens or
  *    aliases hit, because the unit of the result is the memory.
  */
@@ -38,6 +40,12 @@ import type { HotspotEntry, HotspotMatch } from "./types.js";
 
 /** Plan §4.1: one input may surface at most this many memories. */
 export const DEFAULT_MAX_HOTSPOT_MEMORIES = 3;
+/**
+ * An alias shared by this many pool entries is too common to stand alone.
+ * 端口 or 配置 alone would otherwise drag every port-ish memory into a prompt
+ * about something else; the same word inside a two-token hit still counts.
+ */
+export const COMMON_ALIAS_POOL_LIMIT = 3;
 /** One shared signal is enough; exposed so PR-06/07 can tune it with evidence. */
 export const DEFAULT_MIN_MATCH_SCORE = 1;
 /** A phrase hit is worth this many token hits. */
@@ -158,6 +166,10 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
   const minScore = input.min_score ?? DEFAULT_MIN_MATCH_SCORE;
   const activitySeq = input.activity_seq ?? 0;
   const matches: HotspotMatch[] = [];
+  // Document frequency per pool entry, so a ubiquitous alias can be demoted.
+  const entryTokenSets = input.entries.map((entry) => entryTokens(entry));
+  const documentFrequency = (token: string): number =>
+    input.entries.filter((_, index) => entryTokenSets[index]?.has(token) === true).length;
 
   for (const entry of input.entries) {
     input.deadline?.check("match");
@@ -170,7 +182,13 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
         matched.push(token);
       }
     }
-    const aliasHits = matched.filter((token) => singleAliases.has(token)).length;
+    // A one-token query has nothing else to match on, so a common alias still
+    // counts there; demotion only applies when the input says more than that.
+    const aliasHits = matched.filter(
+      (token) =>
+        singleAliases.has(token) &&
+        (inputTokens.length === 1 || documentFrequency(token) < COMMON_ALIAS_POOL_LIMIT),
+    ).length;
     let phrase = false;
     for (const keyword of entry.keywords) {
       const needle = matchTokens(keyword);

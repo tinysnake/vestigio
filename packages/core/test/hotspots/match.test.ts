@@ -51,6 +51,16 @@ describe("matchHotspots", () => {
     expect(matchHotspots({ entries: [aliased], text: "默认端口是多少" })).toHaveLength(1);
   });
 
+  it("demotes an alias most of the pool shares, unless the input is only that word", () => {
+    const entries = ["mem-a", "mem-b", "mem-c"].map((memory_id) =>
+      makeEntry({ memory_id, keywords: ["端口"], nav_text: "端口约定" }),
+    );
+    // Three of three share the alias, so it no longer picks a memory out.
+    expect(matchHotspots({ entries, text: "nginx 上游的端口怎么写" })).toEqual([]);
+    // A query that is nothing but that word still gets the cap, not silence.
+    expect(matchHotspots({ entries, text: "端口" })).toHaveLength(3);
+  });
+
   it("never matches a short English identifier inside an unrelated word", () => {
     const entry = makeEntry({ keywords: ["id"], nav_text: "无" });
     expect(matchHotspots({ entries: [entry], text: "identity provided" })).toEqual([]);
