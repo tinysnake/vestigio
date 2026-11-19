@@ -150,21 +150,24 @@ how often it did.
 
 A zero denominator yields `null`, never NaN.
 
-## Known gaps in the baseline
+## Precision history
 
-Both are precision misses in the hotspot matcher, and both are counted in
-`false_positive_rate`:
+Two cases started life as labelled false positives, and both are now clean:
 
-- `inject-negative-near-miss`: "旧配置的字段名" injects `mem-deploy-port`
-  because the two share the bigram 配置 and `DEFAULT_MIN_MATCH_SCORE` is 1.
-- `inject-near-miss-port-rule`: "部署脚本默认端口" injects both
-  `mem-port-rule-a` and `mem-port-rule-b` alongside `mem-deploy-port`, on the
-  shared token 端口. Three memories for one narrow question is noise even
-  though each is topically adjacent.
+- `inject-negative-near-miss`: "旧配置的字段名" used to inject `mem-deploy-port`
+  on the shared bigram 配置.
+- `inject-near-miss-port-rule`: "部署脚本默认端口" used to inject both
+  `mem-port-rule-a` and `mem-port-rule-b` on the shared token 端口, which was
+  only a fragment of their alias 端口约定.
 
-The injected block is a nav hint, not a body, so the cost is a line each; these
-are still real precision misses. Raise the case count or the match floor before
-treating the rate as stable.
+The fix is in `matchHotspots` (packages/core/src/hotspots/match.ts): a hit now
+needs a whole one-token alias, a contiguous alias phrase, or two independent
+tokens, so a lone shared summary token is not enough. Both cases flipped to
+clean with no labelled recall lost, and `packages/core/test/hotspots/match.test.ts`
+pins the rule from both sides.
+
+That leaves the baseline at zero false positives on 18 cases, which is a small
+set: treat it as a floor to defend, not as proof of precision.
 
 Both live at the current floor of 1, and the baseline records the cost of moving
 it. Setting `DEFAULT_MIN_MATCH_SCORE` to 2 makes both clean and drops
