@@ -16,6 +16,7 @@ packages/core/src/contracts/   type shapes, boundary parsers, identity helpers
 packages/core/test/            contract tests
 eval/fixtures/                 synthetic retrieval corpus (JSONL)
 eval/baseline/                 no-memory vs Obelisk resource ledger
+eval/memory/                   offline recall/injection eval with baseline diff
 eval/requests/                 actual-model free-choice eval for operator-approved saves
 docs/contracts.md              the frozen shapes, rules and compatibility range
 docs/*.md                      requirements, plan and research notes
@@ -43,6 +44,13 @@ Baseline harness (writes `eval/baseline/out/`):
 
 ```sh
 node eval/baseline/run.mjs --question "记得之前定过记忆层用哪个 SQLite 驱动吗"
+```
+
+Memory eval (runs 12 labeled cases, then diffs against the committed baseline):
+
+```sh
+cd eval/memory
+node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/report.json
 ```
 
 ## Contracts

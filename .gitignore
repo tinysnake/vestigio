@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 eval/baseline/out/
+eval/memory/out/
 eval/live/runs/
 eval/live/*.local.json
 *.log
