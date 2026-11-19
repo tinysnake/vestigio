@@ -89,6 +89,8 @@
 
 该工具对生产代码的敏感性做过三次红绿验证。其一，把 `packages/core/src/hotspots/match.ts:38` 的 `DEFAULT_MIN_MATCH_SCORE` 从 1 临时改为 99，4 条注入样本转为 miss，`compare.mjs` 报告 `regressions: 4` 并退出 1。其二，让 `packages/core/src/retrieval/conflict.ts` 的 `findConflictingMemoryIds` 返回空，`search-conflict-port-rule` 从 hit 变为 miss（`expected_status: conflicted` 不再满足），退出 1。其三，绕过 `packages/core/src/retrieval/layered.ts` 里 `entry.source_ref.project_id !== projectPath` 的丢弃分支，`history-foreign-dropped` 从 clean 变为 false_positive，退出 1。三次均改回后重新全绿，`git diff` 为空。
 
+该工具也能回答具体的调参问题。把同一个 `DEFAULT_MIN_MATCH_SCORE` 依次设为 1（当前生产值）、2、3、4，在同一份基线上各跑一次：阈值为 1 时 `inject_hit_rate` 1.000、`false_positive_rate` 0.118；阈值为 2 时两条误注入同时消失（`false_positive_rate` 0.000），代价是 `inject-implicit-migration`（`迁移失败后先做什么`）转为 miss，`inject_hit_rate` 降到 0.750、Recall@1 降到 0.875；阈值为 3 和 4 时再丢一条注入，`inject_hit_rate` 0.500。也就是说在这批判定样本上精度与召回是直接对冲的，17 条样本不足以定阈值，生产值保持 1 未改，这条对比是可扩展数据集后的候选实验而不是修复。
+
 首版暴露三个待处理项。其一，`memory_search` 的默认检索是析取词元加合取匹配（`buildMatchQuery` 用 `AND` 连接一元组与二元组），自然语言问句通常一条也匹配不到，因此样本使用关键词式短语；这与工具契约一致（`packages/pi-extension/src/tools.ts` 写明 exact words work best，自然语言走 `memory_resolve`），但意味着 Recall 数字只在关键词查询口径下成立。其二，`旧配置的字段名` 会因共享二元组「配置」注入 `mem-deploy-port`，`部署脚本默认端口` 会因共享「端口」额外注入两条同名端口约定，两次都是真实的注入误召回，已分别记为 `inject-negative-near-miss` 与 `inject-near-miss-port-rule` 并计入 FP 率。其三，同名冲突场景下两条记忆都在候选集，排序先后不携带信息，样本用 `rank_ignored` 只断言存在性与 `conflicted` 状态，不参与 Recall 分母；这是记录口径，不是放宽标准。
 
 真实模型质量、历史快照回放、跨版本配对基线及 Shadow 副作用仍是后续验收项。
