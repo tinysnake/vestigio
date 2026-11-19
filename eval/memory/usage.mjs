@@ -15,12 +15,10 @@
  * "what does one verdict cost" is a measured number, not an estimate.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { DEFAULT_MODEL, ask as askModel } from "./judge.mjs";
 
-/** Borrowed from the `feature, refactoring` row of ~/.pstack/models.md, low thinking. */
-const DEFAULT_MODEL = "magpie/auto/deepseek-v4.1-flash:low";
 const VERDICTS = ["used", "partial", "ignored", "misused"];
 const SYSTEM = "You are a strict memory-usage evaluator. Reply with JSON only.";
 
@@ -37,10 +35,10 @@ const model = argument("--model") ?? DEFAULT_MODEL;
 const limit = Number(argument("--limit") ?? "0");
 const dry = process.argv.includes("--dry");
 
+const ask = (text) => askModel({ text, model, system: SYSTEM });
+
 function prompt(item) {
-	const memories = item.injected
-		.map((memory) => `- ${memory.memory_id}: ${memory.nav_text}`)
-		.join("\n");
+	const memories = item.injected.map((memory) => `- ${memory.memory_id}: ${memory.nav_text}`).join("\n");
 	return [
 		"判断下面的回答是否使用了注入的记忆。",
 		"",
@@ -57,47 +55,6 @@ function prompt(item) {
 		"ignored = 回答了，但没有依赖记忆内容；misused = 回答了，并且依赖了记忆，但结论与记忆相反或把已过期的内容当作当前事实。",
 		"判 misused 时，回答必须显示出对记忆内容的依赖（引用、转述或按它下结论），凭空说出相反结论仍属于 ignored。",
 	].join("\n");
-}
-
-function ask(text) {
-	const started = Date.now();
-	const stdout = execFileSync(
-		"pi",
-		[
-			"-p",
-			"--no-session",
-			"--no-tools",
-			"--mode",
-			"json",
-			"--system-prompt",
-			SYSTEM,
-			"--model",
-			model,
-			text,
-		],
-		{ encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
-	);
-	const wall = Date.now() - started;
-	let reply = null;
-	let usage = null;
-	let durationMs = null;
-	for (const line of stdout.split("\n")) {
-		if (line.trim() === "") continue;
-		let event;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		if (event.type !== "message_end" || event.message?.role !== "assistant") continue;
-		const textPart = Array.isArray(event.message.content)
-			? event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("")
-			: "";
-		reply = textPart;
-		usage = event.message.usage ?? null;
-		durationMs = event.message.durationMs ?? null;
-	}
-	return { reply, usage, durationMs, wall_ms: wall };
 }
 
 function parseVerdict(reply) {
@@ -128,7 +85,8 @@ if (dry) {
 
 const results = [];
 for (const item of items) {
-	const { reply, usage, durationMs, wall_ms } = ask(prompt(item));
+	const call = ask(prompt(item));
+	const reply = call.reply;
 	const parsed = parseVerdict(reply);
 	results.push({
 		case_id: item.id,
@@ -138,11 +96,11 @@ for (const item of items) {
 		agree: parsed.verdict === item.expectation,
 		quote: parsed.quote,
 		reason: parsed.reason,
-		duration_ms: durationMs,
-		wall_ms,
-		input_tokens: usage?.input ?? null,
-		output_tokens: usage?.output ?? null,
-		cost_usd: usage?.cost?.total ?? null,
+		duration_ms: call.duration_ms,
+		wall_ms: call.wall_ms,
+		input_tokens: call.input_tokens,
+		output_tokens: call.output_tokens,
+		cost_usd: call.cost_usd,
 		reply_excerpt: typeof reply === "string" ? reply.slice(0, 200) : null,
 	});
 }

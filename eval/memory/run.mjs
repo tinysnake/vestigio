@@ -127,6 +127,7 @@ function score(item, surfaced, error) {
 	return {
 		case_id: item.id,
 		surface: item.surface,
+		text: item.text,
 		status,
 		retrieval_status: surfaced.status,
 		injection_reason: surfaced.reason ?? null,
@@ -134,6 +135,7 @@ function score(item, surfaced, error) {
 		rank_ignored: item.rank_ignored === true,
 		expected_present: first !== -1,
 		forbidden_present: forbiddenPresent,
+		expected_ids: expected,
 		has_forbidden: forbidden.length > 0 || forbiddenRefs.length > 0,
 		candidate_ids: surfaced.candidates,
 		candidate_leak: candidateLeak,

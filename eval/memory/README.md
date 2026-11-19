@@ -136,6 +136,40 @@ Metrics use non-error cases only:
 | `budget_rescued` | count of cases where the cap dropped a leaked candidate |
 | `source_gap_rescue_rate` | cases with `expected_source_refs` |
 
+## Candidate batches
+
+`generate-candidates.mjs` drafts cases with the same judge model, three per
+call (this model truncates longer JSON arrays mid-object), validates every id
+against the catalog, dedupes by surface and text, and marks each row
+`status: "candidate", needs_review: true`.
+
+```sh
+node --import ../pi/hook.mjs ./generate-candidates.mjs          # drafts candidates.jsonl
+node --import ../pi/hook.mjs ./run.mjs --cases candidates.jsonl --out out/candidates.json
+node ./generate-candidates.mjs --review out/candidates.json --out ../../docs/memory-eval-candidates-review.md
+```
+
+The third step is the point: it sorts every disagreement between the draft
+label and what the pipeline did, so a reviewer reads causes instead of rows.
+
+- `precision-leak` — labelled none, injected anyway. The interesting bucket.
+- `recall-gap` — labelled hit, nothing surfaced.
+- `matcher-weak` — natural-language search under the conjunctive matcher, the
+  documented property above, not a labelling question.
+- `label-question` — the draft contradicts the text it wrote.
+
+Batch 1 is 45 rows from 8 memories for about $0.009: 32 agree, 3
+precision-leak, 2 recall-gap, 8 matcher-weak. The committed sheet is
+`docs/memory-eval-candidates-review.md`.
+
+Nothing flows back automatically. A candidate becomes a real case only when a
+human moves it into `cases.jsonl` and fixes the label, so re-running the draft
+cannot quietly rewrite the dataset — and the drafts are never used as labels.
+
+The catalog, not the model, is what limits batch size: six candidates per
+memory means eight memories cap a batch near fifty. Growing to the proposal's
+100–200 rows means adding memories first.
+
 ## Usage evaluation
 
 `usage.mjs` is the only part of this directory that calls a model. It takes
