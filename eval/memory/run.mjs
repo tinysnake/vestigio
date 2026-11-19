@@ -69,7 +69,8 @@ async function runSurface(item) {
 			ids: plan.injected.map((match) => match.memory_id),
 			candidates: plan.matched.map((match) => match.memory_id),
 			refs: [],
-			status: null,
+			status: plan.status,
+			reason: plan.reason,
 			stale: plan.injected
 				.filter((match) => match.freshness.is_stale)
 				.map((match) => match.memory_id),
@@ -90,6 +91,7 @@ async function runSurface(item) {
 			candidates: [],
 			refs: outcome.history.map((excerpt) => refKey(excerpt.source_ref)),
 			status: outcome.result.status,
+			reason: null,
 			stale: outcome.result.cards
 				.filter((card) => card.freshness?.is_stale === true)
 				.map((card) => card.memory_id),
@@ -127,6 +129,7 @@ function score(item, surfaced, error) {
 		surface: item.surface,
 		status,
 		retrieval_status: surfaced.status,
+		injection_reason: surfaced.reason ?? null,
 		rank: first === -1 || item.rank_ignored === true ? null : first + 1,
 		rank_ignored: item.rank_ignored === true,
 		expected_present: first !== -1,
@@ -146,7 +149,7 @@ function score(item, surfaced, error) {
 
 const results = [];
 for (const item of cases) {
-	let surfaced = { ids: [], candidates: [], refs: [], status: null, stale: [] };
+	let surfaced = { ids: [], candidates: [], refs: [], status: null, reason: null, stale: [] };
 	let error = null;
 	try {
 		surfaced = await runSurface(item);

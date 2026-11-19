@@ -63,7 +63,7 @@ Case fields:
 | `expected_source_refs` | `{session_id, message_id}` history excerpts that must surface |
 | `expected_stale_ids` | surfaced ids whose `freshness.is_stale` must be true |
 | `forbidden_source_refs` | excerpts that must not surface (used to prove foreign-project filtering) |
-| `expected_status` | optional `LayeredSearchStatus` (`partial`, `conflicted`, `not_found`, ...) |
+| `expected_status` | optional status: `LayeredSearchStatus` for search (`partial`, `conflicted`, `not_found`, ...), `injected` / `not_injected` for inject |
 | `include_history` | enable the history layer for this case |
 | `history_scenario` | key into `HISTORY_SCENARIOS`; defaults to `none` |
 | `rank_ignored` | presence only, no rank credit or penalty (conflict cases, where order carries no information) |
@@ -108,6 +108,12 @@ retrieval admitted, before budget and dedup) and empty for search, where the
 cards already are the final set. `surfaced_refs` is `session_id/message_id` for history
 excerpts that survived filtering. `rank` is the 1-based position of the first
 expected id.
+
+Inject results also carry `injection_reason` from `InjectionPlan.reason` (`no_match`,
+`over_budget`, `all_deduped`, ...). It is a diagnosis channel, not a scored
+field: it says why the pipeline stayed silent, which is what separates "nothing
+matched" from "matched but the budget dropped it". On this set only `no_match`
+and the injected `null` appear.
 
 Status precedence (`false_positive` outranks `miss`):
 
