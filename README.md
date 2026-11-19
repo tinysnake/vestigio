@@ -16,6 +16,7 @@ packages/core/src/contracts/   type shapes, boundary parsers, identity helpers
 packages/core/test/            contract tests
 eval/fixtures/                 synthetic retrieval corpus (JSONL)
 eval/baseline/                 no-memory vs Obelisk resource ledger
+eval/requests/                 actual-model free-choice eval for operator-approved saves
 docs/contracts.md              the frozen shapes, rules and compatibility range
 docs/*.md                      requirements, plan and research notes
 ```

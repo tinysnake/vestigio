@@ -22,3 +22,11 @@ export type {
   SummaryUpdateOutcome,
   UpdateSummaryInput,
 } from "./store.js";
+export type {
+  CompleteMemoryRequestInput,
+  EnqueueMemoryRequestInput,
+  EnqueueMemoryRequestResult,
+  MemoryRequest,
+  MemoryRequestEvidence,
+  MemoryRequestStatus,
+} from "../requests/queue.js";

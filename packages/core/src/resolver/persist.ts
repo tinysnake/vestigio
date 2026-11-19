@@ -163,12 +163,12 @@ function clip(text: string, max: number): string {
   return points.length <= max ? text : `${points.slice(0, Math.max(1, max - 1)).join("")}…`;
 }
 
-function buildTitle(question: string): string {
+export function buildTitle(question: string): string {
   const cleaned = question.replace(/\s+/gu, " ").trim();
   return `关于「${clip(cleaned, 48)}」的记忆`;
 }
 
-function buildKeywords(question: string): string[] {
+export function buildKeywords(question: string): string[] {
   const seen = new Set<string>();
   const keywords: string[] = [];
   for (const token of question.split(/[\s,，。;；:：、/\\|()（）[\]{}<>"'`~!?！？#*+=]+/u)) {

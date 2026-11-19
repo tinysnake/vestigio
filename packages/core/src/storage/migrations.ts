@@ -34,6 +34,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "stale_events",
     sql: readFileSync(new URL("../../migrations/0003_stale_events.sql", import.meta.url), "utf8"),
   },
+  {
+    version: 4,
+    name: "memory_requests",
+    sql: readFileSync(new URL("../../migrations/0004_memory_requests.sql", import.meta.url), "utf8"),
+  },
 ];
 
 export function listAppliedMigrations(db: DatabaseSync): AppliedMigration[] {

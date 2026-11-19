@@ -26,6 +26,7 @@ import {
   type MemoryId,
   type MemoryState,
   type MemoryUri,
+  type NavigationStatus,
   type NavSummary,
   type ProjectActivity,
   type Revision,
@@ -36,6 +37,22 @@ import {
   type UsageEvent,
 } from "../contracts/index.js";
 import { enqueueSummaryJob, type SummaryJob } from "../jobs/queue.js";
+import {
+  attachMemoryRequestTarget,
+  claimDueMemoryRequest,
+  completeMemoryRequest,
+  countMemoryRequests,
+  failMemoryRequest,
+  insertMemoryRequest,
+  listMemoryRequests,
+  readMemoryRequest,
+  setMemoryRequestNavigation,
+  type CompleteMemoryRequestInput,
+  type EnqueueMemoryRequestInput,
+  type EnqueueMemoryRequestResult,
+  type MemoryRequest,
+  type MemoryRequestStatus,
+} from "../requests/queue.js";
 import { StorageError, isUniqueViolation } from "./errors.js";
 import { applyMigrations, listAppliedMigrations, type AppliedMigration } from "./migrations.js";
 import { buildMatchQuery, normalizeForIndex, type MatchMode } from "./tokenize.js";
@@ -980,6 +997,68 @@ export class MemoryStore {
         .prepare("DELETE FROM hotspot_memberships WHERE project_id = ? AND memory_id = ?")
         .run(projectId, memoryId);
     });
+  }
+
+  /**
+   * The durable proactive-memory queue. Acceptance is separate from the save:
+   * enqueueing is durable and deduped, and the background manager claims one
+   * row at a time, so a crash or a failed model call retries the same row.
+   */
+  enqueueMemoryRequest(input: EnqueueMemoryRequestInput): EnqueueMemoryRequestResult {
+    return this.write(() => insertMemoryRequest(this.db, input));
+  }
+
+  claimDueMemoryRequest(input: {
+    now_ms: number;
+    owner: string;
+    lease_ms?: number | undefined;
+    max_attempts?: number | undefined;
+  }): MemoryRequest | null {
+    return this.write(() => claimDueMemoryRequest(this.db, input));
+  }
+
+  readMemoryRequest(requestId: string): MemoryRequest | null {
+    return this.read(() => readMemoryRequest(this.db, requestId));
+  }
+
+  listMemoryRequests(limit?: number): MemoryRequest[] {
+    return this.read(() => listMemoryRequests(this.db, limit));
+  }
+
+  countMemoryRequests(status?: MemoryRequestStatus): number {
+    return this.read(() => countMemoryRequests(this.db, status));
+  }
+
+  attachMemoryRequestTarget(input: {
+    request_id: string;
+    memory_uri: MemoryUri;
+    revision: Revision;
+    at: string;
+  }): void {
+    this.write(() => attachMemoryRequestTarget(this.db, input));
+  }
+
+  completeMemoryRequest(input: CompleteMemoryRequestInput): MemoryRequest {
+    return this.write(() => completeMemoryRequest(this.db, input));
+  }
+
+  setMemoryRequestNavigation(input: {
+    request_id: string;
+    navigation_status: NavigationStatus;
+    at: string;
+  }): void {
+    this.write(() => setMemoryRequestNavigation(this.db, input));
+  }
+
+  failMemoryRequest(input: {
+    request: MemoryRequest;
+    status: "pending" | "failed" | "rejected";
+    reason: string;
+    next_attempt_at: string;
+    at: string;
+    max_attempts?: number | undefined;
+  }): MemoryRequest {
+    return this.write(() => failMemoryRequest(this.db, input));
   }
 
   /**

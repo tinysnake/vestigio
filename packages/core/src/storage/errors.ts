@@ -14,6 +14,8 @@ export type StorageErrorCode =
   | "stale_event_conflict"
   | "stale_unknown_event"
   | "row_corrupt"
+  | "invariant_violation"
+  | "write_failed"
   | "closed";
 
 export class StorageError extends Error {

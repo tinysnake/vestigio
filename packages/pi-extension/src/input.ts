@@ -41,6 +41,11 @@ export function handleInput(
 		return { action: "continue" };
 	}
 
+	// Record the real input so other hooks can read the operator's own words for
+	// this turn. This handler never writes a memory request, and it never reads
+	// or mutates one: saving is the agent's decision, not this pipeline's.
+	state.noteUserInput(event.text);
+
 	const store = state.ensureStore();
 	if (store === null) {
 		state.writeDecision({

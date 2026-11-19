@@ -15,7 +15,8 @@
     "./extraction": "./src/extraction/index.ts",
     "./stale": "./src/stale/index.ts",
     "./jobs": "./src/jobs/index.ts",
-    "./storage": "./src/storage/index.ts"
+    "./storage": "./src/storage/index.ts",
+    "./requests": "./src/requests/index.ts"
   },
   "scripts": {
     "test": "vitest run",

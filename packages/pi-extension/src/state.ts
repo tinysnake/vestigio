@@ -57,6 +57,7 @@ export class VestigioState {
 	private readonly repairAttempted: Set<string> = new Set();
 	private readonly backgroundAttempted: Set<string> = new Set();
 	private detectorCheckpoint: string | null = null;
+	private userInput: { text: string } | null = null;
 
 	constructor(config: VestigioConfig, log?: DecisionLog, deps: StateDeps = {}) {
 		this.config = config;
@@ -200,6 +201,23 @@ export class VestigioState {
 
 	advanceDetectorCheckpoint(entryId: string | null): void {
 		this.detectorCheckpoint = entryId;
+	}
+
+	/**
+	 * The real input this turn is answering. The request tool classifies this
+	 * text to refuse a temporary or negated save; there is no code-enforced
+	 * confirmation and no model-supplied confirmation flag.
+	 */
+	noteUserInput(text: string): void {
+		this.userInput = text.trim().length === 0 ? null : { text };
+	}
+
+	get currentUserInput(): { text: string } | null {
+		return this.userInput;
+	}
+
+	clearUserInput(): void {
+		this.userInput = null;
 	}
 
 	/** Monotonic per-session turn counter; unique even for same-millisecond input. */
