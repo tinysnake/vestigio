@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T15:38:18.597Z",
-  "commit": "983fe36",
+  "generated_at": "2026-11-19T16:19:46.410Z",
+  "commit": "2cb8419",
   "catalog_version": 3,
   "dataset_sha256": "712dbdf4b70d892122ab97d5b8e3b417a4750450f31d10b8cd9c76bc10b0cbb5",
   "seed": {
@@ -11,9 +11,9 @@
   "summary": {
     "cases": 18,
     "hit": 11,
-    "clean": 5,
+    "clean": 7,
     "miss": 0,
-    "false_positive": 2,
+    "false_positive": 0,
     "error": 0
   },
   "metrics": {
@@ -21,9 +21,9 @@
     "recall_at_3": 1,
     "recall_at_5": 1,
     "inject_hit_rate": 1,
-    "false_positive_rate": 0.1111111111111111,
-    "candidate_false_positive_rate": 0.25,
-    "injection_false_positive_rate": 0.25,
+    "false_positive_rate": 0,
+    "candidate_false_positive_rate": 0,
+    "injection_false_positive_rate": 0,
     "budget_rescued": 0,
     "source_gap_rescue_rate": 1
   },
@@ -40,15 +40,11 @@
       "forbidden_present": false,
       "has_forbidden": true,
       "candidate_ids": [
-        "mem-deploy-port",
-        "mem-port-rule-b",
-        "mem-port-rule-a"
+        "mem-deploy-port"
       ],
       "candidate_leak": false,
       "surfaced_ids": [
-        "mem-deploy-port",
-        "mem-port-rule-b",
-        "mem-port-rule-a"
+        "mem-deploy-port"
       ],
       "surfaced_refs": [],
       "surfaced_stale": [],
@@ -152,21 +148,17 @@
     {
       "case_id": "inject-negative-near-miss",
       "surface": "inject",
-      "status": "false_positive",
-      "retrieval_status": "injected",
-      "injection_reason": null,
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
       "rank": null,
       "rank_ignored": false,
       "expected_present": false,
-      "forbidden_present": true,
+      "forbidden_present": false,
       "has_forbidden": true,
-      "candidate_ids": [
-        "mem-deploy-port"
-      ],
-      "candidate_leak": true,
-      "surfaced_ids": [
-        "mem-deploy-port"
-      ],
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
       "surfaced_refs": [],
       "surfaced_stale": [],
       "expected_stale_present": true,
@@ -177,24 +169,20 @@
     {
       "case_id": "inject-near-miss-port-rule",
       "surface": "inject",
-      "status": "false_positive",
+      "status": "clean",
       "retrieval_status": "injected",
       "injection_reason": null,
       "rank": null,
       "rank_ignored": false,
       "expected_present": false,
-      "forbidden_present": true,
+      "forbidden_present": false,
       "has_forbidden": true,
       "candidate_ids": [
-        "mem-deploy-port",
-        "mem-port-rule-b",
-        "mem-port-rule-a"
+        "mem-deploy-port"
       ],
-      "candidate_leak": true,
+      "candidate_leak": false,
       "surfaced_ids": [
-        "mem-deploy-port",
-        "mem-port-rule-b",
-        "mem-port-rule-a"
+        "mem-deploy-port"
       ],
       "surfaced_refs": [],
       "surfaced_stale": [],

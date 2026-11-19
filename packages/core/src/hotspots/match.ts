@@ -20,8 +20,12 @@
  *    from matching inside an unrelated word and stops "the"/"is" from matching.
  * 3. A keyword with two or more tokens also matches as a contiguous phrase and
  *    adds a bonus, so a multi-word alias like "deploy port" beats a stray token.
- * 4. Threshold: one signal is enough (`min_score` default 1). The pool is small
- *    and the max-3 cap plus the byte budget bound the cost of a weak hit.
+ * 4. Threshold: one signal is enough (`min_score` default 1) only when that
+ *    signal is strong: a keyword alias, a contiguous keyword phrase, or two
+ *    independent tokens. A lone shared nav/title token is not enough, because
+ *    "配置" or "端口" alone appears in half the summaries and would drag an
+ *    unrelated memory into the prompt. Aliases are the escape hatch: a memory
+ *    that really is about a word declares it in `keywords`.
  * 5. An entry is returned at most once per turn no matter how many tokens or
  *    aliases hit, because the unit of the result is the memory.
  */
@@ -114,6 +118,21 @@ function aliasTokens(entry: HotspotEntry): Set<string> {
   return new Set(matchTokens(entry.keywords.join(" ")));
 }
 
+/**
+ * Keywords that tokenize to a single token. Only these stand alone, because a
+ * piece of a longer alias ("端口" out of "端口约定") is not the alias itself.
+ */
+function singleTokenAliases(entry: HotspotEntry): Set<string> {
+  const single = new Set<string>();
+  for (const keyword of entry.keywords) {
+    const tokens = matchTokens(keyword);
+    if (tokens.length === 1) {
+      single.add(tokens[0] as string);
+    }
+  }
+  return single;
+}
+
 /** True when `needle` occurs contiguously inside `haystack`. */
 function containsPhrase(haystack: readonly string[], needle: readonly string[]): boolean {
   if (needle.length === 0 || needle.length > haystack.length) {
@@ -143,6 +162,7 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
   for (const entry of input.entries) {
     input.deadline?.check("match");
     const aliases = aliasTokens(entry);
+    const singleAliases = singleTokenAliases(entry);
     const own = entryTokens(entry);
     const matched: string[] = [];
     for (const token of inputTokens) {
@@ -150,6 +170,7 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
         matched.push(token);
       }
     }
+    const aliasHits = matched.filter((token) => singleAliases.has(token)).length;
     let phrase = false;
     for (const keyword of entry.keywords) {
       const needle = matchTokens(keyword);
@@ -162,7 +183,9 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
       continue;
     }
     const score = matched.length + (phrase ? PHRASE_BONUS : 0);
-    if (score < minScore) {
+    // A weak hit is one shared non-alias token with no phrase: too common to act on.
+    const strong = phrase || aliasHits > 0 || matched.length >= 2;
+    if (score < minScore || !strong) {
       continue;
     }
     matches.push({

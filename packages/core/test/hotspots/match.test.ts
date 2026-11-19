@@ -31,11 +31,24 @@ describe("matchHotspots", () => {
     expect(phrase[0]?.phrase_matched).toBe(true);
     expect(phrase[0]?.score).toBeGreaterThanOrEqual(PHRASE_BONUS);
 
+    // A piece of a multi-token alias is not the alias itself.
     const single = matchHotspots({
       entries: [makeEntry({ keywords: ["deploy port"], nav_text: "改端口前值得读取的一条记忆。" })],
       text: "we deploy everything",
     });
-    expect(single[0]?.phrase_matched).toBe(false);
+    expect(single).toEqual([]);
+  });
+
+  it("surfaces on one token when that token is a whole alias", () => {
+    const entry = makeEntry({ keywords: ["deploy"], nav_text: "部署流程说明。" });
+    expect(matchHotspots({ entries: [entry], text: "we deploy everything" })).toHaveLength(1);
+  });
+
+  it("drops a lone shared summary token that no alias claims", () => {
+    const entry = makeEntry({ keywords: ["端口约定"], nav_text: "部署配置与默认端口。" });
+    expect(matchHotspots({ entries: [entry], text: "旧配置的字段名" })).toEqual([]);
+    const aliased = makeEntry({ keywords: ["默认端口"], nav_text: "部署配置。" });
+    expect(matchHotspots({ entries: [aliased], text: "默认端口是多少" })).toHaveLength(1);
   });
 
   it("never matches a short English identifier inside an unrelated word", () => {
