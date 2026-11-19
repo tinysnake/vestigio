@@ -186,9 +186,18 @@ describe("detectStale", () => {
 
 describe("parseDetectorDecision", () => {
   it("accepts an empty findings array and rejects malformed payloads", () => {
-    expect(parseDetectorDecision('{"findings":[]}', ["mem-active"], ["entry-3"])).toEqual({ ok: true, findings: [] });
-    expect(parseDetectorDecision("not json", ["mem-active"], ["entry-3"]).ok).toBe(false);
-    expect(parseDetectorDecision('{"findings":[{"memory_id":"mem-active"}]}', ["mem-active"], ["entry-3"]).ok).toBe(false);
+    expect(parseDetectorDecision('{"findings":[]}', ["mem-active"], ["entry-3"])).toEqual({ status: "accepted", findings: [] });
+    expect(parseDetectorDecision("not json", ["mem-active"], ["entry-3"]).status).toBe("rejected");
+    expect(parseDetectorDecision('{"findings":[{"memory_id":"mem-active"}]}', ["mem-active"], ["entry-3"]).status).toBe("rejected");
+  });
+
+  it("keeps an accepted empty reply apart from a rejected one", () => {
+    const empty = parseDetectorDecision('{"findings":[]}', [], []);
+    const rejected = parseDetectorDecision("not json", [], []);
+    expect(empty.status).toBe("accepted");
+    expect(rejected.status).toBe("rejected");
+    if (rejected.status !== "rejected") return;
+    expect(rejected.failure).toBe("malformed_json");
   });
 
   it("normalizes the reason and bounds the excerpt", () => {
@@ -200,8 +209,8 @@ describe("parseDetectorDecision", () => {
       ["mem-active"],
       ["entry-3"],
     );
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
+    expect(parsed.status).toBe("accepted");
+    if (parsed.status !== "accepted") return;
     expect(parsed.findings[0]?.reason).toBe("many spaces");
     expect(parsed.findings[0]!.excerpt.length).toBeLessThan(900);
   });

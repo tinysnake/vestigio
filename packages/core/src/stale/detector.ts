@@ -16,7 +16,7 @@ import {
   normalizeStaleReason,
   type FreshnessBrief,
 } from "../contracts/index.js";
-import type { ModelPort, ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
+import type { ModelFailureStatus, ModelPort, ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
 
 export const DETECTOR_MAX_OUTPUT_TOKENS = 1024;
 export const DETECTOR_MAX_CANDIDATES = 24;
@@ -81,6 +81,13 @@ export type DetectorResult = {
   status: DetectorStatus;
   findings: DetectorFinding[];
   reason: string | null;
+  /**
+   * The model client's typed failure status when `complete` failed, else `null`.
+   * A caller deciding whether one more ask is worth it reads this instead of
+   * the prose in `reason`. A reply the client accepted but the reader rejected
+   * shows as `status: "invalid"` with `failure_status: null`.
+   */
+  failure_status: ModelFailureStatus | null;
   call: DetectorCall;
 };
 
@@ -134,9 +141,16 @@ export function buildDetectorUserMessage(
   return lines.join("\n");
 }
 
-type ParseOutcome =
-  | { ok: true; findings: DetectorFinding[] }
-  | { ok: false; failure: string };
+/**
+ * The reader's verdict on one model reply. `rejected` is a whole-response
+ * rejection: one bad finding discards the entire reply, so nothing in it is
+ * trusted. `accepted` is a reply that parsed, whose `findings` may be empty
+ * ("nothing changed") — an accepted empty reply and a rejected reply are
+ * different outcomes, so read `status` rather than counting findings.
+ */
+export type DetectorDecisionParse =
+  | { status: "accepted"; findings: DetectorFinding[] }
+  | { status: "rejected"; failure: string };
 
 function readJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
@@ -162,18 +176,18 @@ export function parseDetectorDecision(
   text: string,
   allowedMemoryIds: readonly string[],
   allowedEvidenceIds: readonly string[],
-): ParseOutcome {
+): DetectorDecisionParse {
   const object = readJsonObject(text);
-  if (object === null) return { ok: false, failure: "malformed_json" };
+  if (object === null) return { status: "rejected", failure: "malformed_json" };
   const raw = object["findings"];
-  if (!Array.isArray(raw)) return { ok: false, failure: "missing_findings" };
-  if (raw.length > DETECTOR_MAX_EVIDENCE) return { ok: false, failure: "too_many_findings" };
+  if (!Array.isArray(raw)) return { status: "rejected", failure: "missing_findings" };
+  if (raw.length > DETECTOR_MAX_EVIDENCE) return { status: "rejected", failure: "too_many_findings" };
   const allowedMemory = new Set(allowedMemoryIds);
   const allowedEvidence = new Set(allowedEvidenceIds);
   const findings: DetectorFinding[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      return { ok: false, failure: "finding_not_object" };
+      return { status: "rejected", failure: "finding_not_object" };
     }
     const record = item as Record<string, unknown>;
     const memoryId = record["memory_id"];
@@ -181,21 +195,21 @@ export function parseDetectorDecision(
     const excerpt = record["excerpt"];
     const evidence = record["evidence_ids"];
     if (typeof memoryId !== "string" || !allowedMemory.has(memoryId)) {
-      return { ok: false, failure: `unknown_memory:${String(memoryId)}` };
+      return { status: "rejected", failure: `unknown_memory:${String(memoryId)}` };
     }
     if (typeof reason !== "string" || normalizeStaleReason(reason).length === 0) {
-      return { ok: false, failure: `empty_reason:${memoryId}` };
+      return { status: "rejected", failure: `empty_reason:${memoryId}` };
     }
     if (typeof excerpt !== "string") {
-      return { ok: false, failure: `missing_excerpt:${memoryId}` };
+      return { status: "rejected", failure: `missing_excerpt:${memoryId}` };
     }
     if (!Array.isArray(evidence) || evidence.length === 0) {
-      return { ok: false, failure: `missing_evidence:${memoryId}` };
+      return { status: "rejected", failure: `missing_evidence:${memoryId}` };
     }
     const ids: string[] = [];
     for (const id of evidence) {
       if (typeof id !== "string" || !allowedEvidence.has(id)) {
-        return { ok: false, failure: `unknown_evidence:${String(id)}` };
+        return { status: "rejected", failure: `unknown_evidence:${String(id)}` };
       }
       if (!ids.includes(id)) ids.push(id);
     }
@@ -206,7 +220,7 @@ export function parseDetectorDecision(
       evidence_ids: ids,
     });
   }
-  return { ok: true, findings };
+  return { status: "accepted", findings };
 }
 
 /**
@@ -222,6 +236,7 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
       status: "none",
       findings: [],
       reason: null,
+      failure_status: null,
       call: callOf(input.model_id ?? "unconfigured", ZERO_USAGE, performance.now() - started, "ok"),
     };
   }
@@ -245,6 +260,7 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
       status: "failed",
       findings: [],
       reason: `model_threw:${error instanceof Error ? error.message : String(error)}`,
+      failure_status: null,
       call: callOf(input.model_id ?? "unconfigured", ZERO_USAGE, performance.now() - started, "failed"),
     };
   }
@@ -255,6 +271,7 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
       status: cancelled ? "cancelled" : "failed",
       findings: [],
       reason: `model_${result.status}:${result.reason}`,
+      failure_status: result.status,
       call: callOf(input.model_id ?? "unconfigured", ZERO_USAGE, elapsed, cancelled ? "cancelled" : "failed"),
     };
   }
@@ -264,11 +281,12 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
     candidates.map((candidate) => candidate.memory_id),
     evidence.map((item) => item.id),
   );
-  if (!parsed.ok) {
+  if (parsed.status === "rejected") {
     return {
       status: "invalid",
       findings: [],
       reason: parsed.failure,
+      failure_status: null,
       call: callOf(result.value.model, result.value.usage, elapsed, "invalid"),
     };
   }
@@ -276,6 +294,7 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
     status: parsed.findings.length === 0 ? "none" : "ok",
     findings: parsed.findings,
     reason: null,
+    failure_status: null,
     call: callOf(result.value.model, result.value.usage, elapsed, "ok"),
   };
 }
