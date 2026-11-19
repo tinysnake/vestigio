@@ -42,6 +42,7 @@ source directly:
 ```
 node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3
 node --import ../pi/hook.mjs ./run.mjs --only f1f2 --repeat 3 --repair-mode background
+node --import ../pi/hook.mjs ./run.mjs --only f5b --probe-only
 ```
 
 `--repair-mode` sets `VESTIGIO_REPAIR_MODE` for the pi children and is recorded in
@@ -92,6 +93,31 @@ that session: the memory is stale and already carries pending events, so the
 retrieval path has to repair it on its own. This is the only place where the
 feature's user-visible outcome is measured, because it is the only place where a
 real model writes a body.
+
+### Resolver probe
+
+A corpus that carries `resolve_probe` (a list of questions) runs, on every repeat
+and in every mode, the core `resolveMemory` the `memory_resolve` tool calls. It
+runs on a fresh store seeded from the corpus, in a fresh project directory, with
+a `ModelPort` that posts through the same recording proxy as the agent, the
+extension and the judge, so a probe call is a real, logged, budgeted model call
+and not a mock. The call passes `repair: "defer"`, so the probe observes the
+layer walk and never rewrites the memory.
+
+This exists because the agent decides when to call the tool, so a natural
+question's walk cannot be observed from a session alone. The probe makes it
+repeatable, and it is what caught the re-gather defect: before it was fixed,
+`上线时段安排在什么时候，首轮放量比例是多少，出问题按哪个脚本回退？` came back
+`not_found` with `active=empty(0/0)` because one query ANDs every token it names.
+After the fix the question resolves, and the plainer
+`我们现在的发布窗口、灰度比例和发布时长上限分别是多少？` reaches
+`active=matched(1/1)` where it once returned `empty(0/0)`.
+
+Each probe records `status`, `answer`, `cards`, `missing`, `model_calls`,
+`elapsed_ms` and one `layer=status(emitted/candidates)` string per layer, in
+`run.json` as `resolve_probe` and in `resolve_probe.jsonl`. `--probe-only` runs
+the probes and skips the turns, which is the cheap way to re-check retrieval
+after a change.
 
 The judge runs once per repeat to `judge_model`, over the same gateway, logged
 through the same proxy and counted against the same budget. `judge_model` must
@@ -321,6 +347,10 @@ node --import ../pi/hook.mjs ./run.mjs --repeat 3 --variant detector
 
 ## Measured so far
 
+The printed table's summary column is a median for numeric metrics and a pass
+count (`2/3`) for every boolean, because the median of `[false, true, true]` is
+`true` and hides the repeat that failed.
+
 `f1f2 --repeat 2` on 2026-11-18, agent `magpie/auto/deepseek-v4.1-flash`
 thinking `low`, extension on the same model, judge `codex/gpt-6.2-sol` thinking
 `high` (run `eval/live/runs/2026-11-18T15-38-18-408Z`).
@@ -372,11 +402,43 @@ of session 1 because that is where the pass runs.
 
 `retrieval_drove_repair` is `false` in every repeat by construction: the mode
 exists so that retrieval does not repair. `f5_repair_ms` is `null` for the same
-reason, and `f5_background_repair_ms` carries the pass instead. The same corpus
-without `--repair-mode` (inline) scored `judge_pass 3/5` at `--repeat 5`, so the
-sample is too small to rank the two timings by content quality; the latency
-difference is measured and real (a 23-25 s pass here, 129 s for one
-corpus-`hygiene` memory, against 15-101 s per inline repair).
+reason, and `f5_background_repair_ms` carries the pass instead. Across runs the
+background pass scored `judge_pass` 3/3 twice while inline scored 3/5, 2/5 and
+2/3, so background has the better content record as well as the shorter
+latency, though every sample is small.
+
+### 2026-11-19 round, all three corpora
+
+After the re-gather fix, the 500-660 body band and the repair-quality work: `f1f2`
+in `eval/live/runs/2026-11-19T04-44-40-798Z`, `hygiene` in
+`.../04-58-28-284Z`, `f5b` inline in `.../05-05-30-332Z` and `f5b`
+`--repair-mode background` in `.../05-28-41-416Z`. Three repeats each, same
+models as above.
+
+| metric | f1f2 | hygiene | f5b inline | f5b background |
+| --- | --- | --- | --- | --- |
+| `system_recall` | 1 | 1 | 1 | 1 |
+| `handled_rate` | 1 | 1 | 1 | 1 |
+| `agent_mark_rate` | 1 | 1 | 1 | 1 |
+| `false_mark_rate` | 0 | 0 | 0 | 0 |
+| `multiplicity` | 1 | n/a | 1 | 1 |
+| `revision_correctness` | 1 | 1 | 1 | 1 |
+| `mark_stale_recorded` | 3 | 1 | 4 | 4 |
+| `repair_rate` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `pending_drained` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `repaired_in_place` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `fact_fidelity` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `navigation_updated` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `published_after` | 3/3 | 3/3 | 3/3 | 3/3 |
+| `judge_pass` | 3/3 | 3/3 | 2/3 | 3/3 |
+| `f5_body_char_count` | 592-651 | 536-579 | 564-649 | 630-649 |
+
+The one failure is `f5b` inline repeat 1, whose repair was cut off by the 150 s
+read deadline (`repair_source none`, `f5_repair_ms 150012`); the other two inline
+repairs took 70308 and 114464 ms, and the `f1f2` and `hygiene` repairs took
+43137-147440 ms and 23641-99917 ms. The background pass took 18901-42071 ms. No
+run hit the model-call or token budget (79-114 calls, 243646-403924 tokens per
+three-repeat run). Every body landed inside the 500-660 band.
 
 ## What this does not prove
 
