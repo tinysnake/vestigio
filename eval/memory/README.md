@@ -136,6 +136,11 @@ Metrics use non-error cases only:
 | `budget_rescued` | count of cases where the cap dropped a leaked candidate |
 | `source_gap_rescue_rate` | cases with `expected_source_refs` |
 
+`experiments/nl-cases.jsonl` is the same dataset with the six card queries phrased
+as natural questions. It exists to show why the matcher is conjunctive: under the
+production `AND` mode five of six miss, and under `OR` recall returns while six of
+the eight memories enter the same result list.
+
 The two false-positive rates share one denominator on purpose. For inject cases
 the pool can admit noise that the budget then drops, so `candidate` (from
 `plan.matched`) and `injection` (from `plan.injected`) answer different
