@@ -45,7 +45,8 @@ export const DEFAULT_MAX_HOTSPOT_MEMORIES = 3;
  * 端口 or 配置 alone would otherwise drag every port-ish memory into a prompt
  * about something else; the same word inside a two-token hit still counts.
  */
-export const COMMON_ALIAS_POOL_LIMIT = 3;
+/** Below this token count the query is just a keyword, so one alias says it all. */
+export const SHORT_QUERY_TOKENS = 3;
 /** One shared signal is enough; exposed so PR-06/07 can tune it with evidence. */
 export const DEFAULT_MIN_MATCH_SCORE = 1;
 /** A phrase hit is worth this many token hits. */
@@ -198,10 +199,6 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
   const minScore = input.min_score ?? DEFAULT_MIN_MATCH_SCORE;
   const activitySeq = input.activity_seq ?? 0;
   const matches: HotspotMatch[] = [];
-  // Document frequency per pool entry, so a ubiquitous alias can be demoted.
-  const entryTokenSets = input.entries.map((entry) => entryTokens(entry));
-  const documentFrequency = (token: string): number =>
-    input.entries.filter((_, index) => entryTokenSets[index]?.has(token) === true).length;
 
   for (const entry of input.entries) {
     input.deadline?.check("match");
@@ -214,12 +211,14 @@ export function matchHotspots(input: MatchInput): HotspotMatch[] {
         matched.push(token);
       }
     }
-    // A one-token query has nothing else to match on, so a common alias still
-    // counts there; demotion only applies when the input says more than that.
+    // A whole alias stands alone when the query is basically that word, or when
+    // the query opens with it: Chinese questions name their topic first, so
+    // 迁移失败后先做什么 is about migrations, while 把部署章节的截图换成新版 is
+    // about a screenshot that happens to mention deployment.
     const aliasHits = matched.filter(
       (token) =>
         singleAliases.has(token) &&
-        (inputTokens.length === 1 || documentFrequency(token) < COMMON_ALIAS_POOL_LIMIT),
+        (inputTokens.length <= SHORT_QUERY_TOKENS || inputTokens[0] === token),
     ).length;
     let phrase = false;
     for (const keyword of entry.keywords) {

@@ -233,24 +233,36 @@ Two cases started life as labelled false positives, and both are now clean:
   `mem-port-rule-a` and `mem-port-rule-b` on the shared token 端口, which was
   only a fragment of their alias 端口约定.
 
-The fix is in `matchHotspots` (packages/core/src/hotspots/match.ts): a hit now
-needs a whole one-token alias, a contiguous alias phrase, or two independent
-tokens, so a lone shared summary token is not enough. A single-token alias that
-most of the pool also declares is demoted as well, unless the whole input is
-that word. Both cases flipped to
-clean with no labelled recall lost, and `packages/core/test/hotspots/match.test.ts`
-pins the rule from both sides.
+Three rounds of fixes live in `matchHotspots` (packages/core/src/hotspots/match.ts),
+each one forced by a case that injected noise:
+
+1. A hit needs a whole one-token alias, a contiguous alias phrase, or two
+   independent tokens — a lone shared summary token is not enough. Fixed 配置 and
+   the 端口 fragment of 端口约定.
+2. Overlapping bigrams count once: 的默 and 默认 are the word 默认 seen twice.
+   Fixed a neighbour entry matching a single 默认.
+3. A keyword alone decides only when the query is that word (3 tokens or fewer)
+   or opens with it. Chinese questions name their topic first, so
+   迁移失败后先做什么 is about migrations while 把部署章节的截图换成新版 is about a
+   screenshot that happens to mention deployment. Fixed the batch-2 leak on
+   部署, and left 迁移 working.
+
+Candidate batch 2 measured the effect: precision leaks fell from 9 to 6 of 119
+drafts, and the 18-case baseline stayed at 11 hit / 7 clean / 0 false positive,
+so no labelled recall was traded away for it. The six that remain are
+same-topic-different-question drafts (a Cache-Control header, a token column,
+pool leak debugging, an i18n upgrade) — a lexical matcher cannot separate
+those, and two of them run in the other project's scope where the injected
+memory is the right one anyway.
 
 That leaves the baseline at zero false positives on 18 cases, which is a small
 set: treat it as a floor to defend, not as proof of precision.
 
-Both live at the current floor of 1, and the baseline records the cost of moving
-it. Setting `DEFAULT_MIN_MATCH_SCORE` to 2 makes both clean and drops
-`false_positive_rate` to 0.000, but turns `inject-implicit-migration` into a miss
-(one shared token is all it has), taking `inject_hit_rate` to 0.750 and
-Recall@1 to 0.875. At 3 and 4 another inject case is lost. On 18 cases that is a
-sweep, not evidence for a threshold change; shrinking this known-gaps list is
-what a larger dataset should decide.
+The floor itself is still 1, and the baseline records what moving it costs.
+Setting `DEFAULT_MIN_MATCH_SCORE` to 2 keeps false positives at 0.000 but turns
+`inject-implicit-migration` into a miss (one shared token is all it has), taking
+`inject_hit_rate` to 0.800 and Recall@1 to 0.889. On 18 cases that is a sweep,
+not evidence for a threshold change.
 
 ## Query wording
 

@@ -61,6 +61,21 @@ describe("matchHotspots", () => {
     expect(matchHotspots({ entries, text: "端口" })).toHaveLength(3);
   });
 
+  it("lets a keyword stand alone only at the start of a query", () => {
+    // Both memories are about deployment; only one is about this project's port.
+    const mine = makeEntry({ memory_id: "mem-mine", title: "部署脚本默认端口", keywords: ["部署", "端口"], nav_text: "部署配置与默认端口。" });
+    const theirs = makeEntry({ memory_id: "mem-theirs", title: "另一项目的部署端口", keywords: ["部署", "端口"], nav_text: "另一项目的部署端口。" });
+    const entries = [mine, theirs];
+    // 部署 is a keyword of both, and it does not open the sentence, so it is
+    // not evidence on its own.
+    expect(matchHotspots({ entries, text: "把部署章节的截图换成新版" })).toEqual([]);
+    // Two independent words still are, and the closer memory ranks first
+    // (in production the scope filter drops the other project entirely).
+    expect(matchHotspots({ entries, text: "更新部署脚本的默认端口" })[0]?.memory_id).toBe("mem-mine");
+    // And a bare keyword query still reaches the one memory that owns it.
+    expect(matchHotspots({ entries, text: "端口" }).map((m) => m.memory_id).sort()).toEqual(["mem-mine", "mem-theirs"]);
+  });
+
   it("counts a run of overlapping bigrams as one piece of evidence", () => {
     // 默认 in the input yields the bigrams 的默 and 默认: one word, one signal.
     // The title is a default in makeEntry, so clear it: only the nav shares a word.
