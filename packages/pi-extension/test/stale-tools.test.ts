@@ -269,6 +269,41 @@ describe("memory_mark_stale", () => {
 		expect(store.listPendingStaleEvents("mem-deploy")).toHaveLength(0);
 		store.close();
 	});
+
+	it("rejects a reason whose value appears in no evidence text", async () => {
+		const { store, tools, ctx } = setup();
+		const result = await markStale(tools, ctx, { reason: "并发上限已降到 16" });
+		expect(result.content[0]!.text).toContain("no evidence text contains any of them");
+		expect(store.countPendingStaleEvents("mem-deploy")).toBe(0);
+		store.close();
+	});
+
+	it("does not anchor a value that only appears inside a longer number", async () => {
+		const { store, tools, ctx } = setup();
+		const result = await markStale(tools, ctx, { reason: "默认端口已改为 1808" });
+		expect(result.content[0]!.text).toContain("no evidence text contains any of them");
+		expect(store.countPendingStaleEvents("mem-deploy")).toBe(0);
+		store.close();
+	});
+
+	it("accepts the replaced value next to the carried one whatever the number format", async () => {
+		const { store, tools, ctx } = setup();
+		const result = await markStale(tools, ctx, { reason: "默认端口已从 9090 调整为 18,080" });
+		expect(result.details.inserted).toBe(true);
+		expect(store.countPendingStaleEvents("mem-deploy")).toBe(1);
+		store.close();
+	});
+
+	it("accepts a qualitative reason with no value to anchor", async () => {
+		const { store, tools, ctx } = setup();
+		const result = await markStale(tools, ctx, {
+			reason: "回滚顺序已经调整，摘要里的步骤需要更新",
+			excerpt: "回滚顺序改为先恢复镜像，再恢复配置。",
+			source_message_ids: ["e-3"],
+		});
+		expect(result.details.inserted).toBe(true);
+		store.close();
+	});
 });
 
 describe("memory_read freshness", () => {

@@ -493,12 +493,60 @@ function renderFreshness(freshness: Freshness | undefined): string[] {
 	return lines;
 }
 
+/**
+ * Value-looking tokens in a reason: numbers with optional separators, units or
+ * a percent sign, clock and date forms, weekdays and slash-separated paths.
+ * The grammar is deliberately wide, because the guard only has to notice a
+ * reason whose values appear in no evidence text at all.
+ */
+const REASON_VALUE =
+	/(?:\d[\d,_]*(?:[:.]\d+)*)\s*(?:%|[kK]|万|亿|MB|GB|KB|ms|毫秒|秒|分钟|小时|天|次|个|人|元)?|周[一二三四五六日天]|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+/gu;
+
+/**
+ * Comparison form: full-width digits folded to ASCII, whitespace and numeric
+ * separators dropped, case folded, so `5,678` and `5 678` compare equal to
+ * `5678` and `MB` compares equal to `mb`.
+ */
+function flattenForCompare(text: string): string {
+	return text
+		.replace(/[０-９]/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+		.replace(/[\s,_]/gu, "")
+		.toLowerCase();
+}
+
+function containsToken(haystack: string, token: string): boolean {
+	const escaped = token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+	// The boundaries stop `16` from matching inside `2016`.
+	return new RegExp(`(?<![0-9a-z])${escaped}(?![0-9a-z])`, "u").test(haystack);
+}
+
+/**
+ * The values a reason names that its evidence does not carry, or null when the
+ * reason is grounded. A reason with no value token is qualitative and passes,
+ * and one carried value is enough: agents write the value they replaced next to
+ * the new one. A reason that names values and matches none of them is a report
+ * with no basis, and it is rejected before it becomes a pending event every
+ * later session has to read.
+ */
+function unanchoredValues(reason: string, evidence: string): string[] | null {
+	const named: string[] = [];
+	for (const match of reason.matchAll(REASON_VALUE)) {
+		const token = match[0];
+		named.push(token);
+		const numeric = /^\d[\d,_]*(?:[:.]\d+)*/u.exec(token)?.[0];
+		if (numeric !== undefined && numeric !== token) named.push(numeric);
+	}
+	if (named.length === 0) return null;
+	const haystack = flattenForCompare(evidence);
+	return named.some((token) => containsToken(haystack, flattenForCompare(token))) ? null : named;
+}
+
 function registerStaleTools(pi: ExtensionAPI, state: VestigioState): void {
 	pi.registerTool({
 		name: "memory_mark_stale",
 		label: "Memory mark stale",
 		description:
-			"Record that a stored memory summary has not absorbed later evidence. Idempotent: re-marking the same logical change stores one durable event. This never rewrites the summary, and you cannot rewrite a stored memory: marking only reports staleness. Repair happens on retrieval — the next memory_resolve that hits this memory folds the pending evidence into the summary and acknowledges the event.",
+			"Record that a stored memory summary has not absorbed later evidence. Idempotent: re-marking the same logical change stores one durable event. This never rewrites the summary, and you cannot rewrite a stored memory: marking only reports staleness. Repair happens on retrieval — the next memory_resolve that hits this memory folds the pending evidence into the summary and acknowledges the event. The reason must name a value the evidence you pass actually carries, so quote the later evidence that states the new value.",
 		parameters: markStaleParameters,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
@@ -540,6 +588,12 @@ function registerStaleTools(pi: ExtensionAPI, state: VestigioState): void {
 				const detail = unknown.length > 0 ? unknown.join(", ") : "(none given)";
 				return text(
 					`memory_mark_stale rejected: no session entry for ${detail}. Pass real entry ids from this conversation that carry text.`,
+				);
+			}
+			const unanchored = unanchoredValues(params.reason, excerpts.join("\n"));
+			if (unanchored !== null) {
+				return text(
+					`memory_mark_stale rejected: the reason names ${unanchored.join(", ")}, but no evidence text contains any of them. Quote the later evidence that carries the new value, or pass source_message_ids for the entries that do.`,
 				);
 			}
 			const at = nowIso();
