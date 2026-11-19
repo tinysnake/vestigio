@@ -83,6 +83,7 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 		check("stale: resume preserves freshness dedup", chatRequests(resumeFrom).every((r) => !lastUserText(r).includes("<vestigio_memory_note>")));
 		const afterResolve = snapshot();
 		check("stale: resolver repairs the event recorded before the restart", afterResolve.revision === 3 && afterResolve.body.includes("6789") && afterResolve.pending.length === 0, `r${afterResolve.revision} ${afterResolve.pending.length} pending`);
+		check("stale: resolver repair publishes the memory", afterResolve.state === "published" && afterResolve.nav_revision === afterResolve.revision, `${afterResolve.state} nav=r${afterResolve.nav_revision}`);
 		const ranTools = resumed.client.events.filter((e) => e.type === "tool_execution_end").map((e) => e.toolName);
 		check("stale: repair is driven by retrieval, not by an agent write", ranTools.includes("memory_resolve") && !ranTools.includes("memory_update"), ranTools.join(","));
 	} finally { check("stale: resumed pi exits cleanly", (await resumed.client.close()) === 0); }

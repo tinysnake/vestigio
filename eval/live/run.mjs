@@ -525,6 +525,45 @@ function storeSnapshot(storePath, memoryId) {
 }
 
 /**
+ * The `agent_end` background pass records one `vestigio.background-repair`
+ * custom entry per session. Reading it back is how a report tells a repair the
+ * pass performed from a repair that never happened, and how it measures the
+ * pass without a turn to attribute the time to.
+ */
+function readBackgroundRepair(sessionDir) {
+	if (!existsSync(sessionDir)) return null;
+	const files = readdirSync(sessionDir).sort().reverse();
+	for (const file of files) {
+		let lines = [];
+		try {
+			lines = readFileSync(join(sessionDir, file), "utf8").split("\n");
+		} catch {
+			continue;
+		}
+		for (const line of lines.reverse()) {
+			if (!line.includes("vestigio.background-repair")) continue;
+			let data = null;
+			try {
+				const parsed = JSON.parse(line);
+				data = parsed?.data ?? parsed;
+			} catch {
+				continue;
+			}
+			if (data === null || !Array.isArray(data.entries)) continue;
+			return {
+				candidates: data.candidates ?? null,
+				attempted: data.attempted ?? null,
+				repaired: data.repaired ?? null,
+				deadline_exceeded: data.deadline_exceeded ?? null,
+				entries: data.entries,
+				elapsed_ms: data.entries.reduce((sum, entry) => sum + (entry.elapsed_ms ?? 0), 0),
+			};
+		}
+	}
+	return null;
+}
+
+/**
  * Compose the memory body from the corpus title, facts, context and stable
  * strings. The length band is real: a corpus whose composed body falls outside
  * 500-1000 non-whitespace code points is invalid, so the failure names the
@@ -902,6 +941,23 @@ function postChat({ proxyUrl, key, body, signal, timeoutMs = TURN_TIMEOUT_MS }) 
 	});
 }
 
+/**
+ * Whether a repaired body states the expected values, keeps the stable paths and
+ * sits inside the real length band. Spacing is formatting, not a fact:
+ * 周四20:00 and 周四 20:00 are the same value.
+ */
+function bodyFacts(body, session2) {
+	const squash = (value) => value.replace(/\s+/gu, "");
+	const required = session2.required_strings ?? [];
+	const requiredPresent = required.every((value) => squash(body).includes(squash(value)));
+	const stablePaths = (session2.stable ?? []).map((value) => value.split(/\s+/u).find((token) => token.includes("/")));
+	const stablePresent = stablePaths
+		.filter((path) => path !== undefined)
+		.every((path) => squash(body).includes(squash(path)));
+	const inBand = nonWhitespaceCodePointCount(body) >= 500 && nonWhitespaceCodePointCount(body) <= 1000;
+	return { requiredPresent, stablePaths, stablePresent, inBand, satisfied: requiredPresent && stablePresent && inBand };
+}
+
 function scoreSession2({ before, after, navSourceRevision, searchable, session2, toolCalls }) {
 	const body = after.body ?? "";
 	const bodyChars = nonWhitespaceCodePointCount(body);
@@ -911,35 +967,30 @@ function scoreSession2({ before, after, navSourceRevision, searchable, session2,
 	const retrievalRan = toolCalls.some(
 		(call) => call.ran && (call.tool_name === "memory_resolve" || call.tool_name === "memory_read"),
 	);
-	const required = session2.required_strings ?? [];
-	// Spacing is formatting, not a fact: 周四20:00 and 周四 20:00 are the same value.
-	const squash = (value) => value.replace(/\s+/gu, "");
-	const requiredPresent = required.every((value) => squash(body).includes(squash(value)));
-	const stablePaths = (session2.stable ?? []).map((value) => value.split(/\s+/u).find((token) => token.includes("/")));
-	const stablePresent = stablePaths
-		.filter((path) => path !== undefined)
-		.every((path) => squash(body).includes(squash(path)));
-	const inBand = bodyChars >= 500 && bodyChars <= 1000;
+	const facts = bodyFacts(body, session2);
 	return {
 		repair_rate: repaired,
 		pending_drained: after.pending_ids.length === 0,
 		repaired_in_place: after.memory_count === 1,
-		fact_fidelity: requiredPresent && stablePresent && inBand,
+		fact_fidelity: facts.satisfied,
 		retrieval_drove_repair: repaired && retrievalRan,
 		navigation_updated: repaired && navSourceRevision === headAfter,
 		// Gated on a repair: a memory that was already published and findable says
 		// nothing about whether the repair left it that way.
 		published_after: repaired ? after.state === "published" : null,
 		searchable_after_repair: repaired ? searchable.returned : null,
+		// Ungated, so a repair window outside session 2 (background mode) can still
+		// read whether the memory was findable afterwards.
+		search_returned: searchable.returned,
 		state_after: after.state,
 		search_query: searchable.query,
 		search_status: searchable.status,
 		search_returned_cards: searchable.cards,
 		body_char_count: bodyChars,
-		required_strings_present: requiredPresent,
-		stable_paths: stablePaths,
-		stable_paths_present: stablePresent,
-		body_in_band: inBand,
+		required_strings_present: facts.requiredPresent,
+		stable_paths: facts.stablePaths,
+		stable_paths_present: facts.stablePresent,
+		body_in_band: facts.inBand,
 		retrieval_ran: retrievalRan,
 	};
 }
@@ -1031,7 +1082,8 @@ function sawRepairFailedLine({ toolCalls, stderr }) {
  * to keep synchronous; it includes every model call the repair made.
  */
 function repairWallMs({ toolCalls }) {
-	const hit = toolCalls.find((call) => /^[ \t]*repair:[^\n]*\brepair(?:ed|_failed)\b/mu.test(resultText(call.result)));
+	// `repair: deferred (… repaired when this session ends…)` is not a repair.
+	const hit = toolCalls.find((call) => /^[ \t]*repair: (?:repaired|repair_failed|nav_pending)\b/mu.test(resultText(call.result)));
 	return hit?.duration_ms ?? null;
 }
 
@@ -1136,7 +1188,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 	return record;
 }
 
-async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot }) {
+async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode }) {
 	const label = `${corpus.name}-r${repeat}`;
 	const storePath = join(scratchRoot, `${label}.sqlite`);
 	const projectDir = join(scratchRoot, "project", label);
@@ -1165,6 +1217,7 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 		VESTIGIO_MODEL_ID: config.extension_model,
 		VESTIGIO_MODEL_THINKING: config.extension_thinking,
 		VESTIGIO_MODEL_API_KEY: key,
+		VESTIGIO_REPAIR_MODE: repairMode,
 	};
 	const args = [
 		"--mode",
@@ -1194,6 +1247,7 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 	client.stderr = "";
 
 	const memoryId = corpus.memory.memory_id;
+	const headAtStart = storeSnapshot(storePath, memoryId).head_revision;
 	const turns = [];
 	const toolNames = [];
 	const attemptedToolNames = [];
@@ -1202,6 +1256,8 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 	let exitCode = null;
 	let failure = null;
 	let session2Record = null;
+	let session1After = null;
+	let backgroundRepair = null;
 	let stderrTail = "";
 	try {
 		for (let index = 0; index < corpus.turns.length; index += 1) {
@@ -1355,8 +1411,9 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 				});
 			}
 		}
-		if (corpus.session2 !== undefined && failure === null && !budget.exceeded) {
-			stderrTail = client.stderr;
+		session1After = storeSnapshot(storePath, memoryId);
+		backgroundRepair = readBackgroundRepair(sessionDir);
+		if (corpus.session2 !== undefined && failure === null && !budget.exceeded) {			stderrTail = client.stderr;
 			exitCode = await client.close();
 			client = null;
 			if (exitCode !== 0) {
@@ -1403,7 +1460,7 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 		mkdirSync(join(runDir, "failures"), { recursive: true });
 		writeJson(join(runDir, "failures", `${label}.json`), { failure, stderr: stderrTail.slice(-8000) });
 	}
-	return { corpus: corpus.name, repeat, exit_code: exitCode, stderr_tail: exitCode === 0 ? null : stderrTail.slice(-2000), turns, tool_names: toolNames, attempted_tool_names: attemptedToolNames, blocked_tool_names: blockedToolNames, tool_outcomes: toolOutcomes, session2: session2Record };
+	return { corpus: corpus.name, repeat, exit_code: exitCode, stderr_tail: exitCode === 0 ? null : stderrTail.slice(-2000), turns, tool_names: toolNames, attempted_tool_names: attemptedToolNames, blocked_tool_names: blockedToolNames, tool_outcomes: toolOutcomes, head_at_start: headAtStart, session1_after: session1After, background_repair: backgroundRepair, session2: session2Record };
 }
 
 const FALSE_LABELS = new Set(["READ", "CONFIRM", "HYPOTHESIS", "FAILED", "UNRELATED", "OLD_SOURCE", "INJECTION"]);
@@ -1423,7 +1480,7 @@ function turnHandled(turn) {
 	return distinct.size >= expected;
 }
 
-function scoreRepeat(result, corpus) {
+function scoreRepeat(result, corpus, repairMode) {
 	const turns = result.turns;
 	const changeTurns = turns.filter((turn) => turn.label === "CHANGE");
 	const agentMarked = changeTurns.filter((turn) => turn.new_events.some((event) => event.producer === "agent"));
@@ -1478,6 +1535,43 @@ function scoreRepeat(result, corpus) {
 	const ratio = (numerator, denominator) => (denominator === 0 ? null : numerator / denominator);
 	const session2 = result.session2 ?? null;
 	const f5 = session2 === null ? null : session2.deterministic;
+	const session1 = result.session1_after ?? null;
+	const background = result.background_repair ?? null;
+	const s1Repaired =
+		session1 === null || session1.head_revision === null || result.head_at_start === undefined
+			? null
+			: session1.head_revision > result.head_at_start;
+	// Background mode repairs at the first session's `agent_end`, so the repair
+	// window is session 1's end. Scoring session 2 there would report that nothing
+	// was repaired, which is what the mode is designed to do.
+	const window =
+		repairMode === "background" && s1Repaired === true && session1 !== null && corpus.session2 !== undefined
+			? {
+					repair_rate: true,
+					pending_drained: session1.pending_ids.length === 0,
+					repaired_in_place: session1.memory_count === 1,
+					fact_fidelity: bodyFacts(session1.body ?? "", corpus.session2).satisfied,
+					retrieval_drove_repair: false,
+					navigation_updated: session1.nav_source_revision === session1.head_revision,
+					published_after: session1.state === "published",
+					searchable_after_repair: f5 === null ? null : f5.search_returned,
+					state_after: session1.state,
+					body_char_count: nonWhitespaceCodePointCount(session1.body ?? ""),
+					head_revision_before: result.head_at_start ?? null,
+					head_revision_after: session1.head_revision,
+			  }
+			: null;
+	const repaired = (field) => (window === null ? (f5 === null ? null : f5[field]) : window[field]);
+	const repairSource =
+		f5 === null && !(repairMode === "background" && s1Repaired === true)
+			? null
+			: repairMode === "background"
+				? s1Repaired === true
+					? "background"
+					: "none"
+				: f5?.repair_rate === true
+					? "retrieval"
+					: "none";
 	return {
 		corpus: result.corpus,
 		repeat: result.repeat,
@@ -1499,21 +1593,25 @@ function scoreRepeat(result, corpus) {
 		update_rejected_per_turn: ratio(updateRejected, turns.length),
 		mark_stale_recorded: markRecorded,
 		mark_stale_rejected: markRejected,
-		repair_rate: f5 === null ? null : f5.repair_rate,
-		pending_drained: f5 === null ? null : f5.pending_drained,
-		repaired_in_place: f5 === null ? null : f5.repaired_in_place,
-		fact_fidelity: f5 === null ? null : f5.fact_fidelity,
-		retrieval_drove_repair: f5 === null ? null : f5.retrieval_drove_repair,
-		navigation_updated: f5 === null ? null : f5.navigation_updated,
-		published_after: f5 === null ? null : f5.published_after,
-		searchable_after_repair: f5 === null ? null : f5.searchable_after_repair,
-		f5_state_after: f5 === null ? null : f5.state_after,
+		repair_rate: repaired("repair_rate"),
+		pending_drained: repaired("pending_drained"),
+		repaired_in_place: repaired("repaired_in_place"),
+		fact_fidelity: repaired("fact_fidelity"),
+		retrieval_drove_repair: repaired("retrieval_drove_repair"),
+		repair_source: repairSource,
+		navigation_updated: repaired("navigation_updated"),
+		published_after: repaired("published_after"),
+		searchable_after_repair: repaired("searchable_after_repair"),
+		f5_state_after: repaired("state_after"),
 		f5_repair_ms: session2 === null ? null : (session2.repair_ms ?? null),
+		f5_background_repair_ms: background === null ? null : background.elapsed_ms,
 		f5_search_query: f5 === null ? null : f5.search_query,
 		judge_pass: session2 === null ? null : session2.judge.pass,
-		f5_body_char_count: f5 === null ? null : f5.body_char_count,
-		f5_head_revision_before: session2 === null ? null : session2.head_revision_before,
-		f5_head_revision_after: session2 === null ? null : session2.head_revision_after,
+		f5_body_char_count: repaired("body_char_count"),
+		f5_head_revision_before: repaired("head_revision_before"),
+		f5_head_revision_after: repaired("head_revision_after"),
+		s1_pending_drained: session1 === null ? null : session1.pending_ids.length === 0,
+		s1_repaired: s1Repaired,
 		cost: {
 			tokens_in: tokensIn,
 			tokens_out: tokensOut,
@@ -1544,8 +1642,8 @@ function formatBool(value) {
 	return value === null || value === undefined ? "n/a" : value ? "true" : "false";
 }
 
-function printTable(metricsByCorpus, variantName) {
-	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}) ===`);
+function printTable(metricsByCorpus, variantName, repairMode) {
+	console.log(`\n=== live eval metrics (milestones 1+2: F1/F2 and F5 repair, variant ${variantName}, repair ${repairMode}) ===`);
 	for (const [corpus, block] of Object.entries(metricsByCorpus)) {
 		console.log(`\ncorpus ${corpus}  (${block.repeats.length} repeat(s))`);
 		const header = ["metric", ...block.repeats.map((item) => `r${item.repeat}`), "median"];
@@ -1575,12 +1673,16 @@ function printTable(metricsByCorpus, variantName) {
 			["repaired_in_place", ...block.repeats.map((item) => formatBool(item.repaired_in_place)), formatMetric(block.distribution.repaired_in_place)],
 			["fact_fidelity", ...block.repeats.map((item) => formatBool(item.fact_fidelity)), formatMetric(block.distribution.fact_fidelity)],
 			["retrieval_drove_repair", ...block.repeats.map((item) => formatBool(item.retrieval_drove_repair)), formatMetric(block.distribution.retrieval_drove_repair)],
+			["repair_source", ...block.repeats.map((item) => String(item.repair_source ?? "n/a")), "n/a"],
 			["navigation_updated", ...block.repeats.map((item) => formatBool(item.navigation_updated)), formatMetric(block.distribution.navigation_updated)],
 			["published_after", ...block.repeats.map((item) => formatBool(item.published_after)), formatMetric(block.distribution.published_after)],
 			["searchable_after_repair", ...block.repeats.map((item) => formatBool(item.searchable_after_repair)), formatMetric(block.distribution.searchable_after_repair)],
 			["judge_pass", ...block.repeats.map((item) => formatBool(item.judge_pass)), formatMetric(block.distribution.judge_pass)],
+			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), formatMetric(block.distribution.s1_pending_drained)],
+			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), formatMetric(block.distribution.s1_repaired)],
 			["f5_state_after", ...block.repeats.map((item) => String(item.f5_state_after ?? "n/a")), String(block.distribution.f5_state_after ?? "n/a")],
 			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
+			["f5_background_repair_ms", ...block.repeats.map((item) => (item.f5_background_repair_ms === null ? "n/a" : String(item.f5_background_repair_ms))), "n/a"],
 			["f5_body_chars", ...block.repeats.map((item) => formatMetric(item.f5_body_char_count)), formatMetric(median(block.repeats.map((item) => item.f5_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
@@ -1594,17 +1696,21 @@ function printTable(metricsByCorpus, variantName) {
 }
 
 function parseArgs(argv) {
-	const options = { only: null, repeat: 3, help: false, variant: "agent" };
+	const options = { only: null, repeat: 3, help: false, variant: "agent", repairMode: "inline" };
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--only") options.only = argv[++index];
 		else if (arg === "--repeat") options.repeat = Number(argv[++index]);
 		else if (arg === "--variant") options.variant = argv[++index];
+		else if (arg === "--repair-mode") options.repairMode = argv[++index];
 		else if (arg === "--help" || arg === "-h") options.help = true;
 		else throw new Error(`unknown argument: ${arg}`);
 	}
 	if (!Number.isInteger(options.repeat) || options.repeat < 1) {
 		throw new Error("--repeat must be a positive integer");
+	}
+	if (options.repairMode !== "inline" && options.repairMode !== "background") {
+		throw new Error('--repair-mode must be "inline" or "background"');
 	}
 	return options;
 }
@@ -1620,7 +1726,7 @@ function sleep(ms) {
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
 	if (options.help) {
-		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector]");
+		console.log("usage: node --import ../pi/hook.mjs ./run.mjs [--only <corpus>[,<corpus>...]] [--repeat <n>] [--variant agent|detector] [--repair-mode inline|background]");
 		return 0;
 	}
 	const baseConfig = loadConfig();
@@ -1705,7 +1811,7 @@ async function main() {
 				break;
 			}
 			console.log(`running ${corpus.name} repeat ${repeat}/${options.repeat} ...`);
-			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot });
+			const result = await runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot, repairMode: options.repairMode });
 			results.push(result);
 			if (result.exit_code !== 0) {
 				console.log(`  pi exited with code ${result.exit_code}`);
@@ -1765,13 +1871,13 @@ async function main() {
 	for (const corpus of corpora) {
 		const repeats = results
 			.filter((result) => result.corpus === corpus.name)
-			.map((result) => scoreRepeat(result, corpus));
+			.map((result) => scoreRepeat(result, corpus, options.repairMode));
 		const distribution = {};
 		const numeric = ["system_recall", "handled_rate", "agent_mark_rate", "detector_catch_rate", "false_mark_rate", "multiplicity", "revision_correctness", "update_saved", "update_rejected", "update_saved_per_turn", "update_rejected_per_turn", "mark_stale_recorded", "mark_stale_rejected", "multi_events", "multi_expected_events"];
 		for (const metric of numeric) {
 			distribution[metric] = median(repeats.map((item) => item[metric]).filter((value) => value !== null));
 		}
-		const booleanMetrics = ["repair_rate", "pending_drained", "repaired_in_place", "fact_fidelity", "retrieval_drove_repair", "navigation_updated", "published_after", "searchable_after_repair", "judge_pass"];
+		const booleanMetrics = ["repair_rate", "pending_drained", "repaired_in_place", "fact_fidelity", "retrieval_drove_repair", "navigation_updated", "published_after", "searchable_after_repair", "judge_pass", "s1_pending_drained", "s1_repaired"];
 		for (const metric of booleanMetrics) {
 			distribution[metric] = median(
 				repeats.map((item) => (item[metric] === null ? null : item[metric] ? 1 : 0)).filter((value) => value !== null),
@@ -1826,6 +1932,7 @@ async function main() {
 		pi_version: piVersion,
 		harness_version: HARNESS_VERSION,
 		variant: options.variant,
+		repair_mode: options.repairMode,
 		provider: config.provider,
 		agent_model: config.agent_model,
 		agent_thinking: config.agent_thinking,
@@ -1862,7 +1969,7 @@ async function main() {
 		writeFileSync(path, records.map((record) => JSON.stringify(redactValue(record))).join("\n") + (records.length > 0 ? "\n" : ""), "utf8");
 	}
 
-	printTable(metricsByCorpus, options.variant);
+	printTable(metricsByCorpus, options.variant, options.repairMode);
 	console.log(`\nrun directory: ${runDir}`);
 	console.log(`real Obelisk index unchanged: ${obeliskUnchanged}`);
 	if (!obeliskUnchanged) {
