@@ -33,8 +33,11 @@ export const MODEL_BASE_URL_ENV = "VESTIGIO_MODEL_BASE_URL";
 export const MODEL_ID_ENV = "VESTIGIO_MODEL_ID";
 export const MODEL_API_KEY_ENV = "VESTIGIO_MODEL_API_KEY";
 export const MODEL_THINKING_ENV = "VESTIGIO_MODEL_THINKING";
+export const REPAIR_MODE_ENV = "VESTIGIO_REPAIR_MODE";
 
 export type VestigioEnv = Record<string, string | undefined>;
+
+export type RepairMode = "inline" | "background";
 
 export type VestigioConfig = {
 	readonly store_path: string | null;
@@ -52,6 +55,8 @@ export type VestigioConfig = {
 	readonly model_id: string;
 	readonly model_api_key: string | null;
 	readonly model_thinking: ModelThinking;
+	/** `inline` (default) repairs a stale hit during the read; `background` defers it to `agent_end`. */
+	readonly repair_mode: RepairMode;
 	readonly enabled: boolean;
 };
 
@@ -67,6 +72,7 @@ export const VESTIGIO_DEFAULTS = {
 	timeout_ms: DEFAULT_HOTSPOT_TIMEOUT_MS,
 	model_id: DEFAULT_MODEL_ID,
 	model_thinking: DEFAULT_MODEL_THINKING,
+	repair_mode: "inline",
 } as const;
 
 export function readConfig(env: VestigioEnv = process.env): VestigioConfig {
@@ -86,6 +92,7 @@ export function readConfig(env: VestigioEnv = process.env): VestigioConfig {
 		model_id: strOrNull(env[MODEL_ID_ENV]) ?? DEFAULT_MODEL_ID,
 		model_api_key: strOrNull(env[MODEL_API_KEY_ENV]),
 		model_thinking: thinkingOr(env[MODEL_THINKING_ENV], DEFAULT_MODEL_THINKING),
+		repair_mode: repairModeOr(env[REPAIR_MODE_ENV], "inline"),
 		enabled: store_path !== null,
 	};
 }
@@ -96,6 +103,14 @@ function thinkingOr(value: string | undefined, fallback: ModelThinking): ModelTh
 	if (value === undefined) return fallback;
 	const trimmed = value.trim();
 	return (THINKING_LEVELS as readonly string[]).includes(trimmed) ? (trimmed as ModelThinking) : fallback;
+}
+
+const REPAIR_MODES: readonly RepairMode[] = ["inline", "background"];
+
+function repairModeOr(value: string | undefined, fallback: RepairMode): RepairMode {
+	if (value === undefined) return fallback;
+	const trimmed = value.trim();
+	return (REPAIR_MODES as readonly string[]).includes(trimmed) ? (trimmed as RepairMode) : fallback;
 }
 
 function strOrNull(value: string | undefined): string | null {

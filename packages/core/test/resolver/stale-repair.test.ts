@@ -349,3 +349,99 @@ describe("repair reads the pending anchor before it summarizes", () => {
     expect(outcome.result.revision).toBe(2);
   });
 });
+
+function citedStaleModel(memoryId: string, eventId: string) {
+  return makeScriptedModel((kind) =>
+    kind === "summary"
+      ? { text: JSON.stringify({ body: bodyOfLength(600, eventId) }) }
+      : {
+          text: JSON.stringify({
+            sufficient: true,
+            answer: "端口现在是 9090。",
+            evidence_ids: [memoryId],
+            read_uris: [],
+            next_queries: [],
+            conflicts: [],
+            descend: false,
+          }),
+        },
+  );
+}
+
+describe("repair: defer leaves the stale card for the background pass", () => {
+  it("delivers a cited stale card with its freshness and spends fewer calls than inline", async () => {
+    const inlineStore = newStore();
+    const inlineMemory = seedMemory(inlineStore, { memory_id: "mem-defer-cited-inline" });
+    const inlineEvent = staleEvent(inlineStore, inlineMemory.memory_id, "m-70", "port changed to 9090", "2026-11-18T01:00:00Z");
+    const inlineModel = citedStaleModel(inlineMemory.memory_id, inlineEvent.event_id);
+    const inline = await resolveMemory({
+      store: inlineStore,
+      question: "端口",
+      scope: projectA,
+      model: inlineModel.port,
+      model_id: "scripted",
+    });
+    expect(inline.result.revision).toBe(2);
+    expect(inlineStore.countPendingStaleEvents(inlineMemory.memory_id)).toBe(0);
+
+    const deferStore = newStore();
+    const deferMemory = seedMemory(deferStore, { memory_id: "mem-defer-cited-defer" });
+    const deferEvent = staleEvent(deferStore, deferMemory.memory_id, "m-71", "port changed to 9090", "2026-11-18T01:00:00Z");
+    const deferModel = citedStaleModel(deferMemory.memory_id, deferEvent.event_id);
+    const deferred = await resolveMemory({
+      store: deferStore,
+      question: "端口",
+      scope: projectA,
+      model: deferModel.port,
+      model_id: "scripted",
+      repair: "defer",
+    });
+
+    expect(deferred.result.status).toBe("resolved");
+    const card = deferred.result.cards.find((entry) => entry.memory_id === deferMemory.memory_id);
+    expect(card?.freshness?.is_stale).toBe(true);
+    expect(deferred.result.revision).toBeNull();
+    expect(deferStore.readMemory(deferMemory.uri)?.revision).toBe(1);
+    expect(deferStore.countPendingStaleEvents(deferMemory.memory_id)).toBe(1);
+    expect(deferModel.summary_calls).toBe(0);
+    expect(deferModel.judge_calls + deferModel.summary_calls).toBeLessThan(inlineModel.judge_calls + inlineModel.summary_calls);
+  });
+
+  it("keeps the unconfirmed stale top hit, its body and every pending event", async () => {
+    const store = newStore();
+    const memory = seedMemory(store, { memory_id: "mem-defer-top" });
+    const event = staleEvent(store, memory.memory_id, "m-72", "the port changed to 9090", "2026-11-18T01:00:00Z");
+    const model = makeScriptedModel((kind) =>
+      kind === "summary"
+        ? { text: JSON.stringify({ body: bodyOfLength(600, event.event_id) }) }
+        : {
+            text: JSON.stringify({
+              sufficient: false,
+              answer: null,
+              evidence_ids: [],
+              read_uris: [],
+              next_queries: [],
+              conflicts: [],
+              descend: false,
+            }),
+          },
+    );
+
+    const outcome = await resolveMemory({
+      store,
+      question: "端口",
+      scope: projectA,
+      model: model.port,
+      model_id: "scripted",
+      repair: "defer",
+    });
+
+    expect(outcome.result.status).toBe("partial");
+    const card = outcome.result.cards.find((entry) => entry.memory_id === memory.memory_id);
+    expect(card?.freshness?.is_stale).toBe(true);
+    expect(model.judge_calls).toBe(1);
+    expect(model.summary_calls).toBe(0);
+    expect(store.readMemory(memory.uri)?.revision).toBe(1);
+    expect(store.listPendingStaleEvents(memory.memory_id)).toHaveLength(1);
+  });
+});

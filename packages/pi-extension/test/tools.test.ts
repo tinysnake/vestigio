@@ -55,6 +55,48 @@ function body(prefix: string): string {
 	return text;
 }
 
+function markStale(store: ReturnType<typeof makeStore>["store"], messageId = "m-2"): string {
+	return store.markStale({
+		memory_id: "mem-deploy",
+		observed_revision: 1,
+		reason: "默认端口已从 8080 改为 18080",
+		excerpt: "今天我们决定默认端口改成 18080。",
+		sources: [
+			{
+				provider: "pi",
+				source_instance: "local",
+				session_id: "s-tools",
+				message_id: messageId,
+				parent_message_id: null,
+				project_id: PROJECT,
+				timestamp: AT,
+				content_hash: "sha256:02",
+				locator: null,
+			},
+		],
+		producer: "detector",
+		at: AT,
+	}).event.event_id;
+}
+
+function repairModel(cited: () => string | null) {
+	let calls = 0;
+	const port: ModelPort = {
+		async complete(request) {
+			calls += 1;
+			const system = request.messages[0]?.content ?? "";
+			const text = system.includes("导航短摘要")
+				? JSON.stringify({ nav: "部署脚本的默认端口已改为 18080。" })
+				: JSON.stringify({ body: body(`默认端口现在是 18080。 [来源:${cited() ?? "unknown"}]`) });
+			return {
+				ok: true,
+				value: { text, model: "scripted", finish_reason: "stop", usage: { tokens_in: 10, tokens_out: 10, cost_usd: 0 } },
+			};
+		},
+	};
+	return { port, calls: () => calls };
+}
+
 function memory(overrides: { memory_id: string; title: string; keywords: string[]; nav: string; prefix: string }): Memory {
 	const medium = body(overrides.prefix);
 	return {
@@ -221,6 +263,43 @@ describe("memory_read", () => {
 			.get("memory_read")!
 			.execute("call-7", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, { cwd: "/tmp" });
 		expect(result.content[0]!.text).toContain("unavailable");
+	});
+
+	it("defers a stale repair in background mode without a model call or write", async () => {
+		const model = repairModel(() => null);
+		const { store, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1", VESTIGIO_REPAIR_MODE: "background" },
+		});
+		markStale(store);
+		const result = await tools
+			.get("memory_read")!
+			.execute("call-defer", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(text).toContain("repair: deferred (repaired when this session ends; 1 pending event(s))");
+		expect(text).toContain("freshness: STALE pending=1");
+		expect(model.calls()).toBe(0);
+		expect(store.readMemory("memory://vestigio/mem-deploy")?.revision).toBe(1);
+		expect(store.countPendingStaleEvents("mem-deploy")).toBe(1);
+		store.close();
+	});
+
+	it("still repairs a stale read inline by default", async () => {
+		let cited: string | null = null;
+		const model = repairModel(() => cited);
+		const { store, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		cited = markStale(store);
+		const result = await tools
+			.get("memory_read")!
+			.execute("call-inline", { uri: "memory://vestigio/mem-deploy" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(text).toContain("repair: repaired r1 -> r2");
+		expect(store.readMemory("memory://vestigio/mem-deploy")?.revision).toBe(2);
+		expect(store.countPendingStaleEvents("mem-deploy")).toBe(0);
+		store.close();
 	});
 });
 

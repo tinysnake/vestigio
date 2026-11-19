@@ -40,14 +40,30 @@ export type ReadRepairInput = {
 
 /**
  * Returns null when no attempt should be made (already attempted this session,
- * or no model configured). A returned report is always worth telling the agent
- * about: it either landed, landed without its nav, or wrote nothing.
+ * or the read carries no pending event). A returned report is always worth
+ * telling the agent about: it either landed, landed without its nav, or wrote
+ * nothing.
  */
 export async function repairOnRead(input: ReadRepairInput): Promise<ReadRepairReport | null> {
-  const { state, store, uri, freshness } = input;
+  const { state, freshness } = input;
   const memoryId = freshness.memory_id;
   const pending = freshness.pending.filter((event) => event.event_id.length > 0);
   if (pending.length === 0 || state.repairAttemptedFor(memoryId)) return null;
+  state.noteRepairAttempt(memoryId);
+  return repairStaleMemoryNow(input);
+}
+
+/**
+ * The unguarded repair: one bounded attempt for this memory, whatever the
+ * caller's bookkeeping says. `deadline_ms` overrides the default ceiling, so a
+ * background pass can hand each memory a slice of its own total budget.
+ */
+export async function repairStaleMemoryNow(
+  input: ReadRepairInput & { deadline_ms?: number },
+): Promise<ReadRepairReport> {
+  const { state, store, uri, freshness } = input;
+  const memoryId = freshness.memory_id;
+  const pending = freshness.pending.filter((event) => event.event_id.length > 0);
   const model = state.modelPort();
   if (model === null) {
     return {
@@ -60,8 +76,7 @@ export async function repairOnRead(input: ReadRepairInput): Promise<ReadRepairRe
     };
   }
 
-  state.noteRepairAttempt(memoryId);
-  const deadline = AbortSignal.timeout(READ_REPAIR_DEADLINE_MS);
+  const deadline = AbortSignal.timeout(input.deadline_ms ?? READ_REPAIR_DEADLINE_MS);
   const signal = input.signal === undefined ? deadline : AbortSignal.any([deadline, input.signal]);
   const failed = (reason: string): ReadRepairReport => ({
     status: "repair_failed",

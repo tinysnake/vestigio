@@ -198,6 +198,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				signal,
 				session_resolves_used: usedBefore,
 				continuation: state.lastContinuation,
+				repair: state.config.repair_mode === "background" ? "defer" : "inline",
 			});
 			state.noteResolveUsed();
 			state.lastContinuation = outcome.continuation;
@@ -306,35 +307,42 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			// A read is the repair trigger: the agent already has this memory in
 			// front of it, so folding the pending change in here is the one place
 			// repair is guaranteed to be reached. Pinned-revision reads skip it.
+			// In `background` mode the read touches nothing; the pending events are
+			// folded in by the `agent_end` pass.
 			let repair: ReadRepairReport | null = null;
+			let deferredPending: number | null = null;
 			if (
 				params.revision === undefined &&
 				outcome.result.status === "resolved" &&
 				outcome.result.freshness !== undefined &&
 				outcome.result.freshness.is_stale
 			) {
-				try {
-					repair = await repairOnRead({
-						state,
-						store,
-						uri,
-						freshness: outcome.result.freshness,
-						project_id: projectId,
-						at,
-						signal,
-					});
-				} catch (error) {
-					state.writeDecision({
-						ts: at,
-						kind: "error",
-						status: "read_repair_failed",
-						session_id: state.currentSessionId,
-						project_id: projectId,
-						error: errorText(error),
-					});
-				}
-				if (repair !== null && repair.revision !== null) {
-					outcome = readMemoryResult({ store, uri });
+				if (state.config.repair_mode === "background") {
+					deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
+				} else {
+					try {
+						repair = await repairOnRead({
+							state,
+							store,
+							uri,
+							freshness: outcome.result.freshness,
+							project_id: projectId,
+							at,
+							signal,
+						});
+					} catch (error) {
+						state.writeDecision({
+							ts: at,
+							kind: "error",
+							status: "read_repair_failed",
+							session_id: state.currentSessionId,
+							project_id: projectId,
+							error: errorText(error),
+						});
+					}
+					if (repair !== null && repair.revision !== null) {
+						outcome = readMemoryResult({ store, uri });
+					}
 				}
 			}
 			state.noteMemorySeen(ids.memoryId);
@@ -372,7 +380,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false} repair=${repair?.status ?? "none"}`,
 			});
 			return {
-				content: [{ type: "text", text: renderRead(params.uri, outcome, repair) }],
+				content: [{ type: "text", text: renderRead(params.uri, outcome, repair, deferredPending) }],
 				details: {
 					status: outcome.result.status,
 					memory_uri: outcome.memory_uri,
@@ -758,7 +766,12 @@ export function renderResolve(
 	return lines.join("\n");
 }
 
-export function renderRead(uri: string, outcome: MemoryReadOutcome, repair: ReadRepairReport | null = null): string {
+export function renderRead(
+	uri: string,
+	outcome: MemoryReadOutcome,
+	repair: ReadRepairReport | null = null,
+	deferredPending: number | null = null,
+): string {
 	const result: RetrievalResult = outcome.result;
 	if (result.status !== "resolved") {
 		const lines = [`memory_read(${uri}) -> ${result.status}`];
@@ -772,6 +785,9 @@ export function renderRead(uri: string, outcome: MemoryReadOutcome, repair: Read
 		`title: ${result.cards[0]?.title ?? "(untitled)"}`,
 	];
 	if (repair !== null) lines.push(renderRepair(repair));
+	if (deferredPending !== null) {
+		lines.push(`repair: deferred (repaired when this session ends; ${deferredPending} pending event(s))`);
+	}
 	lines.push(...renderFreshness(result.freshness));
 	lines.push(`long summary:`, body);
 	if (result.evidence.length > 0) {

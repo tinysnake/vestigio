@@ -282,6 +282,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   const started = mono();
   const question = readQuestion(input.question);
   const scope = parseScope(input.scope);
+  const repair = input.repair ?? "inline";
   const options = readResolveBudget(input.budget);
   const ledger = new ResolveBudgetLedger(options);
   const calls: ResolveCallRecord[] = [];
@@ -869,6 +870,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
           return finish({ ...assembled, result: parseRetrievalResult({ ...assembled.result, freshness: staleFreshness, next_action: `memory_read(uri=${JSON.stringify(citedStale.uri)}) 当前摘要已更新至 r${staleFreshness.head_revision}` }) }, null, false);
         }
         if (
+          repair === "inline" &&
           staleFreshness !== null &&
           staleFreshness.is_stale &&
           !staleFreshness.revision_mismatch &&
@@ -929,7 +931,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     // does not carry the pending evidence, so `sufficient=false` here is not a
     // reason to leave the topic stale. Fold the pending events into the same
     // memory once, before descending, and deliver the refreshed body.
-    if (!staleRepairAttempted && !controller.signal.aborted) {
+    if (repair === "inline" && !staleRepairAttempted && !controller.signal.aborted) {
       const top = bundle.cards[0];
       if (top !== undefined && top.freshness?.is_stale === true) {
         const topFreshness = input.store.readFreshness(top.uri, top.revision);
@@ -1090,6 +1092,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     const { card, freshness } = attempt.target;
     const model = input.model;
     const canCall =
+      repair === "inline" &&
       model !== null &&
       model !== undefined &&
       !controller.signal.aborted &&

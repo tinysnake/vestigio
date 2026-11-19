@@ -55,6 +55,7 @@ export class VestigioState {
 	private sessionManager: SessionLike | null = null;
 	private readonly seen: Set<string> = new Set();
 	private readonly repairAttempted: Set<string> = new Set();
+	private readonly backgroundAttempted: Set<string> = new Set();
 	private detectorCheckpoint: string | null = null;
 
 	constructor(config: VestigioConfig, log?: DecisionLog, deps: StateDeps = {}) {
@@ -127,6 +128,7 @@ export class VestigioState {
 		}
 		this.seen.clear();
 		this.repairAttempted.clear();
+		this.backgroundAttempted.clear();
 		try {
 			this.ledger = loadLedger(sessionManager);
 		} catch {
@@ -175,6 +177,20 @@ export class VestigioState {
 
 	noteRepairAttempt(memoryId: string): void {
 		this.repairAttempted.add(memoryId);
+	}
+
+	/**
+	 * The background pass keys its one attempt per pending set rather than per
+	 * memory: a change recorded later in the same session is a new signature and
+	 * still needs absorbing, while a failed attempt on the same set is not
+	 * repeated by the next `agent_end`.
+	 */
+	backgroundAttemptedFor(signature: string): boolean {
+		return this.backgroundAttempted.has(signature);
+	}
+
+	noteBackgroundAttempt(signature: string): void {
+		this.backgroundAttempted.add(signature);
 	}
 
 	/** The last entry the detector inspected, so a turn is judged once. */
