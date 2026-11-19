@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { InjectionLedger, planInjection, recordProjectInput } from "@vestigio/core/hotspots";
 import { layeredSearch } from "@vestigio/core/retrieval";
 import { openStore } from "@vestigio/core/storage";
-import { AT, CATALOG_VERSION, seedStore } from "./catalog.mjs";
+import { AT, CATALOG_VERSION, scriptedHistoryPort, seedStore } from "./catalog.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FAILING = new Set(["miss", "false_positive"]);
@@ -47,7 +47,11 @@ const cases = casesBytes
 	.filter((line) => line.trim() !== "")
 	.map((line) => JSON.parse(line));
 
-async function surfaceIds(item) {
+function refKey(ref) {
+	return `${ref.session_id}/${ref.message_id}`;
+}
+
+async function runSurface(item) {
 	if (item.surface === "inject") {
 		recordProjectInput(store, item.project_id, AT);
 		const plan = planInjection({
@@ -61,61 +65,82 @@ async function surfaceIds(item) {
 			host_command: false,
 			ledger: new InjectionLedger(),
 		});
-		return plan.injected.map((match) => match.memory_id);
+		return { ids: plan.injected.map((match) => match.memory_id), refs: [], status: null };
 	}
 	if (item.surface === "search") {
+		const includeHistory = item.include_history === true;
 		const outcome = await layeredSearch({
 			store,
 			query: item.text,
 			scope: { kind: "project", project_id: item.project_id },
 			limit: 10,
+			include_history: includeHistory,
+			history: includeHistory ? scriptedHistoryPort(item.history_scenario ?? "none") : undefined,
 		});
-		return outcome.result.cards.map((card) => card.memory_id);
+		return {
+			ids: outcome.result.cards.map((card) => card.memory_id),
+			refs: outcome.history.map((excerpt) => refKey(excerpt.source_ref)),
+			status: outcome.result.status,
+		};
 	}
 	throw new Error(`unknown surface: ${String(item.surface)}`);
 }
 
-function score(item, surfaced, elapsed, error) {
-	const expected = item.expected_memory_ids;
-	const first = surfaced.findIndex((id) => expected.includes(id));
-	const forbidden = surfaced.some((id) => item.forbidden_memory_ids.includes(id));
-	let status = "hit";
-	if (error !== null) status = "error";
-	else if (forbidden) status = "false_positive";
-	else if (expected.length > 0 && first === -1) status = "miss";
-	else if (expected.length === 0) status = "clean";
+function score(item, surfaced, error) {
+	const expected = item.expected_memory_ids ?? [];
+	const forbidden = item.forbidden_memory_ids ?? [];
+	const expectedRefs = (item.expected_source_refs ?? []).map(refKey);
+	const forbiddenRefs = (item.forbidden_source_refs ?? []).map(refKey);
+	const first = surfaced.ids.findIndex((id) => expected.includes(id));
+	const forbiddenPresent =
+		forbidden.some((id) => (id === "*" ? surfaced.ids.length > 0 : surfaced.ids.includes(id))) ||
+		forbiddenRefs.some((ref) => surfaced.refs.includes(ref));
+	const refPresent = expectedRefs.some((ref) => surfaced.refs.includes(ref));
+	const expects = expected.length + expectedRefs.length > 0;
+	const idsOk = expected.length === 0 || first !== -1;
+	const refsOk = expectedRefs.length === 0 || refPresent;
+	const statusMismatch = item.expected_status != null && item.expected_status !== surfaced.status;
+	let status;
+	if (error) status = "error";
+	else if (forbiddenPresent) status = "false_positive";
+	else if (statusMismatch) status = "miss";
+	else if (!expects) status = "clean";
+	else if (idsOk && refsOk) status = "hit";
+	else status = "miss";
 	return {
 		case_id: item.id,
 		surface: item.surface,
 		status,
-		rank: first === -1 ? null : first + 1,
+		retrieval_status: surfaced.status,
+		rank: first === -1 || item.rank_ignored === true ? null : first + 1,
+		rank_ignored: item.rank_ignored === true,
 		expected_present: first !== -1,
-		forbidden_present: forbidden,
-		surfaced_ids: surfaced,
+		forbidden_present: forbiddenPresent,
+		surfaced_ids: surfaced.ids,
+		surfaced_refs: surfaced.refs,
 		category: item.category,
 		note: item.note ?? "",
-		elapsed_ms: elapsed,
 		error,
 	};
 }
 
 const results = [];
 for (const item of cases) {
-	const started = performance.now();
-	let surfaced = [];
+	let surfaced = { ids: [], refs: [], status: null };
 	let error = null;
 	try {
-		surfaced = await surfaceIds(item);
+		surfaced = await runSurface(item);
 	} catch (caught) {
 		error = caught instanceof Error ? caught.message : String(caught);
 	}
-	results.push(score(item, surfaced, Math.round(performance.now() - started), error));
+	results.push(score(item, surfaced, error));
 }
 
 // Recall needs the number of labeled expected ids, which the result shape omits.
-const labeled = new Map(cases.map((item) => [item.id, item.expected_memory_ids.length]));
+const labeled = new Map(cases.map((item) => [item.id, (item.expected_memory_ids ?? []).length]));
+const refLabeled = new Set(cases.filter((item) => (item.expected_source_refs ?? []).length > 0).map((item) => item.id));
 const scored = results.filter((item) => item.status !== "error");
-const recallable = scored.filter((item) => labeled.get(item.case_id) > 0);
+const recallable = scored.filter((item) => labeled.get(item.case_id) > 0 && item.rank_ignored !== true);
 const injectable = recallable.filter((item) => item.surface === "inject");
 const rate = (numerator, denominator) => (denominator === 0 ? null : numerator / denominator);
 const recallAt = (k) => rate(recallable.filter((item) => item.rank !== null && item.rank <= k).length, recallable.length);
@@ -144,20 +169,27 @@ const report = {
 		recall_at_5: recallAt(5),
 		inject_hit_rate: rate(injectable.filter((item) => item.status === "hit").length, injectable.length),
 		false_positive_rate: rate(summary.false_positive, scored.length),
+		source_gap_rescue_rate: rate(
+			scored.filter((item) => refLabeled.has(item.case_id) && item.expected_present === false && item.status === "hit")
+				.length,
+			scored.filter((item) => refLabeled.has(item.case_id)).length,
+		),
 	},
 	cases: results,
 };
 
 const rows = [
-	["case", "surface", "status", "rank", "expected", "forbidden", "surfaced", "category"],
+	["case", "surface", "status", "retrieval", "rank", "expected", "forbidden", "surfaced", "refs", "category"],
 	...results.map((item) => [
 		item.case_id,
 		item.surface,
 		item.status,
+		item.retrieval_status ?? "-",
 		item.rank ?? "-",
 		item.expected_present ? "yes" : "no",
 		item.forbidden_present ? "LEAK" : "no",
 		item.surfaced_ids.join(" ") || "-",
+		item.surfaced_refs.length,
 		item.category,
 	]),
 ];

@@ -76,7 +76,7 @@
 
 ## 6. 交付顺序与回归门槛
 
-1. **离线评估首批交付。** 设立版本化 schema 和标注规范，从现有 fixture 中选可确认的正负场景与旧值冲突样本做小型校准集。复用现有 harness 增加一个报告入口，先产出可见候选 Recall@K、可测的 Candidate / Injection FP、核验快照上的 Coverage 和已有成本字段。缺乏答案证据的样本保留 Stale Misuse 和 Effective Hit Rate 未知。使用固定数据、快照及配置跑出首份基线，再按分层计划扩展到 100–200 条人工复核样本。首版已交付，见第 7 节的实测结果。
+1. **离线评估首批交付。** 设立版本化 schema 和标注规范，从现有 fixture 中选可确认的正负场景与旧值冲突样本做小型校准集。复用现有 harness 增加一个报告入口，先产出可见候选 Recall@K、可测的 Candidate / Injection FP、核验快照上的 Coverage 和已有成本字段。缺乏答案证据的样本保留 Stale Misuse 和 Effective Hit Rate 未知。使用固定数据、快照及配置跑出首份基线，再按分层计划扩展到 100–200 条人工复核样本。首版已交付并扩展到 17 条样本（补入历史层与同名冲突场景），见第 7 节的实测结果。
 2. **补齐行为归因。** 用 Pi harness 验证 turn 关联和无工具终态，再补最小 Core observer。构建 Trigger/Retrieval/Resolution/Usage 各一条能稳定区分的 fixture，另外覆盖只靠当前上下文答对、来源存在但仓库缺失、正确候选被裁剪、多证据题和 rescue。交付阶段级 trace、样本级诊断和空分母/未知处理测试。
 3. **接入独立 Shadow 和配对回归。** 先验证禁用、队列满、worker 崩溃、预算耗尽和引用已删时的行为，再开放授权项目抽样。配对报告按 `sample_id + snapshot_id + arm` 核对同一组可比较样本，记录 Git commit、项目版本、数据与快照版本、评估器及 schema 版本、模型和提示词版本、随机参数、策略参数、运行时间及各类实际执行、失败和跳过数。对关键模型样本重复运行，报告每次结果及配对差异，并跟踪同一 session 的样本相关性。
 4. **先门禁确定性契约。** CI 可门禁 fixture 的项目隔离、负例注入、明确的过期冲突、已知匹配的结果顺序、trace 完整性与断队列时的生产行为。总体 Recall、Effective Hit、Stale Misuse、Rescue、P95 与单位成本先以同口径基线和配对报告观测。分母、标签和波动稳定之后，再为重复可测的样本定义回归容差。真实模型使用的质量分数先用于人工评审，确定性产物缺失和错误码仍可做硬门禁。
@@ -85,10 +85,10 @@
 
 `pnpm install --frozen-lockfile` 和 `pnpm -r typecheck` 通过。使用 Pi `1.5.2` 与 loopback mock provider，`eval/pi` 的 `--only new_session` 通过 13/13 项检查，随后全量 harness 通过 110/110 项检查。断言覆盖实际请求中的首次注入、尾部位置、跨项目排除、重复去重、续会话、compaction、queued、steer、stale、request 和进程退出。两次运行前后的真实 Obelisk 索引 mtime 一致。证据位于 `/tmp/vestigio-proof-memory-eval.qmJmfZ/run.log` 与 `/tmp/vestigio-proof-memory-eval-full.FvRTg5/run.log`，各目录保存了 `exit-code`。
 
-离线评估首版已落地在 `eval/memory/`，由 `run.mjs`（12 条标注样本，固定 5 条记忆 / 2 个项目目录，临时 SQLite store）和 `compare.mjs`（按 `case_id` 配对，回归时退出码 1）组成，复用 `eval/pi/hook.mjs`，不调用模型、不联网。首份基线见 `eval/memory/baseline.json`：Recall@1/3/5 均为 1.000，`inject_hit_rate` 1.000，`false_positive_rate` 0.083（12 例中 1 例误注入）。两次运行除 `generated_at` 外报告字节一致。
+离线评估已落地在 `eval/memory/`，由 `run.mjs`（17 条标注样本，固定 7 条记忆 / 2 个项目目录，临时 SQLite store）和 `compare.mjs`（按 `case_id` 配对，回归时退出码 1）组成，复用 `eval/pi/hook.mjs`，不调用模型、不联网。三种观测面：`inject` 走 `recordProjectInput` + `planInjection`，`search` 走 `layeredSearch`（项目作用域，`limit: 10`），`search` 加 `include_history` 时由脚本化 `HistoryPort` 提供 Obelisk 形状的命中。首份基线见 `eval/memory/baseline.json`：Recall@1/3/5 均为 1.000，`inject_hit_rate` 1.000，`false_positive_rate` 0.118（17 例中 2 例误注入），`source_gap_rescue_rate` 1.000。两次运行除 `generated_at` 外报告字节一致；单例耗时不再写入报告，因为这个 harness 不做模型调用与索引工作，计时只会在基线里制造噪声。
 
-该工具对生产代码的敏感性做过红绿验证：把 `packages/core/src/hotspots/match.ts:38` 的 `DEFAULT_MIN_MATCH_SCORE` 从 1 临时改为 99，4 条注入样本转为 miss，`compare.mjs` 报告 `regressions: 4` 并退出 1；改回后重新全绿。
+该工具对生产代码的敏感性做过三次红绿验证。其一，把 `packages/core/src/hotspots/match.ts:38` 的 `DEFAULT_MIN_MATCH_SCORE` 从 1 临时改为 99，4 条注入样本转为 miss，`compare.mjs` 报告 `regressions: 4` 并退出 1。其二，让 `packages/core/src/retrieval/conflict.ts` 的 `findConflictingMemoryIds` 返回空，`search-conflict-port-rule` 从 hit 变为 miss（`expected_status: conflicted` 不再满足），退出 1。其三，绕过 `packages/core/src/retrieval/layered.ts` 里 `entry.source_ref.project_id !== projectPath` 的丢弃分支，`history-foreign-dropped` 从 clean 变为 false_positive，退出 1。三次均改回后重新全绿，`git diff` 为空。
 
-首版暴露两个待处理项。其一，`memory_search` 的默认检索是析取词元加合取匹配（`buildMatchQuery` 用 `AND` 连接一元组与二元组），自然语言问句通常一条也匹配不到，因此样本使用关键词式短语；这与工具契约一致（`packages/pi-extension/src/tools.ts` 写明 exact words work best，自然语言走 `memory_resolve`），但意味着 Recall 数字只在关键词查询口径下成立。其二，`旧配置的字段名` 会因共享二元组「配置」注入 `mem-deploy-port` 的一行导航提示，属于真实的注入误召回，已单独记为 `inject-negative-near-miss` 并计入 FP 率。
+首版暴露三个待处理项。其一，`memory_search` 的默认检索是析取词元加合取匹配（`buildMatchQuery` 用 `AND` 连接一元组与二元组），自然语言问句通常一条也匹配不到，因此样本使用关键词式短语；这与工具契约一致（`packages/pi-extension/src/tools.ts` 写明 exact words work best，自然语言走 `memory_resolve`），但意味着 Recall 数字只在关键词查询口径下成立。其二，`旧配置的字段名` 会因共享二元组「配置」注入 `mem-deploy-port`，`部署脚本默认端口` 会因共享「端口」额外注入两条同名端口约定，两次都是真实的注入误召回，已分别记为 `inject-negative-near-miss` 与 `inject-near-miss-port-rule` 并计入 FP 率。其三，同名冲突场景下两条记忆都在候选集，排序先后不携带信息，样本用 `rank_ignored` 只断言存在性与 `conflicted` 状态，不参与 Recall 分母；这是记录口径，不是放宽标准。
 
 真实模型质量、历史快照回放、跨版本配对基线及 Shadow 副作用仍是后续验收项。

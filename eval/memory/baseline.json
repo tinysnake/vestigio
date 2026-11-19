@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-19T15:17:20.073Z",
-  "commit": "ccd8f5a",
-  "catalog_version": 1,
-  "dataset_sha256": "022814d4e89d95e5f1f4ca955dbb75c2bd0f3a63d94b2ba8ab0f8357f96c37d3",
+  "generated_at": "2026-11-19T15:32:53.133Z",
+  "commit": "b0909f5",
+  "catalog_version": 2,
+  "dataset_sha256": "e59e020fff020ea4a23d4294ca04339c328b19cd4a6584ded9b5ada0f1a07895",
   "seed": {
     "store": "temporary",
-    "memories": 5
+    "memories": 7
   },
   "summary": {
-    "cases": 12,
-    "hit": 8,
-    "clean": 3,
+    "cases": 17,
+    "hit": 10,
+    "clean": 5,
     "miss": 0,
-    "false_positive": 1,
+    "false_positive": 2,
     "error": 0
   },
   "metrics": {
@@ -21,181 +21,292 @@
     "recall_at_3": 1,
     "recall_at_5": 1,
     "inject_hit_rate": 1,
-    "false_positive_rate": 0.08333333333333333
+    "false_positive_rate": 0.11764705882352941,
+    "source_gap_rescue_rate": 1
   },
   "cases": [
     {
       "case_id": "inject-explicit-deploy",
       "surface": "inject",
       "status": "hit",
+      "retrieval_status": null,
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
-        "mem-deploy-port"
+        "mem-deploy-port",
+        "mem-port-rule-b",
+        "mem-port-rule-a"
       ],
+      "surfaced_refs": [],
       "category": "explicit-recall",
       "note": "用户直接提到过去的部署端口结论，热点应命中本项目记忆",
-      "elapsed_ms": 2,
       "error": null
     },
     {
       "case_id": "inject-implicit-migration",
       "surface": "inject",
       "status": "hit",
+      "retrieval_status": null,
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-migration"
       ],
+      "surfaced_refs": [],
       "category": "implicit-recall",
       "note": "当前任务依赖过去的回滚约定，没有点名记忆标题",
-      "elapsed_ms": 1,
       "error": null
     },
     {
       "case_id": "inject-implicit-cache",
       "surface": "inject",
       "status": "hit",
+      "retrieval_status": null,
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-cache"
       ],
+      "surfaced_refs": [],
       "category": "implicit-recall",
       "note": "过去定过的缓存写路径约定",
-      "elapsed_ms": 1,
       "error": null
     },
     {
       "case_id": "inject-negative-unrelated",
       "surface": "inject",
       "status": "clean",
+      "retrieval_status": null,
       "rank": null,
+      "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
       "surfaced_ids": [],
+      "surfaced_refs": [],
       "category": "negative",
       "note": "纯计算，不依赖任何历史证据",
-      "elapsed_ms": 1,
       "error": null
     },
     {
       "case_id": "inject-negative-archived",
       "surface": "inject",
       "status": "clean",
+      "retrieval_status": null,
       "rank": null,
+      "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
       "surfaced_ids": [],
+      "surfaced_refs": [],
       "category": "negative",
       "note": "归档记忆不得进入默认注入路径",
-      "elapsed_ms": 1,
       "error": null
     },
     {
       "case_id": "inject-negative-near-miss",
       "surface": "inject",
       "status": "false_positive",
+      "retrieval_status": null,
       "rank": null,
+      "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": true,
       "surfaced_ids": [
         "mem-deploy-port"
       ],
+      "surfaced_refs": [],
       "category": "negative",
       "note": "与部署记忆只共享“配置”一个二元组，测注入精度",
-      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "case_id": "inject-near-miss-port-rule",
+      "surface": "inject",
+      "status": "false_positive",
+      "retrieval_status": null,
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "forbidden_present": true,
+      "surfaced_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "surfaced_refs": [],
+      "category": "negative",
+      "note": "两条同名端口约定只共享「端口」，与部署脚本默认端口无关：并列同名记忆不应自动注入",
       "error": null
     },
     {
       "case_id": "inject-cross-project-other",
       "surface": "inject",
       "status": "hit",
+      "retrieval_status": null,
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-other-port"
       ],
+      "surfaced_refs": [],
       "category": "cross-project",
       "note": "同名热点短语只能注入当前项目的记忆",
-      "elapsed_ms": 0,
       "error": null
     },
     {
       "case_id": "search-explicit-deploy",
       "surface": "search",
       "status": "hit",
+      "retrieval_status": "partial",
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-deploy-port"
       ],
+      "surfaced_refs": [],
       "category": "explicit-recall",
       "note": "Active 层应直接命中",
-      "elapsed_ms": 1,
       "error": null
     },
     {
       "case_id": "search-implicit-migration",
       "surface": "search",
       "status": "hit",
+      "retrieval_status": "partial",
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-migration"
       ],
+      "surfaced_refs": [],
       "category": "implicit-recall",
       "note": "查询词与标题不完全一致",
-      "elapsed_ms": 0,
       "error": null
     },
     {
       "case_id": "search-cache",
       "surface": "search",
       "status": "hit",
+      "retrieval_status": "partial",
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-cache"
       ],
+      "surfaced_refs": [],
       "category": "implicit-recall",
       "note": "正文事实出现在查询里",
-      "elapsed_ms": 0,
       "error": null
     },
     {
       "case_id": "search-archived-not-default",
       "surface": "search",
       "status": "clean",
+      "retrieval_status": "not_found",
       "rank": null,
+      "rank_ignored": false,
       "expected_present": false,
       "forbidden_present": false,
       "surfaced_ids": [],
+      "surfaced_refs": [],
       "category": "negative",
       "note": "默认排序不得返回归档记忆",
-      "elapsed_ms": 0,
       "error": null
     },
     {
       "case_id": "search-cross-project-other",
       "surface": "search",
       "status": "hit",
+      "retrieval_status": "partial",
       "rank": 1,
+      "rank_ignored": false,
       "expected_present": true,
       "forbidden_present": false,
       "surfaced_ids": [
         "mem-other-port"
       ],
+      "surfaced_refs": [],
       "category": "cross-project",
       "note": "项目作用域过滤",
-      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "case_id": "search-conflict-port-rule",
+      "surface": "search",
+      "status": "hit",
+      "retrieval_status": "conflicted",
+      "rank": null,
+      "rank_ignored": true,
+      "expected_present": true,
+      "forbidden_present": false,
+      "surfaced_ids": [
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "surfaced_refs": [],
+      "category": "conflict",
+      "note": "两条同主题记忆应同时出现并判为冲突；并列顺序无意义，故不参与排名统计",
+      "error": null
+    },
+    {
+      "case_id": "history-rescue-gray-release",
+      "surface": "search",
+      "status": "hit",
+      "retrieval_status": "partial",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "forbidden_present": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [
+        "eval-session-history-gray/eval-message-history-gray-3"
+      ],
+      "category": "source-gap",
+      "note": "记忆库没有该结论，原始历史有：应记为 Source Gap 并由历史层补位",
+      "error": null
+    },
+    {
+      "case_id": "history-foreign-dropped",
+      "surface": "search",
+      "status": "clean",
+      "retrieval_status": "partial",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "forbidden_present": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "category": "negative",
+      "note": "历史层返回别的项目的命中时必须丢弃，不能当成证据",
+      "error": null
+    },
+    {
+      "case_id": "history-nothing-anywhere",
+      "surface": "search",
+      "status": "clean",
+      "retrieval_status": "not_found",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "forbidden_present": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "category": "negative",
+      "note": "记忆库和历史都没有，应是 not_found 而不是误命中",
       "error": null
     }
   ]
