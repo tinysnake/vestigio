@@ -185,9 +185,23 @@ extension's `memory_search` tool documents the same expectation, and
 node ./compare.mjs baseline.json out/report.json
 ```
 
-Matches by `case_id`, lists regressions (`hit`/`clean` → `miss`/`false_positive`/
-`error`) first, then fixes, other status changes, missing and added cases. Exit
-1 on any regression. Reads only the two JSON files; no store, no network.
+Prints both commits and a metric table (baseline, candidate, delta) built from
+the two reports, then matches by `case_id` and lists regressions (`hit`/`clean` →
+`miss`/`false_positive`/`error`) first, then fixes, other status changes, missing
+and added cases. Exit 1 on any regression. Reads only the two JSON files; no
+store, no network.
+
+If `dataset_sha256` or `catalog_version` differ between the two reports, the
+metric table is preceded by a warning, because deltas across different datasets
+or catalogs do not mean what they look like. The case list is still printed.
+
+Comparing two commits therefore takes two runs and one diff:
+
+```sh
+node --import ../pi/hook.mjs ./run.mjs --out out/baseline.json   # at the old commit
+node --import ../pi/hook.mjs ./run.mjs --out out/candidate.json  # on the new one
+node ./compare.mjs out/baseline.json out/candidate.json
+```
 
 ## What this does not measure
 

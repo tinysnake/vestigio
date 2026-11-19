@@ -18,8 +18,44 @@ if (baselinePath === undefined || candidatePath === undefined) {
 
 const GOOD = new Set(["hit", "clean"]);
 const byId = (report) => new Map(report.cases.map((item) => [item.case_id, item]));
-const before = byId(JSON.parse(readFileSync(baselinePath, "utf8")));
-const after = byId(JSON.parse(readFileSync(candidatePath, "utf8")));
+const baselineReport = JSON.parse(readFileSync(baselinePath, "utf8"));
+const candidateReport = JSON.parse(readFileSync(candidatePath, "utf8"));
+const before = byId(baselineReport);
+const after = byId(candidateReport);
+
+const format = (value) =>
+	value === null || value === undefined ? "-" : typeof value === "number" ? value.toFixed(3) : String(value);
+const delta = (from, to) =>
+	typeof from === "number" && typeof to === "number" ? `${to - from >= 0 ? "+" : ""}${(to - from).toFixed(3)}` : "-";
+
+// A different dataset or catalog makes metric deltas meaningless even when the
+// case ids line up, so say so before printing numbers.
+const keyOf = (report) =>
+	`${report.dataset_sha256 ?? "?"}/${report.catalog_version ?? "?"}`;
+const sameInputs = keyOf(baselineReport) === keyOf(candidateReport);
+if (!sameInputs) {
+	console.log(`datasets differ: ${keyOf(baselineReport)} vs ${keyOf(candidateReport)} — metric deltas are not comparable`);
+}
+console.log(`baseline ${baselineReport.commit ?? "?"} (${baselineReport.generated_at})`);
+console.log(`candidate ${candidateReport.commit ?? "?"} (${candidateReport.generated_at})`);
+
+const keys = new Set([...Object.keys(baselineReport.metrics ?? {}), ...Object.keys(candidateReport.metrics ?? {})]);
+const rows = [...keys].sort().map((key) => {
+	const from = baselineReport.metrics?.[key] ?? null;
+	const to = candidateReport.metrics?.[key] ?? null;
+	return [key, format(from), format(to), delta(from, to)];
+});
+const counts = ["hit", "clean", "miss", "false_positive", "error"].map((status) => {
+	const from = baselineReport.summary?.[status] ?? 0;
+	const to = candidateReport.summary?.[status] ?? 0;
+	return [`summary.${status}`, String(from), String(to), `${to - from >= 0 ? "+" : ""}${to - from}`];
+});
+const table = [...rows, ...counts];
+const width = Math.max(...table.map((row) => row[0].length));
+console.log(["metric", "baseline", "candidate", "delta"].map((cell, index) => cell.padEnd(index === 0 ? width : 10)).join(" "));
+for (const [name, from, to, change] of table) {
+	console.log([name.padEnd(width), from.padEnd(10), to.padEnd(10), change].join(" "));
+}
 
 const groups = { regressions: [], fixes: [], "status changes": [], "missing from candidate": [], "added in candidate": [] };
 for (const id of new Set([...before.keys(), ...after.keys()])) {
