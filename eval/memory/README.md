@@ -507,6 +507,78 @@ only works when the model names a phrase that shares whole words with the
 memory. The measurement is a proxy for that one step — it does not run the
 judge, the descent, or the archived/history layers.
 
+### Should the gather step fall back when the conjunction finds nothing?
+
+A whole-sentence query matches nothing, and the proposal's diagnosis table has a
+row for exactly that (「查询了但没命中 → 检索策略不足」). `strategies.mjs` prices the
+candidate answers on every labelled row, without touching production:
+
+```
+node --import ../pi/hook.mjs ./strategies.mjs
+node --import ../pi/hook.mjs ./strategies.mjs --source cases.jsonl --out out/strategies-cases.json
+```
+
+`and` is today's behaviour; `or` is the same search with `mode: "any"`; `split`
+searches each whitespace-separated term alone and unions the hits; the
+`and_then_*` rows only fall back when the conjunction returns nothing, and the
+`hotspot` variants fall back to the matcher the inject surface already uses
+(`matchHotspots` over the project pool, `min_score` shown in the name). "Noise
+beside a hit" counts ids dragged in next to a hit, which is what a user
+notices as clutter even when nothing was forbidden.
+
+Every labelled row (297 positive, 117 negative):
+
+| strategy | all expected | noise beside a hit | negative leaks | fallback fired | search calls |
+| --- | --- | --- | --- | --- | --- |
+| and | 99/297 | 10 (9 rows) | 0/117 | 0 | 414 |
+| or | 283/297 | 2070 (265 rows) | 95/117 | 0 | 414 |
+| split | 140/297 | 79 (48 rows) | 18/117 | 0 | 920 |
+| and_then_split | 138/297 | 42 (23 rows) | 18/117 | 116 | 920 |
+| and_then_or | 281/297 | 1507 (180 rows) | 94/117 | 116 | 414 |
+| and_then_hotspot | 269/297 | 52 (49 rows) | 19/117 | 116 | 414 |
+| and_then_hotspot_2 | 266/297 | 52 (49 rows) | 17/117 | 116 | 414 |
+| and_then_hotspot_3 | 248/297 | 20 (19 rows) | 11/117 | 116 | 414 |
+
+Hand-confirmed rows only (`--source cases.jsonl`, 54 positive, 22 negative):
+
+| strategy | all expected | noise beside a hit | negative leaks | fallback fired | search calls |
+| --- | --- | --- | --- | --- | --- |
+| and | 21/54 | 0 (0 rows) | 0/22 | 0 | 76 |
+| or | 54/54 | 396 (51 rows) | 18/22 | 0 | 76 |
+| split | 28/54 | 9 (6 rows) | 2/22 | 0 | 126 |
+| and_then_split | 27/54 | 8 (5 rows) | 2/22 | 21 | 126 |
+| and_then_or | 53/54 | 265 (31 rows) | 17/22 | 21 | 76 |
+| and_then_hotspot | 50/54 | 8 (8 rows) | 3/22 | 21 | 76 |
+| and_then_hotspot_2 | 47/54 | 8 (8 rows) | 2/22 | 21 | 76 |
+| and_then_hotspot_3 | 46/54 | 3 (3 rows) | 0/22 | 21 | 76 |
+
+Three things this says, and one thing it does not:
+
+1. `or` is not a retrieval strategy. It answers 95 of 117 negative rows with a
+   memory, because "any token" makes near-miss questions look like hits — a
+   memory that shares 日志 with a question about log levels now gets delivered.
+2. A fallback fires on 116 of 117 negative rows, and that is structural rather
+   than a tuning problem: negatives are negative precisely because they share no
+   whole token with a memory, so the conjunction is empty on all of them and any
+   fallback gets to decide. Falling back means deciding *without* the evidence
+   the AND query relies on.
+3. The two populations disagree, and that is the actual finding: on the curated
+   rows `and_then_hotspot_3` recovers more than twice the hits with zero leaks (0/22),
+   while on all rows the same strategy leaks 11/117. Triage of those 11 shows 7
+   are already-known cross-project label bugs in machine-drafted rows
+   (`cand-mem-other-port-*`, `cand-mem-migration-在-p-shop`, the duplicated
+   `p-memory-eval-other` row) and 4 are real near-misses
+   (连接池泄漏一般怎么排查, `hand-b3-neg-pool-keepalive`, `hand-b3-neg-apiver-header`)
+   that live only in `candidates.batch-3.jsonl` and were never promoted into the
+   baseline. So the gap is label quality, not strategy quality.
+4. No fallback is landing. The number to beat is `and`'s 0/117 leaks, and 22
+   hand-checked negatives cannot distinguish 0/22 from 11/117. The measurement
+   says what to do next — promote and hand-check more negatives — rather than
+   which strategy to ship, and it leaves the already-working alternative in
+   place: the model-driven rewrite measured in "Query expansion" recovers 50 of
+   52 literal misses for $0.0103, and it spends that money only on turns that
+   came back empty.
+
 ### Archived memories
 
 `mem-archived` is reachable on the search surface even without
