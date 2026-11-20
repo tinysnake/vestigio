@@ -54,7 +54,10 @@ export type SearchHit = {
 };
 
 export type SearchQueryEcho = {
+  /** The caller's text, exactly as passed in. */
   readonly text: string;
+  /** What FTS5 actually received; equal to `text` when nothing was expanded. */
+  readonly fts_text: string;
   readonly limit: number;
   readonly project_path: string | null;
   readonly session_id: string | null;

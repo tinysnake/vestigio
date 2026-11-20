@@ -32,6 +32,8 @@ export type { SearchResult } from "./hit.js";
 export type { SearchHit, HitSession, ContextMessage, CallTiming } from "./hit.js";
 export type { ReadMessage, ReadRelation } from "./read.js";
 export { READ_RELATIONS } from "./read.js";
+export { expandFtsQuery, PREFIX_MIN_CODEPOINTS } from "./query.js";
+export type { ExpandedQuery } from "./query.js";
 export { ObeliskError, isObeliskError, isUnavailable, UNAVAILABLE_KINDS } from "./errors.js";
 export type { ObeliskErrorKind, ObeliskErrorDetail } from "./errors.js";
 export {

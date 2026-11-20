@@ -36,11 +36,13 @@ import {
   readOptionObject,
   requireAbsolutePath,
 } from "./options.js";
+import { expandFtsQuery } from "./query.js";
 import type { CliRuntime } from "./runtime.js";
 import { type SearchHit, type SearchResult, mapHit } from "./hit.js";
 
 const ALLOWED_KEYS = [
   "text",
+  "prefix_expand",
   "limit",
   "project_path",
   "session_id",
@@ -60,6 +62,14 @@ const SESSION_LOOKUP_LIMIT = 50;
 export type SearchOptions = {
   /** FTS5 query text. Never spliced: it is one argv element or one JSON value. */
   readonly text: string;
+  /**
+   * Rewrite every term into a prefix match before the query is sent. Default
+   * true, because the pinned index tokenizes with unicode61 and a
+   * multi-character term otherwise matches only a token that is that exact run
+   * (see `query.ts`). Set false to send the caller's text verbatim, which is
+   * what an A/B measurement does.
+   */
+  readonly prefix_expand?: boolean | undefined;
   /** Default 20, capped at 200 so a result set stays bounded. */
   readonly limit?: number | undefined;
   /** Absolute, normalised project root; matched with `sessions.project_path = ?`. */
@@ -80,6 +90,7 @@ export type SearchOptions = {
 
 export type NormalisedSearch = {
   text: string;
+  prefix_expand: boolean;
   limit: number;
   project_path: string | undefined;
   session_id: string | undefined;
@@ -115,6 +126,7 @@ export function normaliseSearchOptions(options: unknown): NormalisedSearch {
   }
   return {
     text,
+    prefix_expand: optionalBoolean(record, "prefix_expand", "search") ?? true,
     limit: optionalInteger(record, "limit", "search", 0, SEARCH_LIMIT_MAX) ?? SEARCH_LIMIT_DEFAULT,
     project_path: project_path === undefined ? undefined : requireAbsolutePath(project_path, "search.project_path"),
     session_id,
@@ -180,6 +192,10 @@ export async function runSearch(
   const started_at = performance.now();
   runtime.ensureIndex();
 
+  const query = normalised.prefix_expand
+    ? expandFtsQuery(normalised.text)
+    : { text: normalised.text, original: normalised.text, expanded: false, terms: [] as readonly string[] };
+
   const run_options = { timeout_ms: normalised.timeout_ms, signal: normalised.signal };
   const use_script = normalised.include_meta || normalised.include_inactive || normalised.resolve_evidence;
 
@@ -191,7 +207,7 @@ export async function runSearch(
     const ran = await runtime.runScript(
       "search",
       {
-        text: normalised.text,
+        text: query.text,
         limit: normalised.limit,
         context_limit: normalised.context_limit,
         include_meta: normalised.include_meta,
@@ -217,7 +233,7 @@ export async function runSearch(
   } else {
     const args = [
       "--search",
-      normalised.text,
+      query.text,
       "--limit",
       String(normalised.limit),
       "--context-limit",
@@ -266,6 +282,7 @@ export async function runSearch(
     hits: hits.map((hit) => mapHit(hit, runtime.source_instance, normalised.project_path ?? null)),
     query: {
       text: normalised.text,
+      fts_text: query.text,
       limit: normalised.limit,
       project_path: normalised.project_path ?? null,
       session_id: normalised.session_id ?? null,

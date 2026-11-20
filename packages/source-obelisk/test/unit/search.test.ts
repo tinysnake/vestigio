@@ -46,8 +46,36 @@ describe("search — fast path", () => {
     await fakeSource(home).search({ text: "zqleak", project_path: "/tmp/x_a" });
 
     expect(argvLog(log)).toEqual([
-      ["--search", "zqleak", "--limit", "20", "--context-limit", "0", "--project-path", "/tmp/x_a"],
+      ["--search", "zqleak*", "--limit", "20", "--context-limit", "0", "--project-path", "/tmp/x_a"],
     ]);
+  });
+
+  it("turns a multi-character term into a prefix match, because the index tokenizes with unicode61", async () => {
+    const { home, log } = prepared();
+    setFakeEnv({
+      FAKE_OBELISK_ARGV_LOG: log,
+      FAKE_OBELISK_SEARCH: JSON.stringify([hitJson()]),
+    });
+
+    const result = await fakeSource(home).search({ text: "灰度发布 缓存" });
+
+    expect(argvLog(log)[0]![1]).toBe("灰度发布* 缓存*");
+    // The echo keeps the caller's words; fts_text is what the index saw.
+    expect(result.query.text).toBe("灰度发布 缓存");
+    expect(result.query.fts_text).toBe("灰度发布* 缓存*");
+  });
+
+  it("sends the caller's text verbatim when prefix_expand is false", async () => {
+    const { home, log } = prepared();
+    setFakeEnv({
+      FAKE_OBELISK_ARGV_LOG: log,
+      FAKE_OBELISK_SEARCH: JSON.stringify([hitJson()]),
+    });
+
+    const result = await fakeSource(home).search({ text: "灰度发布", prefix_expand: false });
+
+    expect(argvLog(log)[0]![1]).toBe("灰度发布");
+    expect(result.query.fts_text).toBe("灰度发布");
   });
 
   it("maps a hit to a SourceRef and says the causal parent is unresolved", async () => {
