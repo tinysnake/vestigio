@@ -312,6 +312,24 @@ names a `fact` taken from the memory body (`18080`, `第五步`, `删缓存`, `1
 `miss` is deliberately not `usage_miss`: a search that returns nothing and a
 search whose result was ignored are different failures with different owners.
 
+Each turn also records whether any memory URI ever reached the model — the
+injected block arrives as a user message, tool results as their own messages, so
+the harness scans every non-assistant message for `memory://`. That is what turns
+the proposal's four-way split into per-turn attribution, printed as
+`failures: trigger N retrieval N usage N`:
+
+| condition | attribution |
+| --- | --- |
+| no memory tool called | `trigger_miss` |
+| called, but no memory URI ever reached the model | `retrieval_miss` |
+| a memory reached the model, but the answer lacks the fact | `usage_miss` |
+| (Resolution Miss is not attributed here — it needs the resolver's own outcome, which the harness does not see) | — |
+
+The distinction has already paid for itself: a cold image-tag turn that called
+both `memory_search` and `memory_resolve` and was shown nothing reads as a
+retrieval miss, not as a model that ignored what it was given (see "A coverage
+gap the trigger harness found").
+
 `memory_resolve` needs a model to rewrite a question into index terms, so the
 harness points the extension at the local gateway by default
 (`VESTIGIO_MODEL_BASE_URL`, `VESTIGIO_MODEL_ID`, `VESTIGIO_MODEL_API_KEY`,
