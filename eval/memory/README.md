@@ -318,6 +318,15 @@ unchanged because no offline case asked that way. The general lesson is the one
 written with decide whether it can ever be found, and that is a formation
 question rather than a matcher one.
 
+That two-repeat result did not hold. Every 3-repeat run since has
+`cold-image-tag` at `miss×3`: the turn calls `memory_search`, no memory URI ever
+reaches the model, and the answer falls back to generic Docker naming advice
+(`surfaced: false`). So the keyword addition fixed one phrasing, not the question
+class — the rewrite step still has to name a word the memory carries, and the
+answer the memory holds is about 标签 rather than about 名字. Read the old
+`hit hit` as a two-sample observation, not as a fix; the honest summary is that
+this scenario measures a formation gap that a keyword edit can mask for a while.
+
 ### A fixture that made its own question unanswerable
 
 `recall-deploy-port` used to be graded by substring: `18080` anywhere in the
