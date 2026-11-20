@@ -83,6 +83,33 @@ usage events and hit counters are written only by a real delivery. A store with
 activity but no delivery rows reports "inputs were recorded but nothing was ever
 delivered".
 
+### Naming a past state: `--pin <memory_id>@<revision>`
+
+A timestamp cannot name a past state, and the store says so: every revision of a
+memory carries the same immutable `created_at` (the memory's creation time —
+saving revision 2 with a different value is rejected as `created_at_mismatch`,
+`packages/core/src/storage/store.ts:309`) and `updated_at` is refreshed by
+delivery, so a revision has no time of its own. Measured: after saving
+`mem-deploy-port` revision 2, both rows report `created_at` and `updated_at` as
+`2026-11-17T12:00:00.000Z`.
+
+`--pin` names the state instead, which is what a replay fixture needs:
+
+```sh
+node ./audit.mjs --store /tmp/store-copy.sqlite --pin mem-deploy-port@1 --cases cases.jsonl
+```
+
+The pinned memory reports that revision, every other memory keeps its current
+head, and the report adds `with_history` / `max_revisions` so a reader can see
+how much history the store actually holds. Measured on one store: pinned, the
+memory is revision 1 with 634 body chars and 12503 total; unpinned, revision 2
+with 757 and 12626. A pin that names no such revision exits 2 rather than
+falling back to the head.
+
+Pins cover the memory table only. `hotspot_memberships` and `project_activity`
+keep no history, so a full production replay would still be missing the pool and
+the activity sequence of that moment.
+
 ## Dataset
 
 `cases.jsonl` has one case per line, 99 of them at `CATALOG_VERSION` 6. The
