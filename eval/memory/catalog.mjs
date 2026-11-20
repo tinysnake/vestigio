@@ -9,7 +9,7 @@
 
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 
-export const CATALOG_VERSION = 4;
+export const CATALOG_VERSION = 5;
 export const PROJECT = "p-memory-eval";
 export const OTHER_PROJECT = "p-memory-eval-other";
 export const AT = "2026-11-17T12:00:00.000Z";
@@ -185,7 +185,7 @@ export const MEMORIES = [	memory({
 		id: "mem-docker-image",
 		project: PROJECT,
 		title: "镜像标签规则",
-		keywords: ["镜像标签", "image-tag"],
+		keywords: ["镜像标签", "容器", "image-tag"],
 		nav: "镜像标签与推送规则。",
 		prefix: "镜像标签用提交短哈希，latest 只在主分支成功后覆盖。",
 	}),

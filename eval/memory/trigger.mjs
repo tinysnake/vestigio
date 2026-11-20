@@ -117,6 +117,11 @@ function runTurn(question) {
 	const tools = [];
 	let text = "";
 	let cost = 0;
+	// Everything the model was shown that is not its own answer: the injected
+	// block arrives as a user message, tool results as their own messages. A
+	// memory URI here means retrieval delivered something, which is what tells a
+	// retrieval miss apart from a usage miss.
+	let context = "";
 	for (const line of stdout.split("\n")) {
 		if (line.trim() === "") continue;
 		let event;
@@ -126,6 +131,14 @@ function runTurn(question) {
 			continue;
 		}
 		const message = event.message;
+		if (event.type === "message_end" && message?.role !== "assistant") {
+			const parts = Array.isArray(message?.content) ? message.content : [];
+			for (const part of parts) {
+				if (typeof part.text === "string") context += `${part.text}\n`;
+				else if (typeof part.content === "string") context += `${part.content}\n`;
+			}
+			continue;
+		}
 		if (event.type === "message_end" && message?.role === "assistant") {
 			cost += message.usage?.cost?.total ?? 0;
 			if (!Array.isArray(message.content)) continue;
@@ -136,7 +149,16 @@ function runTurn(question) {
 		}
 	}
 	const memoryCalls = [...new Set(tools.filter((name) => MEMORY_TOOLS.has(name)))];
-	return { args, env: {}, tools, memoryCalls, text, cost, wall_ms: Date.now() - started };
+	return {
+		args,
+		env: {},
+		tools,
+		memoryCalls,
+		text,
+		cost,
+		surfaced: context.includes("memory://"),
+		wall_ms: Date.now() - started,
+	};
 }
 
 if (DRY) {
@@ -183,10 +205,23 @@ for (const scenario of SCENARIOS) {
 				: called
 					? "over_trigger"
 					: "clean";
+		// Attribution for the proposal's four-way split. A turn that reached a
+		// memory and still did not carry the fact is a usage miss; one that
+		// called a tool and was shown nothing is a retrieval miss.
+		const failure =
+			scenario.expect !== "query" || status === "hit"
+				? "none"
+				: !called
+					? "trigger_miss"
+					: turn.surfaced !== true
+						? "retrieval_miss"
+						: "usage_miss";
 		rows.push({
 			id: scenario.id,
 			expect: scenario.expect,
 			status,
+			failure,
+			surfaced: turn.surfaced === true,
 			question: scenario.question,
 			memory_calls: calls,
 			active_retrieval: active,
@@ -227,6 +262,11 @@ const report = {
 			rows.filter((row) => row.status === "usage_miss").length,
 			rows.filter((row) => row.expect === "query" && row.used !== null).length,
 		),
+		failures: {
+			trigger_miss: rows.filter((row) => row.failure === "trigger_miss").length,
+			retrieval_miss: rows.filter((row) => row.failure === "retrieval_miss").length,
+			usage_miss: rows.filter((row) => row.failure === "usage_miss").length,
+		},
 		cost_usd: Number(rows.reduce((sum, row) => sum + row.cost_usd, 0).toFixed(6)),
 		p50_ms: percentile(rows.map((row) => row.wall_ms), 50),
 		p95_ms: percentile(rows.map((row) => row.wall_ms), 95),
@@ -240,6 +280,9 @@ const summary = report.summary;
 console.log(
 	`resolver model: ${summary.resolver_model ?? "none (degraded)"}`,
 	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), usage-miss ${summary.usage_miss_rate}, over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
+);
+console.log(
+	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,
 );
 console.log(`p50 ${summary.p50_ms}ms p95 ${summary.p95_ms}ms`);
 console.log(`report ${outPath}`);

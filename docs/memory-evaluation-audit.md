@@ -100,6 +100,8 @@
 
 | 第 12 节条目 | 状态 | 依据 |
 | --- | --- | --- |
+其八，触发器 harness 还抓到一个「覆盖」类问题：冷场景里有一条问「把服务打包成容器时镜像名字怎么起」的回合，`memory_search` 与 `memory_resolve` 都被调用了，却一条记忆都没返回，而答案所在的 `mem-docker-image` 就在库里。原因不是排序而是用词：那条记忆的关键词只写了「镜像标签」和 `image-tag`，正文讲的也是标签规则，从未出现「容器」「打包」，因此在词法检索层里它和用户的问法没有任何交集，裁判模型也无从改写。给这条记忆补上「容器」这个用户真会说的词（`CATALOG_VERSION` 5）后，同一条场景两次运行都转为命中（`--only cold-image-tag --repeats 2`：`miss(retrieval_miss)` → `hit hit`），而 52 条离线基线不变，因为没有离线样本这样提问。这条差距正好落在第 4.8 节的 Memory Coverage 上：词法检索能查到什么，取决于记忆是用什么词写的，这是「记忆生成」的问题，而不是匹配器或排序的问题；把两条信号（离线基线 + 真实回合的 `retrieval_miss`）放在一起，就能把「库里没有」「库里有但找不到」「找到了但没用上」分开定位。
+
 | 1 固定 Dataset 重复运行 | 已满足 | 52 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
 | 2 区分四类 Miss | 部分 | Retrieval Miss 由 `miss` 直接给出；Trigger / Resolution / Usage Miss 需要真实 Agent 回合，离线 harness 不具备 |
 | 3 Recall@1/3/5 | 已满足 | 当前均 1.000，分母为带期望 ID 且未标 `rank_ignored` 的样本 |

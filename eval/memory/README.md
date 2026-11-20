@@ -210,6 +210,23 @@ Two things to keep in mind before trusting a number:
 `usage-stale-ttl-*` rows are the Stale Misuse side of the proposal: same memory,
 `is_stale` true, answers that heed it, ignore it, or treat it as current.
 
+### A coverage gap the trigger harness found
+
+The 24-turn run left one cold turn as a retrieval miss: the question about
+naming a container image reached both `memory_search` and `memory_resolve` and
+was shown nothing, while the memory that answers it (`mem-docker-image`) was in
+the store. The reason is vocabulary, not ranking: that memory was written about
+镜像标签 and said nothing about 容器 or 打包, so no lexical layer could connect
+the user's words to it, and the judge had nothing to rewrite toward.
+
+Adding 容器 to that memory's keywords (`CATALOG_VERSION` 5) turns the same
+scenario green: `--only cold-image-tag --repeats 2` goes from
+`miss (retrieval_miss)` to `hit hit`, and the 52-case offline baseline is
+unchanged because no offline case asked that way. The general lesson is the one
+`Memory Coverage` exists for: for a lexical retriever, the words a memory is
+written with decide whether it can ever be found, and that is a formation
+question rather than a matcher one.
+
 ### Judging real answers
 
 Hand-written answers cannot show whether the judge agrees with reality, so
