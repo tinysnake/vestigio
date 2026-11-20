@@ -142,6 +142,22 @@ Metrics use non-error cases only:
 | `injection_false_positive_rate` | the same set: forbidden ids that reached `plan.injected` |
 | `budget_rescued` | count of cases where the cap dropped a leaked candidate |
 | `source_gap_rescue_rate` | cases with `expected_source_refs` |
+| `expectation_hit_rate` | cases that should deliver something (ids, refs or a stale flag) |
+| `quiet_rate` | cases that should stay quiet (no expectation, but a forbidden id or an `expected_status`) |
+
+The last two come out of the report's `confusion` block, which splits the set into
+the two classes the labels actually define:
+
+| | delivered / quiet | missed | leaked |
+| --- | --- | --- | --- |
+| should deliver (56) | 49 | 7 | 0 |
+| should stay quiet (23) | 22 | 0 | 1 |
+
+A case with no expectation, no forbidden id and no `expected_status` is counted
+apart as `unlabelled` and left out of both sides, so an unlabelled row cannot be
+read as a pass. Note that `false_positive_rate` divides by every scored case
+(1/79 = 0.013) while the matrix divides by the 23 quiet cases (1/23 = 0.043): the
+same leak, diluted differently, so say which denominator you mean.
 
 ## Candidate batches
 

@@ -47,6 +47,21 @@
 
 生产 store 的 revision 序列只提供部分历史。`setMemoryState` 会就地更新 head revision 的状态和 FTS 成员关系。导航、Hotspot ledger、stale 事件与会话分支也需要对应时间点的证据。历史快照缺失时，标为 `current_snapshot` 或 `approximate`，单独报告。`ResolveInput` 已提供 `wall_now` 与 `mono_now` 时钟入口。Resolver 发现并使用原始历史时可持久化总结，所以须通过隔离副本运行，命中和覆盖按运行前快照评分。 [状态更新](../packages/core/src/storage/store.ts#L395) · [Resolver 时钟](../packages/core/src/resolver/types.ts#L208) · [Resolver 持久化](../packages/core/src/resolver/resolver.ts#L896)
 
+### 混淆矩阵
+
+上面两个指标回答的是「有没有做到」，混淆矩阵回答的是「分母是谁」。离线 harness 只把样本分成两类，因为数据集本身只有这两类标注：**应该交付**（`expected_memory_ids` 或 `expected_source_refs` 非空，或要求交付 stale 标记）与**应该安静**（没有期望，但写了 `forbidden_memory_ids` 或 `expected_status`）。只写 `forbidden_memory_ids` 的空期望样本不算「未被测试」：它带着可被违反的约束。真正的空样本（既无期望也无禁止项、无期望状态）单独报告为 `unlabelled`，不计入任一侧，否则「没标注」会被当成「通过」。
+
+当前 79 条基线（`node --import ../pi/hook.mjs ./run.mjs`，读 `out/report.json` 的 `confusion`）：
+
+| | delivered / quiet | missed | leaked |
+| --- | --- | --- | --- |
+| 应该交付（56） | 49 | 7 | 0 |
+| 应该安静（23） | 22 | 0（期望状态未达成） | 1 |
+
+由它得到两个指标：`expectation_hit_rate` = 49/56 = 0.875，回答「该给的东西给了几次」；`quiet_rate` = 22/23 = 0.957，回答「不该出声的时候有多安静」。`unlabelled` 为 0。7 条 missed 是已经记录在案的缺口（两条 archived 措辞问句、三条多记忆组合、两条多主题检索行），不是新增失败；唯一一条 leaked 是 `inject-neg-docker-image`（「容器里怎么装 nginx」→ `mem-docker-image`），原因是查询首词的整词别名规则同时在支撑「迁移失败后先做什么」。
+
+混淆矩阵与 `false_positive_rate` 的口径差异必须保留：后者以全部可评分样本为分母（1/79 = 0.013），前者以「应该安静」的 23 条为分母（1/23），同一个泄漏在两个数字里被稀释程度不同，引用时必须说明用了哪一个。
+
 ## 4. 指标与归因
 
 每项输出分子、分母、未知数、观测阶段、样本类别及版本。分母为零时报告 `null`。检索实验以固定查询在固定快照上运行，Agent 端到端实验以用户 turn 为单位，两种结果各自保留。

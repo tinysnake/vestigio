@@ -123,7 +123,8 @@ function score(item, surfaced, error) {
 	const staleOk = expectedStale.every((id) => surfaced.stale.includes(id));
 	const idsOk = expected.length === 0 || missingExpected.length === 0;
 	const refsOk = expectedRefs.length === 0 || refPresent;
-	const statusMismatch = item.expected_status != null && item.expected_status !== surfaced.status;
+	const expectedStatus = item.expected_status ?? null;
+	const statusMismatch = expectedStatus !== null && expectedStatus !== surfaced.status;
 	let status;
 	if (error) status = "error";
 	else if (forbiddenPresent || extraIds.length > 0) status = "false_positive";
@@ -136,6 +137,8 @@ function score(item, surfaced, error) {
 		surface: item.surface,
 		text: item.text,
 		status,
+		expects,
+		expected_status: expectedStatus,
 		retrieval_status: surfaced.status,
 		injection_reason: surfaced.reason ?? null,
 		rank: first === -1 || item.rank_ignored === true ? null : first + 1,
@@ -189,6 +192,31 @@ const recallAt = (k) => rate(recallable.filter((item) => item.rank !== null && i
 const summary = { cases: results.length, hit: 0, clean: 0, miss: 0, false_positive: 0, error: 0 };
 for (const item of results) summary[item.status] += 1;
 
+// The confusion matrix over the two classes the dataset actually labels: a case
+// that should deliver something, and a case that should stay quiet. A case
+// labeled only by a forbidden id or an expected status counts as "quiet"; a
+// case with no claim at all is reported apart, because it scores clean without
+// having been tested.
+const shouldDeliver = scored.filter((item) => item.expects === true);
+const shouldStayQuiet = scored.filter(
+	(item) => item.expects !== true && (item.has_forbidden === true || item.expected_status !== null),
+);
+const confusion = {
+	should_deliver: {
+		delivered: shouldDeliver.filter((item) => item.status === "hit").length,
+		missed: shouldDeliver.filter((item) => item.status === "miss").length,
+		delivered_with_leak: shouldDeliver.filter((item) => item.status === "false_positive").length,
+	},
+	should_stay_quiet: {
+		quiet: shouldStayQuiet.filter((item) => item.status === "clean").length,
+		leaked: shouldStayQuiet.filter((item) => item.status === "false_positive").length,
+		status_missed: shouldStayQuiet.filter((item) => item.status === "miss").length,
+	},
+	unlabelled: scored.filter(
+		(item) => item.expects !== true && item.has_forbidden !== true && item.expected_status === null,
+	).length,
+};
+
 let gitCommit = null;
 try {
 	gitCommit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -204,6 +232,7 @@ const report = {
 	dataset_sha256: createHash("sha256").update(casesBytes).digest("hex"),
 	seed: { store: storeArgument === null ? "temporary" : storePath, memories: seed.memories },
 	summary,
+	confusion,
 	metrics: {
 		recall_at_1: recallAt(1),
 		recall_at_3: recallAt(3),
@@ -221,6 +250,18 @@ const report = {
 			candidateLabeled.length,
 		),
 		budget_rescued: candidateLabeled.filter((item) => item.candidate_leak && !item.forbidden_present).length,
+		expectation_hit_rate: rate(
+			confusion.should_deliver.delivered,
+			confusion.should_deliver.delivered +
+				confusion.should_deliver.missed +
+				confusion.should_deliver.delivered_with_leak,
+		),
+		quiet_rate: rate(
+			confusion.should_stay_quiet.quiet,
+			confusion.should_stay_quiet.quiet +
+				confusion.should_stay_quiet.leaked +
+				confusion.should_stay_quiet.status_missed,
+		),
 		source_gap_rescue_rate: rate(
 			scored.filter((item) => refLabeled.has(item.case_id) && item.memory_found === false && item.status === "hit")
 				.length,
@@ -254,6 +295,13 @@ const metrics = Object.entries(report.metrics).map(
 console.log(
 	`\n${summary.cases} cases: ${summary.hit} hit, ${summary.clean} clean, ${summary.miss} miss, ` +
 		`${summary.false_positive} false_positive, ${summary.error} error`,
+);
+console.log(
+	`confusion: should-deliver ${confusion.should_deliver.delivered} delivered / ` +
+		`${confusion.should_deliver.missed} missed / ${confusion.should_deliver.delivered_with_leak} leaked, ` +
+		`should-stay-quiet ${confusion.should_stay_quiet.quiet} quiet / ` +
+		`${confusion.should_stay_quiet.leaked} leaked / ${confusion.should_stay_quiet.status_missed} status-miss, ` +
+		`unlabelled ${confusion.unlabelled}`,
 );
 console.log(metrics.join(" "));
 console.log(`report: ${outPath}`);
