@@ -195,6 +195,7 @@ describe("memory_search", () => {
 		const { store, tools, ctx } = setup();
 		const result = await tools.get("memory_search")!.execute("call-2", { query: "量子力学" }, undefined, undefined, ctx);
 		expect(result.content[0]!.text).toContain("(no matching memory)");
+		expect(result.content[0]!.text).toContain("Retry with 1-3 words");
 		expect(store.countUsageEvents()).toBe(0);
 		store.close();
 	});

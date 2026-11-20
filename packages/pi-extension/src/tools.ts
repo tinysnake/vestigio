@@ -681,6 +681,9 @@ export function renderSearch(
 	);
 	if (result.cards.length === 0) {
 		lines.push("(no matching memory)");
+		lines.push(
+			"hint: the index matches exact words (unigrams and bigrams, AND-combined), so a full sentence usually matches nothing. Retry with 1-3 words taken from the question, or call memory_resolve with the question.",
+		);
 	}
 	result.cards.forEach((card, index) => {
 		lines.push(
@@ -725,7 +728,12 @@ export function renderResolve(
 		);
 	}
 	if (measured.degraded) lines.push(`degraded: zero-LLM layered search${modelNote === null ? "" : ` (${modelNote})`}`);
-	if (result.cards.length === 0) lines.push("(no matching memory)");
+	if (result.cards.length === 0) {
+		lines.push("(no matching memory)");
+		lines.push(
+			"hint: the resolver searches the same exact-word index, so try 1-3 words from the question, or pass include_history to search the raw session history.",
+		);
+	}
 	result.cards.forEach((card, index) => {
 		lines.push(
 			`${index + 1}. [${card.state} r${card.revision}] ${card.uri} score=${card.score} hit=${card.hit_count} access=${card.access_count}`,

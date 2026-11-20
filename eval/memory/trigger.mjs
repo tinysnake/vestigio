@@ -27,6 +27,13 @@ const MODEL = argument("--model") ?? "magpie/auto/deepseek-v4.1-flash";
 const REPEATS = Number(argument("--repeats") ?? "2");
 const ONLY = argument("--only");
 const DRY = process.argv.includes("--dry");
+/**
+ * The resolver needs a model to rewrite a question into index terms. Pointed at
+ * the local gateway by default; `--no-resolve-model` keeps the degraded
+ * zero-LLM path measurable on purpose.
+ */
+const RESOLVER_MODEL = resolveModelPort();
+const REFUSAL = /(没有找到|查不到|无结果|记忆库为空|没有任何相关|no matching memory|not found|cannot find)/u;
 const MEMORY_TOOLS = new Set(["memory_search", "memory_resolve", "memory_read", "memory_mark_stale"]);
 
 /**
@@ -35,16 +42,16 @@ const MEMORY_TOOLS = new Set(["memory_search", "memory_resolve", "memory_read", 
  * cwd holds nothing that could answer it either way.
  */
 const SCENARIOS = [
-	{ id: "recall-deploy-port", expect: "query", question: "这个项目的部署脚本默认端口是多少？之前定过吗" },
-	{ id: "recall-migration-rollback", expect: "query", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
-	{ id: "recall-cache-invalidation", expect: "query", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
-	{ id: "recall-stale-timeout", expect: "query", question: "空闲会话多久自动断开？这个值之前是不是改过" },
+	{ id: "recall-deploy-port", expect: "query", fact: "18080", question: "这个项目的部署脚本默认端口是多少？之前定过吗" },
+	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
+	{ id: "recall-cache-invalidation", expect: "query", fact: "删缓存", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
+	{ id: "recall-stale-timeout", expect: "query", fact: "15", question: "空闲会话多久自动断开？这个值之前是不是改过" },
 	// Cold: the hotspot layer injects nothing for these (checked with
 	// planInjection), so only a deliberate search can answer them.
-	{ id: "cold-conn-limit", expect: "query", question: "我们数据库连接那儿最多允许多少个" },
-	{ id: "cold-log-retention", expect: "query", question: "那些访问记录一般留多久" },
-	{ id: "cold-image-tag", expect: "query", question: "打包成容器的时候名字怎么起" },
-	{ id: "cold-secret-rotation", expect: "query", question: "凭证多久换一次" },
+	{ id: "cold-conn-limit", expect: "query", fact: "20", question: "我们数据库连接那儿最多允许多少个" },
+	{ id: "cold-log-retention", expect: "query", fact: "14", question: "那些访问记录一般留多久" },
+	{ id: "cold-image-tag", expect: "query", fact: "哈希", question: "打包成容器的时候名字怎么起" },
+	{ id: "cold-secret-rotation", expect: "query", fact: "90", question: "凭证多久换一次" },
 	{ id: "quiet-readme-heading", expect: "no_query", question: "把 README 里的一级标题改成中文，只改标题这一行" },
 	{ id: "quiet-explain-index", expect: "no_query", question: "用三句话解释一下数据库索引为什么能加速查询" },
 	{ id: "quiet-hello-world", expect: "no_query", question: "写一个最小的 node hello world 脚本，打印一行字" },
@@ -95,6 +102,16 @@ function runTurn(question) {
 			VESTIGIO_PROJECT_ID: PROJECT,
 			VESTIGIO_OBELISK_HOME: join(scratch, "obelisk"),
 			VESTIGIO_DECISION_LOG: join(scratch, "decisions.jsonl"),
+			// Without these the resolver degrades to the zero-LLM search, so a
+			// turn that calls memory_resolve measures nothing but the matcher.
+			...(RESOLVER_MODEL === null
+				? {}
+				: {
+						VESTIGIO_MODEL_BASE_URL: RESOLVER_MODEL.base_url,
+						VESTIGIO_MODEL_ID: RESOLVER_MODEL.model_id,
+						VESTIGIO_MODEL_API_KEY: RESOLVER_MODEL.api_key,
+						VESTIGIO_MODEL_THINKING: RESOLVER_MODEL.thinking,
+					}),
 		},
 	});
 	const tools = [];
@@ -128,6 +145,19 @@ if (DRY) {
 	process.exit(0);
 }
 
+function resolveModelPort() {
+	if (process.argv.includes("--no-resolve-model")) return null;
+	const base = argument("--resolve-base-url") ?? "http://127.0.0.1:3425/v1";
+	// Configured unconditionally: this mirrors production. A wrong URL shows up
+	// as a resolver error in the report rather than as a silently degraded run.
+	return {
+		base_url: base,
+		model_id: argument("--resolve-model-id") ?? "auto/deepseek-v4.1-flash",
+		api_key: "magpie",
+		thinking: "low",
+	};
+}
+
 const rows = [];
 for (const scenario of SCENARIOS) {
 	if (ONLY !== null && scenario.id !== ONLY) continue;
@@ -138,8 +168,21 @@ for (const scenario of SCENARIOS) {
 		// `memory_read` consumes a block that was already delivered, so a turn
 		// that only reads proves delivery, not the decision to look something up.
 		const active = calls.some((name) => name !== "memory_read");
+		// The fact is a literal from the memory's own text; the answer has to
+		// carry it for the turn to count as using memory, not just retrieving it.
+		const used = scenario.fact === undefined ? null : compact(turn.text ?? "").includes(compact(scenario.fact));
 		const status =
-			scenario.expect === "query" ? (called ? "hit" : "trigger_miss") : called ? "over_trigger" : "clean";
+			scenario.expect === "query"
+				? !called
+					? "trigger_miss"
+					: used === false
+						? REFUSAL.test(turn.text ?? "")
+							? "miss"
+							: "usage_miss"
+						: "hit"
+				: called
+					? "over_trigger"
+					: "clean";
 		rows.push({
 			id: scenario.id,
 			expect: scenario.expect,
@@ -147,6 +190,8 @@ for (const scenario of SCENARIOS) {
 			question: scenario.question,
 			memory_calls: calls,
 			active_retrieval: active,
+			used,
+			answer: (turn.text ?? "").slice(0, 600),
 			cost_usd: Number((turn.cost ?? 0).toFixed(6)),
 			wall_ms: turn.wall_ms ?? 0,
 			answer_chars: (turn.text ?? "").length,
@@ -164,6 +209,7 @@ const report = {
 	model: MODEL,
 	repeats: REPEATS,
 	summary: {
+		resolver_model: RESOLVER_MODEL === null ? null : RESOLVER_MODEL.model_id,
 		turns: rows.length,
 		should_recall_rate: rate(
 			shouldRecall.filter((row) => row.status === "hit").length,
@@ -177,6 +223,10 @@ const report = {
 			shouldStayQuiet.filter((row) => row.status === "over_trigger").length,
 			shouldStayQuiet.length,
 		),
+		usage_miss_rate: rate(
+			rows.filter((row) => row.status === "usage_miss").length,
+			rows.filter((row) => row.expect === "query" && row.used !== null).length,
+		),
 		cost_usd: Number(rows.reduce((sum, row) => sum + row.cost_usd, 0).toFixed(6)),
 		p50_ms: percentile(rows.map((row) => row.wall_ms), 50),
 		p95_ms: percentile(rows.map((row) => row.wall_ms), 95),
@@ -188,10 +238,16 @@ const outPath = resolve(argument("--out") ?? "out/trigger.json");
 writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
 const summary = report.summary;
 console.log(
-	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
+	`resolver model: ${summary.resolver_model ?? "none (degraded)"}`,
+	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), usage-miss ${summary.usage_miss_rate}, over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
 );
 console.log(`p50 ${summary.p50_ms}ms p95 ${summary.p95_ms}ms`);
 console.log(`report ${outPath}`);
+
+/** Space-insensitive comparison, so 15 分钟 and 15分钟 both match. */
+function compact(value) {
+	return value.replace(/\s+/g, "").toLowerCase();
+}
 
 function percentile(values, quantile) {
 	if (values.length === 0) return null;

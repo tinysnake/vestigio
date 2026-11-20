@@ -248,22 +248,52 @@ only project knowledge available is memory. Twelve scenarios:
 A turn counts as a hit when it calls `memory_search`, `memory_resolve`,
 `memory_read` or `memory_mark_stale`.
 
-Measured over two runs of 24 turns (cost $0.011–$0.019 per run):
+Calling a tool is not the same as answering from it, so each recall scenario also
+names a `fact` taken from the memory body (`18080`, `第五步`, `删缓存`, `15`, `20`,
+`14`, `哈希`, `90`). The answer is compacted (whitespace removed, so `15 分钟` and
+`15分钟` both count) and searched for that fact:
 
-| metric | value |
+| outcome | meaning |
 | --- | --- |
-| should-recall rate | 1.000 |
-| of those, active retrieval (`search`/`resolve`) | 0.750 |
-| over-trigger rate | 0.125 |
+| `hit` | called a memory tool and the answer carries the fact |
+| `usage_miss` | called a memory tool, answered without the fact |
+| `miss` | called a memory tool, then said it found nothing (the answer matches a refusal: 没有找到 / 查不到 / 无结果 / 记忆库为空 / no matching memory) |
+| `trigger_miss` | never called a memory tool |
+| `over_trigger` | a quiet scenario called one |
+| `clean` | a quiet scenario stayed quiet |
 
-The split is the finding, not the total. All eight cold turns performed an
-active search, and all eight warm turns only read the injected block — so the
-agent does decide to look things up, and it does not search twice when the
-pointer is already in context. A run with only warm scenarios reads as
-"active 0.250", which is why the cold set exists.
+`miss` is deliberately not `usage_miss`: a search that returns nothing and a
+search whose result was ignored are different failures with different owners.
 
-One `memory_search` on the heading-rename question appeared in one run and not
-the other, so treat over-trigger as noise until there are more turns.
+`memory_resolve` needs a model to rewrite a question into index terms, so the
+harness points the extension at the local gateway by default
+(`VESTIGIO_MODEL_BASE_URL`, `VESTIGIO_MODEL_ID`, `VESTIGIO_MODEL_API_KEY`,
+`VESTIGIO_MODEL_THINKING`, see `packages/pi-extension/src/config.ts`). It is
+configured unconditionally rather than probed, because a reachability probe turns
+a busy gateway into a silently degraded run. `--no-resolve-model` keeps the
+zero-LLM path measurable, and both runs report which mode they used.
+
+### What the resolver is worth
+
+Twelve turns per run, same scenarios and same empty-result hint in the extension:
+
+| metric | degraded (`--no-resolve-model`) | with the resolver model |
+| --- | --- | --- |
+| should-recall rate | 0.500 | 0.875 (0.938 over 24 turns) |
+| of those, active retrieval | 0.875 | 0.750 (0.813 over 24 turns) |
+| usage-miss rate | 0.125 | 0.125 (0.000 over 24 turns) |
+| over-trigger rate | 0.250 | 0.250 (0.125 over 24 turns) |
+| p50 / p95 | 8.7 s / 21.3 s | 13.4 s / 89.7 s |
+| cost | $0.0120 | $0.0111 |
+
+Degraded, the cold turns search the question verbatim, get zero cards and answer
+that nothing was found; with the model, the resolver rewrites the question and
+three of four cold turns answer from the memory. The price is latency, not
+tokens: p50 roughly doubles and p95 grows fourfold when the resolver descends.
+Over-trigger is unstable: the heading-rename and ENOENT questions each triggered
+a search in one run of a pair and not the other, so treat the number as noise
+until there are more turns. The `cold-conn-limit` scenario is likewise the only
+one that has been seen both answering and giving up in the same configuration.
 Non-deterministic by construction: same model, same prompts, different calls.
 p50 was 9–10 s per turn with a 29–40 s outlier, and the answer text is not
 judged here — correctness still needs `usage.mjs` or a human.
