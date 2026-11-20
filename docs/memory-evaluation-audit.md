@@ -168,3 +168,24 @@
 一致性一开始只有 0.583，原因不是模型弱，而是标签口径含糊：把「复述 nav 里的具体内容」和「只说该看看记忆」混成了同一个 `used`，裁判按字面判成了 `partial`；把 `misused` 限定为「依赖了记忆但结论相反或把过期内容当现状」之后，答案改成显式复述，一致性升到 0.833。同一份样本再跑一次是 0.750，12 条里有 1 条判定翻转（`usage-deploy-port-used` 从 `used` 变 `partial`）。因此这个裁判适合做趋势观测，不能做单例门禁；把它当门禁会被裁判噪声当成回归。`usage-stale-ttl-*` 三行同时补上了 Stale Misuse 的正样本：同一条带 `is_stale` 的记忆，分别对应「据此修正」「无视」「把旧值当现状」。
 
 真实模型质量、历史快照回放、跨版本配对基线及 Shadow 副作用仍是后续验收项。
+
+## 8. 现在能回答什么（对照提案第 14 节）
+
+这一节只写已经量到的数字与产出它的命令，写不出来的如实标「尚未」。数字来自 99 条离线样本（`catalog_version` 6）与一次 14 回合真实链路运行（`eval/memory/out/trigger-current.json`，14 条场景各 1 次，模型 `magpie/auto/deepseek-v4.1-flash`，resolver 走本地 `auto/deepseek-v4.1-flash`）；时延数字取自这次运行，但同一网关当时还有别的工作在跑（p95 222 s），只能当上界。
+
+| 提案第 14 节的问题 | 现在能回答吗 | 当前数字 | 命令 |
+| --- | --- | --- | --- |
+| Agent 有多少次应该查询却没有查询？ | 能，但只在 14 条场景上 | `failures.trigger_miss` = 0 / 14（`should_recall_rate` 1.000，其中主动检索 0.889） | `node --import ../pi/hook.mjs ./trigger.mjs --repeats 1` |
+| 有多少次找到了正确记忆？ | 能 | 离线 Recall@1/3/5 = 0.926、`inject_hit_rate` = 0.909（99 条） | `node --import ../pi/hook.mjs ./run.mjs` |
+| 有多少次注入了不相关记忆？ | 能 | `false_positive_rate` 0.040（4/99）；候选与注入两层都 0.148（4/27 带禁止项样本）；`quiet_rate` 0.905（38/42） | 同上，读 `out/report.json` 的 `confusion` |
+| 有多少次使用了过期记忆？ | 一半：到达与打开可测，是否据此改正只能在小样本上判 | 离线 `inject-stale-flagged` 通过（stale 标记确实到达）；真实链路 `stale_misuse_rate` 0.000（2 个可判回合）；shadow 报 `stale_delivered_turns` 与 `stale_read_after_delivery_rate` | `trigger.mjs --only recall-stale-timeout`、`shadow.mjs --log <log>` |
+| Archived 或 Obelisk 有多少次挽救了首次检索失败？ | 能 | `source_gap_rescue_rate` 1.000（2 条 source-gap 样本）；24 回合参考运行里 Rescue Rate 0.875（8 个冷回合中 7 个） | `run.mjs`（离线）、`trace.mjs`（真实回合） |
+| 当前记忆库覆盖了多少实际需要的历史信息？ | 尚未 | 无标签的近似量是 shadow 的 `gather_empty_rate`（本次 0.0% / 8 个 gather 回合），它不是覆盖率分母 | `shadow.mjs` |
+| 每次有效召回需要多少时间和 Token？ | 能 | 本次 14 回合：总 $0.016293、$0.001810 / 命中、p50 16.6 s、p95 222 s（受争用）；生产 hook 自身 p50 5.78 ms / p95 12.05 ms；usage 裁判约 $0.0005 / 条 | `trigger.mjs`、`shadow.mjs`、`usage.mjs` |
+| 最近一次代码更新让记忆系统变好还是变差？ | 能 | `compare.mjs` 按 `case_id` 配对，回归即退出码 1；也可直接对任意 commit 取基线 | `node ./compare.mjs baseline.json out/report.json`、`--baseline=<git-ref>` |
+
+仍然没有答案的三件事：真实历史 store 的时间点回放（见第 3 节「回放在本 harness 里是怎么成立的」）、生产链路上按 Trigger/Resolution/Usage 三类归因的长期统计（`trigger.mjs` 只在有限场景上做，`shadow.mjs` 无标签只能给近似量）、以及 100–200 条标注样本的规模（当前 99 条）。
+
+### 一个尚未解释的观测
+
+14 回合那次运行里，`recall-stale-timeout` 交付的 `mem-stale-ttl` 记录为 `stale_ids: []`（shadow 因此报 `stale delivered 0`），而单独只跑这一条场景时同一字段是 `["mem-stale-ttl"]`（`stale delivered 1 (read 100%)`）。同一份种子、同一份代码，差别只在同一次运行里前面还跑过别的回合。店内的候选解释是 resolver 的修复路径 `packages/core/src/resolver/repair.ts:261`（`acknowledge_event_ids: incorporated`，配合 `packages/core/src/storage/store.ts:889` 的 `acknowledged_at` 更新）会在吸收后续证据时把待处理事件标记为已处理，但目前那次运行的日志里没有任何回合读取过 `mem-stale-ttl`，所以这一条**尚未证实**。在解释清楚之前：`stale_delivered_turns` 只应当读成「这次运行里还剩下多少条过期交付」，不要读成「有多少条过期记忆被交付过」；离线 stale 样本之所以稳定通过，是因为每条样本都用独立的临时 store。已列入待查项。
