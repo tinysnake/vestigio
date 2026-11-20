@@ -8,24 +8,41 @@
  * actually in there, whether the memory ids a labelled question expects exist
  * at all, and whether the product has ever really run against it.
  *
- * Nothing here writes. The file is opened read-only (with a query_only
- * fallback for a store that is mid-write) and every statement is a SELECT, so
- * a live agent can be audited while it works.
+ * `--pin <memory_id>@<revision>` is the replay handle. A timestamp cannot be
+ * one: every revision of a memory carries the same immutable `created_at` (the
+ * memory's creation time — saving a revision with a different one is rejected
+ * as `created_at_mismatch`, packages/core/src/storage/store.ts:309) and its
+ * `updated_at` is refreshed by delivery, so the store records no per-revision
+ * time. Pinning a revision is therefore how a past state is named.
+ *
+ * Nothing here writes. The file is opened read-only (with a query_only fallback
+ * for a store that is mid-write) and every statement is a SELECT, so a live
+ * agent can be audited while it works.
  *
  * Usage (from eval/memory):
  *   node ./audit.mjs --store ~/.vestigio/store.sqlite [--cases cases.jsonl] [--out out/audit.json]
+ *   node ./audit.mjs --store <copy> --pin mem-deploy-port@1 --cases cases.jsonl
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
 
 function argument(name) {
 	const index = process.argv.indexOf(name);
 	if (index === -1) return null;
 	if (process.argv[index + 1] === undefined) throw new Error(`${name} needs a value`);
 	return process.argv[index + 1];
+}
+
+function argumentsOf(name) {
+	const values = [];
+	for (let index = 0; index < process.argv.length; index += 1) {
+		if (process.argv[index] !== name) continue;
+		if (process.argv[index + 1] === undefined) throw new Error(`${name} needs a value`);
+		values.push(process.argv[index + 1]);
+	}
+	return values;
 }
 
 const storeArgument = argument("--store") ?? process.env.VESTIGIO_STORE ?? "";
@@ -41,6 +58,15 @@ if (!existsSync(storePath)) {
 
 const casesPath = argument("--cases");
 const outPath = resolve(argument("--out") ?? "out/audit.json");
+const pinArguments = argumentsOf("--pin").map((value) => {
+	const at = value.lastIndexOf("@");
+	const revision = at === -1 ? Number.NaN : Number(value.slice(at + 1));
+	if (at === -1 || !Number.isInteger(revision) || revision < 1) {
+		console.error(`--pin needs <memory_id>@<revision>, got ${value}`);
+		process.exit(2);
+	}
+	return { memory_id: value.slice(0, at), revision };
+});
 
 /** A live store holds a write lock; read-only open can fail on WAL recovery. */
 function open(path) {
@@ -54,8 +80,8 @@ function open(path) {
 }
 
 const { db, mode } = open(storePath);
-const all = (sql) => db.prepare(sql).all();
-const one = (sql) => db.prepare(sql).get() ?? {};
+const all = (sql, ...params) => db.prepare(sql).all(...params);
+const one = (sql, ...params) => db.prepare(sql).get(...params) ?? {};
 
 const tableExists = (name) =>
 	all("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IS NOT NULL").some(
@@ -72,26 +98,79 @@ const store = {
 		: [],
 };
 
+const HEAD_COLUMNS = `memory_id, revision, state, scope_kind, project_id,
+	medium_body_char_count AS body_chars, nav_text, updated_at, hit_count, access_count`;
+const HEAD_COLUMNS_ON_M = `m.memory_id, m.revision, m.state, m.scope_kind, m.project_id,
+	m.medium_body_char_count AS body_chars, m.nav_text, m.updated_at, m.hit_count, m.access_count`;
+
+/**
+ * The heads under the given pins: a pinned memory reports the revision asked
+ * for, every other memory reports its current head. That is what a replay
+ * fixture needs — a state named by revision, not by time.
+ */
+function heads(pins) {
+	const pinned = new Map(pins.map((pin) => [pin.memory_id, pin]));
+	const rows = [];
+	const applied = [];
+	for (const pin of pins) {
+		const row = one(`SELECT ${HEAD_COLUMNS} FROM memories WHERE memory_id = ? AND revision = ?`, pin.memory_id, pin.revision);
+		if (row.memory_id === undefined) {
+			applied.push({ ...pin, applied: false, reason: "no such memory id or revision in this store" });
+			continue;
+		}
+		rows.push(row);
+		applied.push({ ...pin, applied: true, state: String(row.state), body_chars: Number(row.body_chars) });
+	}
+	const excluded = pins.map((pin) => pin.memory_id);
+	const placeholders = excluded.map(() => "?").join(", ") || "''";
+	const rest = all(
+		`SELECT ${HEAD_COLUMNS_ON_M} FROM memory_heads h JOIN memories m
+		 ON m.memory_id = h.memory_id AND m.revision = h.revision
+		 WHERE h.memory_id NOT IN (${placeholders})`,
+		...excluded,
+	);
+	return { rows: [...rows, ...rest], applied };
+}
+
+const { rows: headRows, applied: pins } = heads(pinArguments);
+const rejected = pins.filter((pin) => !pin.applied);
+if (rejected.length > 0) {
+	console.error(`no such revision: ${rejected.map((pin) => `${pin.memory_id}@${pin.revision}`).join(", ")}`);
+	process.exit(2);
+}
+
+const sum = (key) => headRows.reduce((total, row) => total + Number(row[key] ?? 0), 0);
+function groupBy(list, key) {
+	const counts = new Map();
+	for (const row of list) {
+		const value = key(row) ?? null;
+		counts.set(value, (counts.get(value) ?? 0) + 1);
+	}
+	return [...counts.entries()].sort((left, right) => right[1] - left[1]);
+}
+
+const revisionsPerMemory = all(
+	"SELECT memory_id, COUNT(*) AS n, MAX(revision) AS head FROM memories GROUP BY memory_id ORDER BY n DESC, memory_id",
+);
 const memories = {
 	revisions: Number(one("SELECT COUNT(*) AS n FROM memories").n ?? 0),
-	ids: Number(one("SELECT COUNT(DISTINCT memory_id) AS n FROM memories").n ?? 0),
-	heads_by_state: all("SELECT state, COUNT(*) AS n FROM memory_heads GROUP BY state ORDER BY state").map((row) => ({
-		state: String(row.state),
-		count: Number(row.n),
-	})),
-	by_project: all(
-		"SELECT scope_kind, project_id, COUNT(*) AS n FROM memory_heads h JOIN memories m ON m.memory_id = h.memory_id AND m.revision = h.revision GROUP BY scope_kind, project_id ORDER BY n DESC",
-	).map((row) => ({
-		scope_kind: String(row.scope_kind),
-		project_id: row.project_id === null ? null : String(row.project_id),
-		count: Number(row.n),
-	})),
-	medium_chars_total: Number(one("SELECT COALESCE(SUM(medium_body_char_count), 0) AS n FROM memories").n ?? 0),
-	with_navigation: Number(one("SELECT COUNT(*) AS n FROM memory_heads h JOIN memories m ON m.memory_id = h.memory_id AND m.revision = h.revision WHERE m.nav_text IS NOT NULL").n ?? 0),
-	oldest_updated_at: one("SELECT MIN(updated_at) AS t FROM memories").t ?? null,
-	newest_updated_at: one("SELECT MAX(updated_at) AS t FROM memories").t ?? null,
-	hits_total: Number(one("SELECT COALESCE(SUM(hit_count), 0) AS n FROM memories").n ?? 0),
-	accesses_total: Number(one("SELECT COALESCE(SUM(access_count), 0) AS n FROM memories").n ?? 0),
+	ids: headRows.length,
+	heads_by_state: groupBy(headRows, (row) => String(row.state)).map(([value, count]) => ({ state: value, count })),
+	by_project: groupBy(
+		headRows,
+		(row) => `${String(row.scope_kind)}\u0000${row.project_id === null ? "" : String(row.project_id)}`,
+	).map(([key, count]) => {
+		const [scope_kind, project_id] = key.split("\u0000");
+		return { scope_kind, project_id: project_id === "" ? null : project_id, count };
+	}),
+	medium_chars_total: sum("body_chars"),
+	with_navigation: headRows.filter((row) => row.nav_text !== null).length,
+	newest_updated_at: headRows.map((row) => String(row.updated_at)).sort().at(-1) ?? null,
+	hits_total: sum("hit_count"),
+	accesses_total: sum("access_count"),
+	/** History is what a replay can pin: a memory with one revision has none. */
+	with_history: revisionsPerMemory.filter((row) => Number(row.n) > 1).length,
+	max_revisions: revisionsPerMemory.length === 0 ? 0 : Number(revisionsPerMemory[0].n),
 };
 
 const pendingStale = all(
@@ -105,9 +184,7 @@ const pendingStale = all(
 
 const stale = {
 	pending: pendingStale.length,
-	acknowledged: Number(
-		one("SELECT COUNT(*) AS n FROM stale_events WHERE acknowledged_at IS NOT NULL").n ?? 0,
-	),
+	acknowledged: Number(one("SELECT COUNT(*) AS n FROM stale_events WHERE acknowledged_at IS NOT NULL").n ?? 0),
 	oldest_pending_at: pendingStale.length === 0 ? null : pendingStale[0].created_at,
 	per_memory: pendingStale,
 };
@@ -155,14 +232,14 @@ const runtime = {
 	})),
 };
 
-/** Memory Gap: an expected id that is not in this store at all. */
+/** Memory Gap: an expected id the store does not hold under the current pins. */
 function coverage(path) {
 	const cases = readFileSync(path)
 		.toString("utf8")
 		.split("\n")
 		.filter((line) => line.trim() !== "")
 		.map((line) => JSON.parse(line));
-	const present = new Set(all("SELECT DISTINCT memory_id FROM memories").map((row) => String(row.memory_id)));
+	const present = new Set(headRows.map((row) => String(row.memory_id)));
 	const expected = [];
 	const gapRows = [];
 	for (const item of cases) {
@@ -181,7 +258,7 @@ function coverage(path) {
 		expectations: expected.length,
 		present: presentExpected.length,
 		absent: expected.length - presentExpected.length,
-		/** Share of the labelled expectations this store could answer at all. */
+		/** Share of the labelled expectations this store state could answer at all. */
 		store_coverage: expected.length === 0 ? null : presentExpected.length / expected.length,
 		absent_ids: [...new Set(expected.filter((id) => !present.has(id)))],
 		gap_rows: gapRows,
@@ -193,6 +270,14 @@ const report = {
 	generated_at: new Date().toISOString(),
 	kind: "store-audit",
 	source: { store: storePath, read_only: true, open_mode: mode },
+	replay:
+		pinArguments.length === 0
+			? null
+			: {
+					pins: pins.map((pin) => ({ memory_id: pin.memory_id, revision: pin.revision, state: pin.state, body_chars: pin.body_chars })),
+					unpinned_memories: headRows.length - pinArguments.length,
+					note: "A pin names a revision, not a time: every revision of a memory shares one immutable created_at and its updated_at is refreshed by delivery.",
+				},
 	store,
 	memories,
 	stale,
@@ -206,10 +291,10 @@ const report = {
 // Activity alone does not prove delivery — recordProjectInput writes it for any
 // input, including the lab's. Receipts, resolver versions, usage events and hit
 // counters are the rows only a real delivery writes, so they decide the verdict.
-const delivered = runtime.injection_receipts > 0 || runtime.usage_events > 0 || runtime.resolve_versions > 0 || memories.hits_total > 0;
-const used = delivered;
+const delivered =
+	runtime.injection_receipts > 0 || runtime.usage_events > 0 || runtime.resolve_versions > 0 || memories.hits_total > 0;
 report.verdict = {
-	product_has_run_here: used,
+	product_has_run_here: delivered,
 	notes: [
 		delivered
 			? "Delivery rows exist (receipts, resolver versions, usage events or hit counters), so these counts are production data, not a fixture."
@@ -218,7 +303,7 @@ report.verdict = {
 				: "No usage evidence at all: the store may be freshly created, or the agent has never run against it.",
 		report.coverage === null
 			? "No --cases file given, so no Memory Gap accounting; a gap needs a labelled question to be visible."
-			: "A gap means the labelled question expects an id this store does not contain — the memory was never formed, not merely unfound.",
+			: "A gap means the labelled question expects an id this store does not hold — the memory was never formed, not merely unfound.",
 	],
 };
 
@@ -229,9 +314,14 @@ const pct = (value) => (value === null ? "n/a" : `${(value * 100).toFixed(1)}%`)
 console.log(`store ${storePath} (${(store.size_bytes / 1024).toFixed(0)} KiB, ${store.open_mode})`);
 console.log(`store_id ${store.store_id ?? "?"}; migrations ${store.migrations.length}`);
 console.log(
-	`memories: ${memories.ids} ids / ${memories.revisions} revisions; ${memories.medium_chars_total} body chars; ${memories.with_navigation} with navigation`,
+	`memories: ${memories.ids} heads / ${memories.revisions} revisions; ${memories.medium_chars_total} body chars; ${memories.with_history} with history (max ${memories.max_revisions} revisions)`,
 );
 console.log(`heads: ${memories.heads_by_state.map((row) => `${row.state}=${row.count}`).join(" ")}`);
+if (report.replay !== null) {
+	console.log(
+		`replay pins: ${report.replay.pins.map((pin) => `${pin.memory_id}@${pin.revision} (${pin.state})`).join(", ")}; ${report.replay.unpinned_memories} heads at current revision`,
+	);
+}
 console.log(`stale events: ${stale.pending} pending, ${stale.acknowledged} acknowledged`);
 console.log(`hotspots: ${hotspots.memberships} memberships across ${hotspots.by_project.length} projects`);
 console.log(`runtime: ${runtime.injection_receipts} injection receipts, ${runtime.usage_events} usage events`);
@@ -241,6 +331,6 @@ if (report.coverage !== null) {
 	);
 	console.log(`absent ids: ${report.coverage.absent_ids.join(", ") || "none"}`);
 }
-console.log(`verdict: product has run here = ${used}`);
+console.log(`verdict: product has run here = ${delivered}`);
 console.log(`report ${outPath}`);
 db.close();

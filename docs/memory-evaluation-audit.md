@@ -49,6 +49,8 @@
 
 **回放在本 harness 里是怎么成立的。** 离线面不做「历史 store 回放」，而是做「规范种子 + 隔离副本」：每条样本都从 `catalog.mjs` 的可重建种子（20 条记忆、2 个项目、固定 `AT` 时钟、固定 activity_seq）建一个临时 SQLite，样本自带查询前快照，因此同一次运行内不存在跨样本污染。这样得到的可重复性与生产 store 的时间点回放是两件不同的事：生产 store 只有 head revision 的一部分历史，`setMemoryState` 就地改写状态与 FTS 成员关系，导航、Hotspot ledger、stale 事件与会话分支都缺当时证据，所以对真实历史做回放需要额外记录（按 revision 的 store 快照或带清单校验的种子）。本轮没有做这件事，也没有把它伪装成已做：`run.mjs` 的 `seed` 字段会如实写出 `temporary`，`dataset_sha256` 与 `commit` 让任何一次报告都能追到具体数据集和代码版本。真正需要历史回放的场景（例如复现某次线上召回）仍属于未交付项。
 
+**这轮给这一项补了一个抓手，也把「为什么不能按时间点回放」钉成了事实。** store 里每条 revision 都不带自己的时间戳：`memories.created_at` 是**这条记忆的创建时间**，对所有 revision 相同且不可改——给 revision 2 传一个不同的 `created_at` 会被 `created_at_mismatch` 拒绝（`packages/core/src/storage/store.ts:309`）；`updated_at` 会被交付刷新（`resolve_versions` 的 schema 注释直接写着 replay ageing 读 `created_at`、永远不读 `updated_at`）。实测：给同一个 store 里的 `mem-deploy-port` 存 revision 2，两行的 `created_at` 与 `updated_at` 都是 `2026-11-17T12:00:00.000Z`。所以过去的状态只能用 **revision 号**命名，不能用时刻。`eval/memory/audit.mjs --pin <memory_id>@<revision>`（可重复）在只读审计里把指定记忆切到那个 revision、其余保持当前 head，并报出这份 store 有多少记忆真的有历史（`with_history` / `max_revisions`）。实测同一 store：`--pin mem-deploy-port@1` 得到 20 条 head、该记忆为 revision 1（634 正文字符，总量 12503），不 pin 时同一记忆是 revision 2（757 字符，总量 12626）；pin 到不存在的 revision 以退出码 2 拒绝，不静默降级。这仍只是「把历史状态命名出来」的一半：真正把回放跑成评估（在那份状态上重跑样本并与当前配对）没做，因为热点成员与 `activity_seq` 两张表不留历史。
+
 ### 混淆矩阵
 
 上面两个指标回答的是「有没有做到」，混淆矩阵回答的是「分母是谁」。离线 harness 只把样本分成两类，因为数据集本身只有这两类标注：**应该交付**（`expected_memory_ids` 或 `expected_source_refs` 非空，或要求交付 stale 标记）与**应该安静**（没有期望，但写了 `forbidden_memory_ids` 或 `expected_status`）。只写 `forbidden_memory_ids` 的空期望样本不算「未被测试」：它带着可被违反的约束。真正的空样本（既无期望也无禁止项、无期望状态）单独报告为 `unlabelled`，不计入任一侧，否则「没标注」会被当成「通过」。
