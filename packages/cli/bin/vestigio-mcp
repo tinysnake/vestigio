@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# vestigio-mcp — runs the stateless MCP stdio adapter from source. The store
+# path comes from --db/--store or VESTIGIO_DB; a tool call may override it.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node --import "$HERE/../hook.mjs" "$HERE/../src/mcp-entry.ts" "$@"

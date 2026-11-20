@@ -58,7 +58,7 @@ export type RunDueJobsInput = {
   /** Per-job ceiling; the default keeps the nav call small. */
   max_output_tokens?: number | undefined;
   /** Per-job deadline. Reaching it is reported as `deadline_exceeded`. */
-  deadline_ms?: number | undefined;
+  deadline_ms?: number | null | undefined;
   /**
    * Run only this memory's job at this revision. Set by a caller that just
    * repaired it and needs the nav bound before it can be found again.
@@ -103,7 +103,7 @@ export async function runDueJobs(input: RunDueJobsInput): Promise<RunDueJobsOutc
   const maxAttempts = Math.max(1, Math.trunc(input.max_attempts ?? SUMMARY_JOB_MAX_ATTEMPTS));
   const owner = input.owner ?? `jobs-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const maxOutputTokens = Math.max(32, Math.trunc(input.max_output_tokens ?? RESOLVE_NAV_MAX_OUTPUT_TOKENS));
-  const deadlineMs = Math.max(1, Math.trunc(input.deadline_ms ?? DEFAULT_JOB_DEADLINE_MS));
+  const deadlineMs = input.deadline_ms === null ? null : Math.max(1, Math.trunc(input.deadline_ms ?? DEFAULT_JOB_DEADLINE_MS));
   const outcome: RunDueJobsOutcome = {
     claimed: 0,
     completed: 0,
@@ -159,7 +159,7 @@ export async function runDueJobs(input: RunDueJobsInput): Promise<RunDueJobsOutc
 async function runOne(
   input: RunDueJobsInput,
   job: SummaryJob,
-  options: { now: () => number; mono: () => number; maxAttempts: number; maxOutputTokens: number; deadlineMs: number },
+  options: { now: () => number; mono: () => number; maxAttempts: number; maxOutputTokens: number; deadlineMs: number | null },
 ): Promise<JobRunResult> {
   const started = options.mono();
   const base = {
@@ -207,7 +207,7 @@ async function runOne(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("job_deadline_exceeded")), options.deadlineMs);
+  const timeout = options.deadlineMs === null ? undefined : setTimeout(() => controller.abort(new Error("job_deadline_exceeded")), options.deadlineMs);
   const signal =
     input.signal === undefined ? controller.signal : AbortSignal.any([input.signal, controller.signal]);
   let generated: Awaited<ReturnType<typeof generateNavigation>>;
@@ -226,6 +226,10 @@ async function runOne(
   base.tokens_out = generated.call.tokens_out;
   base.cost_usd = generated.call.cost_usd;
 
+  if (input.signal?.aborted) {
+    failSummaryJob(db, { job, at: iso(options.now()), error: "cancelled", max_attempts: options.maxAttempts });
+    return finish("cancelled", "cancelled");
+  }
   if (generated.status !== "ok") {
     const reason = controller.signal.aborted ? "deadline_exceeded" : `nav_${generated.status}:${generated.reason}`;
     const stored = failSummaryJob(db, {

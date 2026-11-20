@@ -1,0 +1,30 @@
+{
+  "name": "@vestigio/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "exports": {
+    "./entry": "./src/entry.ts",
+    "./hook": "./hook.mjs",
+    "./memory": "./src/memory/index.ts",
+    "./protocol": "./src/protocol.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vestigio/core": "workspace:*",
+    "@vestigio/model-client": "workspace:*",
+    "@vestigio/source-obelisk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

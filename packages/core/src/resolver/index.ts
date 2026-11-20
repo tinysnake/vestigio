@@ -6,6 +6,8 @@
  */
 
 export { MAX_LAYER_REQUERIES, resolveMemory } from "./resolver.js";
+export { persistPendingResolve } from "./persist-pending.js";
+export type { PersistPendingResolveInput } from "./persist-pending.js";
 export {
   deliveryDedupKey,
   evidenceVersionKey,
@@ -56,6 +58,7 @@ export type {
   ModelRole,
   ModelThinking,
   ModelUsage,
+  PendingResolvePersistence,
   PersistenceOutcome,
   PersistenceStage,
   PersistenceTarget,

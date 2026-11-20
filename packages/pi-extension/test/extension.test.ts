@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PiDaemon } from "../src/daemon-client.js";
 import vestigio, { STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
 
 const cleanups: (() => void)[] = [];
@@ -70,6 +71,30 @@ describe("vestigio extension", () => {
 		const { pi, handlers } = stubPi();
 		withEnv({ VESTIGIO_STORE: "" }, () => vestigio(pi as never));
 		expect(handlers.size).toBe(0);
+	});
+
+	it("only displays a late repair on a branch containing the originating turn", () => {
+		const { pi, handlers } = stubPi();
+		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
+		cleanups.push(() => bind.mockRestore());
+		withEnv({ VESTIGIO_STORE: "/tmp/vestigio-branch-test.sqlite" }, () => vestigio(pi as never));
+		let branch = [{ id: "root" }, { id: "original" }];
+		const notify = vi.fn();
+		const ctx = { sessionManager: { getBranch: () => branch }, ui: { notify } };
+		handlers.get("session_start")!({}, ctx);
+		branch = [{ id: "root" }, { id: "sibling" }];
+		handlers.get("session_tree")!({}, ctx);
+		const deliver = bind.mock.lastCall![1];
+		const event = {
+			eventId: "event", jobId: "job", sessionRef: 1, kind: "maintenance", state: "succeeded",
+			resultCode: "ok", createdAt: 1, expiresAt: 2,
+			result: { turnLeaf: "original", op: "repair.memories", result: { repaired: 1 } },
+		} as const;
+		deliver(event);
+		expect(notify).not.toHaveBeenCalled();
+		branch = [{ id: "root" }, { id: "original" }, { id: "next-turn" }];
+		deliver(event);
+		expect(notify).toHaveBeenCalledOnce();
 	});
 
 	it("agent_end skips cleanly when the store has nothing seen", async () => {

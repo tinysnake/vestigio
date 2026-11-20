@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarioStale } from "./stale.mjs";
 import { scenarioRequest } from "./request.mjs";
+import { VestigioClient } from "../../packages/client/src/index.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
@@ -31,7 +32,8 @@ const CWD = join(TMP, "cwd");
 const PROJECT = join(TMP, "project");
 const PERF_PROJECT = join(TMP, "perf-project");
 const EMPTY_PROJECT = join(TMP, "project-empty");
-const RUN_STORE = join(TMP, "run.sqlite");
+let runStore = join(TMP, "run.sqlite");
+const usedStores = new Set([runStore]);
 const SEED_STORE = join(TMP, "seed.sqlite");
 const OBELISK_HOME = join(TMP, "obelisk-home");
 const EXT = join(ROOT, "packages/pi-extension/src/extension.ts");
@@ -66,8 +68,8 @@ function startMock() {
 				res.end(JSON.stringify({ object: "list", data: [{ id: "mock-1", object: "model" }] }));
 				return;
 			}
-			const reply = () => {
-				const message = { role: "assistant", ...responder(body) };
+			const reply = async () => {
+				const message = { role: "assistant", ...await responder(body) };
 				const finishReason = message.tool_calls?.length ? "tool_calls" : "stop";
 				const usage = { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 };
 				if (body?.stream === true) {
@@ -111,8 +113,9 @@ function startMock() {
 					}),
 				);
 			};
-			if (delayMs > 0) setTimeout(reply, delayMs);
-			else reply();
+			const respond = () => void reply().catch((error) => res.destroy(error));
+			if (delayMs > 0) setTimeout(respond, delayMs);
+			else respond();
 		});
 	});
 	return {
@@ -249,7 +252,10 @@ function spawnPi({ name, project = PROJECT, extraExtensions = [], continueSessio
 		PI_CODING_AGENT_SESSION_DIR: sessionDir,
 		PI_OFFLINE: "1",
 		PI_SKIP_VERSION_CHECK: "1",
-		VESTIGIO_STORE: RUN_STORE,
+		VESTIGIO_STORE: runStore,
+		VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${PORT}/v1`,
+		VESTIGIO_MODEL_ID: "mock-1",
+		VESTIGIO_MODEL_API_KEY: "mock",
 		VESTIGIO_PROJECT_ID: project,
 		// Explicit isolated history home: the extension can never fall back to
 		// the operator's real Obelisk index.
@@ -279,7 +285,7 @@ function decisionRecords(path) {
 // ---------------------------------------------------------------- wire helpers
 
 function chatRequests(fromIndex) {
-	return mock.requests.slice(fromIndex).filter((entry) => Array.isArray(entry.body?.messages));
+	return mock.requests.slice(fromIndex).filter((entry) => entry.body?.stream === true && Array.isArray(entry.body.messages));
 }
 
 function contentText(content) {
@@ -621,7 +627,7 @@ async function main() {
 			throw new Error(`seed failed: ${seeded.stderr || seeded.stdout}`);
 		}
 		console.log(`seed: ${seeded.stdout.trim()}`);
-		copyFileSyncData(SEED_STORE, RUN_STORE);
+		copyFileSyncData(SEED_STORE, runStore);
 
 		if (dumpIndex !== -1) {
 			const name = process.argv[dumpIndex + 1] ?? "new-session";
@@ -651,8 +657,20 @@ async function main() {
 		await maybe("queued", scenarioQueuedInput);
 		await maybe("steer", scenarioSteer);
 		await maybe("handler-error", scenarioHandlerError);
-		await maybe("stale", () => scenarioStale({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, chatRequests, systemText, lastUserText, reseed: () => copyFileSyncData(SEED_STORE, RUN_STORE) }));
-		await maybe("request", () => scenarioRequest({ mock, spawnPi, check, storePath: RUN_STORE, port: PORT, reseed: () => copyFileSyncData(SEED_STORE, RUN_STORE) }));
+		const useFreshStore = (name) => {
+			runStore = join(TMP, `${name}.sqlite`);
+			usedStores.add(runStore);
+			copyFileSyncData(SEED_STORE, runStore);
+		};
+		await maybe("stale", () => {
+			useFreshStore("stale");
+			return scenarioStale({ mock, spawnPi, check, storePath: runStore, port: PORT, chatRequests, systemText, lastUserText });
+		});
+		await maybe("request", () => {
+			useFreshStore("request");
+			return scenarioRequest({ mock, spawnPi, check, storePath: runStore, port: PORT });
+		});
+		if (only === null || only === "perf") useFreshStore("perf");
 
 		const perfEnabled = only === null || only === "perf";
 		const baseline = perfEnabled ? await perfBaselineDisabled(32) : [];
@@ -675,7 +693,11 @@ async function main() {
 
 		check("perf_full: baseline round trip is recorded", perfEnabled ? baseline.length === 32 : true);
 	} finally {
-		await mock.close();
+		try {
+			await Promise.all([...usedStores].map((path) => new VestigioClient(path).stop()));
+		} finally {
+			await mock.close();
+		}
 	}
 
 	const realAfter = existsSync(REAL_OBELISK) ? statSync(REAL_OBELISK).mtimeMs : null;

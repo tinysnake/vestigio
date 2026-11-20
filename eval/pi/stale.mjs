@@ -1,5 +1,6 @@
 import { nonWhitespaceCodePointCount } from "@vestigio/core";
 import { openStore } from "@vestigio/core/storage";
+import { setTimeout as delay } from "node:timers/promises";
 
 /**
  * The `agent_end` repair pass is the only repair path. A read always delivers
@@ -9,8 +10,7 @@ import { openStore } from "@vestigio/core/storage";
  * processes through detection, an explicit mark, a staged event that survives a
  * pass, and a later session.
  */
-export async function scenarioStale({ mock, spawnPi, check, storePath, port, chatRequests, systemText, lastUserText, reseed }) {
-	reseed();
+export async function scenarioStale({ mock, spawnPi, check, storePath, port, chatRequests, systemText, lastUserText }) {
 	const uri = "memory://vestigio/mem-deploy-port";
 	const env = { VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${port}/v1`, VESTIGIO_MODEL_ID: "mock-1", VESTIGIO_MODEL_API_KEY: "mock" };
 	const inspect = (fn) => {
@@ -33,6 +33,14 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 				events: store.listStaleEvents("mem-deploy-port"),
 			};
 		});
+	const waitForRevision = async (revision) => {
+		const deadline = Date.now() + 5000;
+		for (;;) {
+			const current = snapshot();
+			if (current.revision === revision && current.nav_revision === revision || Date.now() >= deadline) return current;
+			await delay(25);
+		}
+	};
 	const stagedChange = (excerpt, reason) =>
 		inspect((store) => {
 			const memory = store.readMemory(uri);
@@ -82,13 +90,15 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 	let step = 0;
 	let detectorCalls = 0;
 	const tool = (name, args) => ({ content: null, tool_calls: [{ index: 0, id: `stale-${phase}-${step++}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] });
-	mock.setResponder((body0) => {
+	const detectorGate = Promise.withResolvers();
+	mock.setResponder(async (body0) => {
 		const system = (body0?.messages ?? []).filter((m) => m.role === "system").map((m) => m.content).join("\n");
 		const prompt = (body0?.messages ?? []).filter((m) => m.role === "user").map((m) => m.content).join("\n");
 		if (!body0?.stream) {
 			if (system.includes("You decide whether a stored memory")) {
 				detectorCalls++;
 				if (phase !== "detect") return { content: '{"findings":[]}' };
+				await detectorGate.promise;
 				const row = prompt.split("\n").find((line) => line.includes("text: [new activity] 端口已改为 5678"));
 				const id = row?.match(/^- id=(\S+)/u)?.[1];
 				check("stale: detector sees completed tool evidence", Boolean(id), prompt.slice(-400));
@@ -111,7 +121,14 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 	const from = mock.requests.length;
 	try {
 		await first.client.prompt("部署 端口，执行检查确认配置变更。", "stale-detect");
-		const absorbed = snapshot();
+		check("stale: submitting pi exits while detector response is held", await first.client.close() === 0);
+		check("stale: no change is published before the detector response", snapshot().revision === 1);
+	} finally {
+		detectorGate.resolve();
+	}
+	const absorbed = await waitForRevision(2);
+	const explicit = spawnPi({ name: "stale-explicit", env });
+	try {
 		check("stale: agent_end records the change the turn established", absorbed.events.length === 1, `${absorbed.events.length} events`);
 		check("stale: evidence is raw tool output", absorbed.events[0]?.excerpt === "端口已改为 5678", JSON.stringify(absorbed.events[0]?.excerpt));
 		check("stale: agent_end absorbs the change without a read", absorbed.revision === 2 && absorbed.pending.length === 0 && absorbed.state === "published" && absorbed.nav_revision === 2, `r${absorbed.revision} ${absorbed.state} nav=r${absorbed.nav_revision} ${absorbed.pending.length} pending`);
@@ -120,15 +137,15 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 		check("stale: instruction does not promise an inline repair", !systemText(chatRequests(from)[0]).includes("the read repairs it and returns the current revision"));
 		phase = "explicit";
 		step = 0;
-		await first.client.prompt("部署 端口改为 6789，记录这条新变化。", "stale-explicit");
-		const marked = snapshot();
+		await explicit.client.prompt("部署 端口改为 6789，记录这条新变化。", "stale-explicit");
+		const marked = await waitForRevision(3);
 		check("stale: explicit mark works without invented message ids", marked.revision === 3 && marked.pending.length === 0, `r${marked.revision} ${marked.pending.length} pending`);
 		check("stale: a later change in the same session is absorbed too", marked.body.includes("6789"), marked.body.slice(0, 80));
-		check("stale: no recursive main-agent run", first.client.events.filter((e) => e.type === "agent_start").length === 2);
+		check("stale: no recursive main-agent run", [...first.client.events, ...explicit.client.events].filter((e) => e.type === "agent_start").length === 2);
 		const ranTools = first.client.events.filter((e) => e.type === "tool_execution_end").map((e) => e.toolName);
 		check("stale: no tool hands the agent a memory writer", !ranTools.includes("memory_update"), ranTools.join(","));
 	} finally {
-		check("stale: first pi exits cleanly", (await first.client.close()) === 0);
+		check("stale: explicit-mark pi exits cleanly", (await explicit.client.close()) === 0);
 	}
 	phase = "deferred";
 	step = 0;
@@ -141,8 +158,8 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 		const readResult = readResults(second.client)[0];
 		check("stale: the deferred read keeps the stored body", (readResult ?? "").includes("6789") && (readResult ?? "").includes("STALE"), readResult ?? "no read result");
 		check("stale: the deferred read does not repair", (readResult ?? "").includes("repair: deferred"), readResult ?? "no read result");
-		check("stale: changed freshness reinjects the note", chatRequests(deferredFrom).some((r) => lastUserText(r).includes("stale")));
-		const repaired = snapshot();
+		check("stale: changed freshness reinjects the note", chatRequests(deferredFrom).some((r) => lastUserText(r).includes("该摘要可能未吸收")));
+		const repaired = await waitForRevision(4);
 		check("stale: agent_end repairs and publishes the pending event", repaired.revision === 4 && repaired.pending.length === 0 && repaired.state === "published" && repaired.nav_revision === 4, `r${repaired.revision} ${repaired.state} nav=r${repaired.nav_revision} ${repaired.pending.length} pending`);
 		check("stale: the repaired body carries the new value", repaired.body.includes("7890"), repaired.body.slice(0, 80));
 	} finally {
