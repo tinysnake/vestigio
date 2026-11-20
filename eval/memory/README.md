@@ -58,7 +58,7 @@ Case fields:
 | `surface` | `inject` or `search` |
 | `project_id` | project scope; a memory in another project must not surface |
 | `text` | the query, indexed the same way the store would index a user turn |
-| `expected_memory_ids` | ids that must appear; empty means "nothing specific, only the forbidden set matters" |
+| `expected_memory_ids` | ids that must appear; several ids are an AND (a composition question is only answered when all of them surface, otherwise the case is a `miss` and the rest are listed in `missing_expected_ids`); empty means "nothing specific, only the forbidden set matters" |
 | `forbidden_memory_ids` | ids that must not appear; `["*"]` forbids any surfaced id |
 | `expected_source_refs` | `{session_id, message_id}` history excerpts that must surface |
 | `expected_stale_ids` | surfaced ids whose `freshness.is_stale` must be true |

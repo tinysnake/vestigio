@@ -115,9 +115,13 @@ function score(item, surfaced, error) {
 	// question cannot quietly collect three neighbours and still score a hit.
 	const extraIds = item.expected_only === true ? surfaced.ids.filter((id) => !expected.includes(id)) : [];
 	const refPresent = expectedRefs.some((ref) => surfaced.refs.includes(ref));
+	// Several expected ids are an AND, not an OR: a composition question is only
+	// answered when every memory it needs is there. `findIndex` alone would call
+	// one of two a hit.
+	const missingExpected = expected.filter((id) => !surfaced.ids.includes(id));
 	const expects = expected.length + expectedRefs.length + expectedStale.length > 0;
 	const staleOk = expectedStale.every((id) => surfaced.stale.includes(id));
-	const idsOk = expected.length === 0 || first !== -1;
+	const idsOk = expected.length === 0 || missingExpected.length === 0;
 	const refsOk = expectedRefs.length === 0 || refPresent;
 	const statusMismatch = item.expected_status != null && item.expected_status !== surfaced.status;
 	let status;
@@ -136,7 +140,9 @@ function score(item, surfaced, error) {
 		injection_reason: surfaced.reason ?? null,
 		rank: first === -1 || item.rank_ignored === true ? null : first + 1,
 		rank_ignored: item.rank_ignored === true,
-		expected_present: first !== -1,
+		expected_present: missingExpected.length === 0,
+		memory_found: first !== -1,
+		missing_expected_ids: missingExpected,
 		forbidden_present: forbiddenPresent,
 		expected_only: item.expected_only === true,
 		extra_ids: extraIds,
@@ -216,7 +222,7 @@ const report = {
 		),
 		budget_rescued: candidateLabeled.filter((item) => item.candidate_leak && !item.forbidden_present).length,
 		source_gap_rescue_rate: rate(
-			scored.filter((item) => refLabeled.has(item.case_id) && item.expected_present === false && item.status === "hit")
+			scored.filter((item) => refLabeled.has(item.case_id) && item.memory_found === false && item.status === "hit")
 				.length,
 			scored.filter((item) => refLabeled.has(item.case_id)).length,
 		),

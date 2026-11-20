@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { judgeAllowList, parseJudgeDecision } from "../../src/resolver/index.js";
+import { buildJudgeUserMessage, judgeAllowList, parseJudgeDecision } from "../../src/resolver/index.js";
 import { makeMemoryCard } from "../support.js";
 
 const allowed = judgeAllowList({
@@ -52,4 +52,19 @@ describe("parseJudgeDecision", () => {
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.reason).toContain("JSON");
   });
+});
+
+describe("buildJudgeUserMessage", () => {
+	it("turns an empty candidate list into a rewrite request", () => {
+		const message = buildJudgeUserMessage({
+			question: "我们数据库连接那儿最多允许多少个",
+			scope: { kind: "project", project_id: "p-1" },
+			layer: "active",
+			cards: [],
+			excerpts: [],
+			read_bodies: [],
+		});
+		expect(message).toContain("candidates:\n(none)");
+		expect(message).toContain("Rewrite the question into 1-3 short index terms");
+	});
 });
