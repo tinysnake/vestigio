@@ -160,6 +160,14 @@ describe("handleInput", () => {
 		expect(host.entries).toHaveLength(1);
 		expect(host.entries[0]?.customType).toBe(LEDGER_ENTRY_TYPE);
 		expect(decisions().at(-1)).toMatchObject({ status: "injected", ledger_added: 1 });
+		// The log names what was delivered so a shadow run can trace it, and
+		// carries a hash of the query instead of the operator's words.
+		const record = decisions().at(-1);
+		expect(record?.memory_ids).toEqual(["mem-deploy"]);
+		expect(record?.matched_ids).toEqual(["mem-deploy"]);
+		expect(record?.query_hash).toMatch(/^[0-9a-f]{12}$/);
+		expect(record?.query_chars).toBe(Array.from(text).length);
+		expect(JSON.stringify(record)).not.toContain(text);
 	});
 
 	it("does not append the same memory again in the same session", () => {

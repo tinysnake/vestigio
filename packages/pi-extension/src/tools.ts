@@ -26,6 +26,7 @@ import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/reso
 import type { MemoryStore } from "@vestigio/core/storage";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
+import { hashQuery } from "./decision-log.js";
 import { publishRevision } from "./read-repair.js";
 import { stripInjectedNote } from "./stale-detector.js";
 import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
@@ -149,6 +150,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: inputId,
+				query_hash: hashQuery(params.query),
+				query_chars: Array.from(params.query).length,
+				// Which memories this call actually put in front of the agent.
+				memory_ids: outcome.result.cards.map((card) => card.memory_id),
 				detail: `cards=${outcome.result.cards.length} hits=${recorded}`,
 			});
 			return {
@@ -228,6 +233,9 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: inputId,
+				query_hash: hashQuery(params.question),
+				query_chars: Array.from(params.question).length,
+				memory_ids: outcome.result.cards.map((card) => card.memory_id),
 				detail: `calls=${outcome.measured.model_calls} degraded=${outcome.measured.degraded} hits=${recorded}`,
 			});
 			// A resolve that saved has a memory the store cannot search yet. Publish
@@ -346,6 +354,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				session_id: state.currentSessionId,
 				project_id: projectId,
 				input_id: `tool:${toolCallId}`,
+				memory_ids: [ids.memoryId],
 				detail: `uri=${params.uri} recorded=${recorded?.recorded ?? false}`,
 			});
 			return {

@@ -16,6 +16,7 @@ import type { ExtensionContext, InputEvent, InputEventResult } from "@earendil-w
 import { commitInjection, planInjection, recordProjectInput } from "@vestigio/core/hotspots";
 import type { CommitResult, InjectionPlan } from "@vestigio/core/hotspots";
 import type { LedgerEntryHost } from "./ledger-store.js";
+import { hashQuery } from "./decision-log.js";
 import { errorText, nowIso, type VestigioState } from "./state.js";
 
 export function handleInput(
@@ -33,6 +34,9 @@ export function handleInput(
 		streaming_behavior: streaming,
 		session_id: state.currentSessionId,
 		branch_ref: state.currentBranchRef,
+		// Identity for a shadow trace without keeping the user's words.
+		query_hash: hashQuery(event.text),
+		query_chars: Array.from(event.text).length,
 	} as const;
 
 	// Never match a message the extension itself sent.
@@ -186,6 +190,10 @@ export function handleInput(
 		project_id: projectId,
 		matched: plan.matched.length,
 		injected: plan.injected.length,
+		// Ids, not text: a shadow run can name what was delivered and what the
+		// budget dropped without reading any memory body back out of the log.
+		matched_ids: plan.matched.map((match) => match.memory_id),
+		memory_ids: plan.injected.map((match) => match.memory_id),
 		block_bytes: plan.budget.used_bytes,
 		estimated_tokens: plan.budget.estimated_tokens,
 		elapsed_ms: plan.elapsed_ms,
