@@ -71,7 +71,9 @@ if (cases.length === 0) {
 			repeat: index + 1,
 			should_recall_rate: recall.length === 0 ? null : recall.filter((row) => row.status === "hit").length / recall.length,
 			active_rate: recall.length === 0 ? null : recall.filter((row) => row.active_retrieval === true).length / recall.length,
-			over_trigger_rate: quiet.length === 0 ? null : quiet.filter((row) => row.active_retrieval === true).length / quiet.length,
+			// Status-based, to match `run.mjs`'s own `over_trigger_rate`: a quiet turn
+			// that only read a delivered block is still a lookup nobody asked for.
+			over_trigger_rate: quiet.length === 0 ? null : quiet.filter((row) => row.status === "over_trigger").length / quiet.length,
 			refused: recall.filter((row) => row.status === "refused").length,
 		});
 	}

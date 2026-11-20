@@ -542,12 +542,13 @@ rows by scenario id (the report has no repeat field, so the grouping is by id)
 and prints the outcome spread plus a per-repeat headline:
 
 ```sh
-node --import ../pi/hook.mjs ./trigger.mjs --repeats 3 --out out/trigger-repeat.json
-node ./stability.mjs --report out/trigger-repeat.json
+node --import ../pi/hook.mjs ./trigger.mjs --repeats 3 --out out/trigger-fixtures.json
+node ./stability.mjs --report out/trigger-fixtures.json
 ```
 
-Measured on a 3-repeat, 42-turn run (`eval/memory/out/trigger-repeat.json`,
-`$0.061022`, p50 16.4 s / p95 41.9 s solo):
+Measured on a 3-repeat, 42-turn run (`eval/memory/out/trigger-fixtures.json`,
+`$0.046624`, p50 89.8 s / p95 235.0 s on a contended gateway — the outcomes below
+come from that report, the latency does not):
 
 | scenario | expect | outcomes over 3 repeats | stable |
 | --- | --- | --- | --- |
@@ -555,50 +556,56 @@ Measured on a 3-repeat, 42-turn run (`eval/memory/out/trigger-repeat.json`,
 | `cold-image-tag` | query | miss×3 | yes |
 | `cold-log-retention` | query | hit×2 miss×1 | NO |
 | `cold-secret-rotation` | query | hit×3 | yes |
-| `conflict-deploy-port` | query | refused×2 hit×1 | NO |
+| `conflict-deploy-port` | query | hit×3 | yes |
 | `quiet-docker-nginx` | no_query | over_trigger×3 | yes |
-| `quiet-enoent` | no_query | over_trigger×2 clean×1 | NO |
+| `quiet-enoent` | no_query | clean×3 | yes |
 | `quiet-explain-index` | no_query | clean×3 | yes |
 | `quiet-hello-world` | no_query | clean×3 | yes |
-| `quiet-readme-heading` | no_query | clean×2 over_trigger×1 | NO |
+| `quiet-readme-heading` | no_query | clean×3 | yes |
 | `recall-cache-invalidation` | query | hit×3 | yes |
-| `recall-deploy-port` | query | refused×2 hit×1 | NO |
+| `recall-deploy-port` | query | hit×2 refused×1 | NO |
 | `recall-migration-rollback` | query | hit×3 | yes |
 | `recall-stale-timeout` | query | hit×3 | yes |
 
 | repeat | should-recall | active | over-trigger | refused |
 | --- | --- | --- | --- | --- |
-| 1 | 0.667 | 1.000 | 0.200 | 2 |
-| 2 | 0.778 | 0.889 | 0.200 | 0 |
-| 3 | 0.667 | 1.000 | 0.600 | 2 |
+| 1 | 0.889 | 0.667 | 0.200 | 0 |
+| 2 | 0.778 | 0.667 | 0.200 | 1 |
+| 3 | 0.778 | 0.667 | 0.200 | 0 |
 
-`stable: 9/14; flipped: cold-log-retention, conflict-deploy-port,
-quiet-enoent, quiet-readme-heading, recall-deploy-port.`
+`stable: 12/14; flipped: cold-log-retention, recall-deploy-port.`
 
-Three things this run settled:
+Four things this run settled:
 
-1. **The recall side is stable where it is lexical, unstable where it is a
-   judgment.** The four cold scenarios and two of the warm ones hit three times in
-   a row; `cold-image-tag` misses three times in a row. The flips are exactly the
-   turns whose outcome depends on a model choice: `conflict-deploy-port` and
-   `recall-deploy-port` (the same contradiction, sometimes resolved), and
-   `cold-log-retention` (one of three turns searched with a phrase that matches
-   and two did not).
-2. **Over-trigger is noise, on a floor.** Three of the five quiet scenarios
-   flipped, always between `clean` and one `over_trigger` search, but
-   `quiet-docker-nginx` searched every single time — it is the false positive the
-   hotspot layer injects, so it is deterministic. So a quiet regression is "this
-   scenario searched every repeat", and a single search in one repeat is not
-   evidence of anything; the rate only makes sense as a range (0.200–0.600 here).
-3. **The first attempt at this measurement was invalid, and how.** That run gave
-   `cold-image-tag` `usage_miss×3` while attribution said `retrieval_miss`, and a
-   `conflict-deploy-port` answer quoted a `hello.js` file it never created — the
-   turns all ran in one scratch `cwd`, so `quiet-hello-world` planted a file that
-   later turns saw. `trigger.mjs` now gives every turn its own directory (only the
-   store is shared, because that is the project's memory), and `surfaced` decides
-   `miss` before the refusal wording does. Both changes are why `active` moved
-   from 0.704 to 0.963 and `cold-image-tag` reads `miss`: the earlier numbers
-   measured the harness, not the product.
+1. **Isolating the fixtures removed the structural flips.** The previous run had
+   `conflict-deploy-port` and `recall-deploy-port` flipping between refused and
+   hit, both because the catalogue's two disagreeing 端口约定 memories reached a
+   question they were not written for. With `omit` and a memory that states the
+   value, the conflict row is `hit×3` (three accepted refusals) and the warm row
+   is `hit×2` plus one turn that declined to commit even though the block stated
+   the value — see "A fixture that made its own question unanswerable".
+2. **`active` fell to 0.667 in every repeat, and that is the fix rather than a
+   regression.** Under the old fixture the warm turns searched in order to
+   resolve a contradiction the catalogue had created; now the injected block
+   answers them, so the nine warm turns make no lookup and the eighteen cold
+   turns all do. `should_recall_active_rate` on warm scenarios was partly
+   measuring the fixture.
+3. **Over-trigger became flat at 0.200.** Only `quiet-docker-nginx` searches, in
+   all three repeats — that is the hotspot false positive, deterministic. The
+   other four quiet rows never search now. They used to flip (0.200, 0.200,
+   0.600) because a quiet turn inherited hotspot recency from the warm scenarios
+   that ran before it in the shared store.
+4. **What still flips is phrase and judgment noise.** `cold-log-retention` hits
+   twice and misses once (the phrase it searches with sometimes matches),
+   `recall-deploy-port` hits twice and refuses once. Neither flip has a
+   deterministic cause, so a per-scenario store buys isolation, not stability.
+
+The first attempt at this measurement was invalid, and how: it gave
+`cold-image-tag` `usage_miss×3` while attribution said `retrieval_miss`, and a
+`conflict-deploy-port` answer quoted a `hello.js` file it never created — the
+turns all ran in one scratch `cwd`, so `quiet-hello-world` planted a file that
+later turns saw. `trigger.mjs` gives every turn its own directory for that
+reason, and `surfaced` decides `miss` before the refusal wording does.
 
 ### What the resolver is worth
 
@@ -920,8 +927,9 @@ p50 16330ms p95 277841ms
 (`eval/memory/out/trigger-postfix.json`, `eval/memory/out/shadow-postfix.json`,
 `/tmp/shadow-postfix.jsonl`; the run shared the gateway, so p95 278 s is an upper
 bound, not a latency claim. The 3-repeat run that this section's stability tables
-come from reports `should-recall 0.704 (active 0.963)`, `refused 4`, p50 16.4 s and
-p95 41.9 s solo — use those for latency, not this one.) The
+come from reports `should-recall 0.815 (active 0.667)`, `refused 1`, and was itself
+contended (p50 89.8 s), so the p50 16.4 s / p95 41.9 s solo run above is the one to
+quote for latency.) The
 offline surrogate for a real-memory absence is the last shadow line: two of ten
 gather turns searched and got nothing, which is the closest a label-free log gets
 to a Retrieval Miss.
