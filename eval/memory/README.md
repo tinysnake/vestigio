@@ -659,59 +659,67 @@ searches each whitespace-separated term alone and unions the hits; the
 beside a hit" counts ids dragged in next to a hit, which is what a user
 notices as clutter even when nothing was forbidden.
 
-Every labelled row (297 positive, 117 negative):
+Every labelled row (322 positive, 148 negative):
 
 | strategy | all expected | noise beside a hit | negative leaks | fallback fired | search calls |
 | --- | --- | --- | --- | --- | --- |
-| and | 99/297 | 10 (9 rows) | 0/117 | 0 | 414 |
-| or | 283/297 | 2070 (265 rows) | 95/117 | 0 | 414 |
-| split | 140/297 | 79 (48 rows) | 18/117 | 0 | 920 |
-| and_then_split | 138/297 | 42 (23 rows) | 18/117 | 116 | 920 |
-| and_then_or | 281/297 | 1507 (180 rows) | 94/117 | 116 | 414 |
-| and_then_hotspot | 269/297 | 52 (49 rows) | 19/117 | 116 | 414 |
-| and_then_hotspot_2 | 266/297 | 52 (49 rows) | 17/117 | 116 | 414 |
-| and_then_hotspot_3 | 248/297 | 20 (19 rows) | 11/117 | 116 | 414 |
+| and | 110/322 | 10 (9 rows) | 0/148 | 0 | 470 |
+| or | 308/322 | 2252 (289 rows) | 123/148 | 0 | 470 |
+| split | 157/322 | 91 (52 rows) | 24/148 | 0 | 1072 |
+| and_then_split | 155/322 | 52 (25 rows) | 24/148 | 147 | 1072 |
+| and_then_or | 306/322 | 1622 (194 rows) | 122/148 | 147 | 470 |
+| and_then_hotspot | 293/322 | 54 (51 rows) | 28/148 | 147 | 470 |
+| and_then_hotspot_2 | 290/322 | 54 (51 rows) | 25/148 | 147 | 470 |
+| and_then_hotspot_3 | 271/322 | 21 (20 rows) | 16/148 | 147 | 470 |
 
-Hand-confirmed rows only (`--source cases.jsonl`, 54 positive, 38 negative):
+Hand-confirmed rows only (`--source cases.jsonl`, 55 positive, 41 negative):
 
 | strategy | all expected | noise beside a hit | negative leaks | fallback fired | search calls |
 | --- | --- | --- | --- | --- | --- |
-| and | 21/54 | 0 (0 rows) | 0/38 | 0 | 92 |
-| or | 54/54 | 396 (51 rows) | 32/38 | 0 | 92 |
-| split | 28/54 | 9 (6 rows) | 3/38 | 0 | 176 |
-| and_then_split | 27/54 | 8 (5 rows) | 3/38 | 37 | 176 |
-| and_then_or | 53/54 | 265 (31 rows) | 31/38 | 37 | 92 |
-| and_then_hotspot | 50/54 | 8 (8 rows) | 6/38 | 37 | 92 |
-| and_then_hotspot_2 | 47/54 | 8 (8 rows) | 5/38 | 37 | 92 |
-| and_then_hotspot_3 | 46/54 | 3 (3 rows) | 2/38 | 37 | 92 |
+| and | 22/55 | 0 (0 rows) | 0/41 | 0 | 96 |
+| or | 55/55 | 405 (52 rows) | 35/41 | 0 | 96 |
+| split | 29/55 | 9 (6 rows) | 5/41 | 0 | 189 |
+| and_then_split | 28/55 | 8 (5 rows) | 5/41 | 40 | 189 |
+| and_then_or | 54/55 | 265 (31 rows) | 34/41 | 40 | 96 |
+| and_then_hotspot | 51/55 | 8 (8 rows) | 9/41 | 40 | 96 |
+| and_then_hotspot_2 | 48/55 | 8 (8 rows) | 8/41 | 40 | 96 |
+| and_then_hotspot_3 | 47/55 | 3 (3 rows) | 4/41 | 40 | 96 |
 
 Four things this says, and one thing it does not:
 
-1. `or` is not a retrieval strategy. It answers 32 of 38 negative rows with a
-   memory, because "any token" makes near-miss questions look like hits — a
-   memory that shares 日志 with a question about log levels now gets delivered.
-2. A fallback fires on 37 of 38 negative rows, and that is structural rather
+1. `or` is not a retrieval strategy. It answers 35 of 41 hand-checked negative
+   rows (123 of 148 across the whole pool) with a memory, because "any token"
+   makes near-miss questions look like hits — a memory that shares 日志 with a
+   question about log levels now gets delivered.
+2. A fallback fires on 40 of 41 negative rows, and that is structural rather
    than a tuning problem: negatives are negative precisely because they share no
    whole token with a memory, so the conjunction is empty on all of them and any
    fallback gets to decide. Falling back means deciding *without* the evidence
    the AND query relies on.
 3. The best fallback is a real offer, not a strawman: `and_then_hotspot_3`
-   recovers 25 of the 33 literal misses (21/54 → 46/54) while leaking 2 of 38
-   negatives (5.3%) and adding 3 noise ids. That is the trade the proposal's
-   「检索策略不足」 row is actually about, stated as a rate: one question in
-   nineteen that should have stayed quiet gets a memory, in exchange for more
-   than doubling what the agent can find by itself.
-4. It still does not land, and the reason is now a specific missing number
-   rather than a preference: the decision needs the cost asymmetry — what a
-   wrong delivered memory costs the agent versus what a missed one costs — and
-   nothing here measures that. What the set does say is that 22 hand-checked
-   negatives could not separate 0/22 from 11/117 while 38 can show the rate is
-   about one in twenty, so the label set was the deciding instrument and it
-   still needs the harm side. In the meantime the shipped path is the one that
-   spends on a second attempt instead of on a looser first one: the model-driven
-   rewrite in "Query expansion" recovers 50 of 52 literal misses for $0.0103,
-   only on turns that came back empty, and the empty-result hint tells the agent
-   to retry with 1-3 words before it gives up.
+   recovers 25 of the 33 literal misses (22/55 → 47/55) while leaking 4 of 41
+   negatives (9.8%) and adding 3 noise ids. The four leaks are named in
+   `out/strategies-cases.json` and they are not one class:
+   `search-near-miss-pool-keepalive` and `search-near-miss-apiver-header` are
+   search-surface questions whose wording legitimately shares the memory's
+   words, while `inject-neg-feature-flag-refactor` and
+   `inject-neg-monorepo-ci-cache` sit on the **inject** surface — the one where a
+   block reaches the agent without it asking. The strict conjunction leaks 0/41
+   on the same rows, so this fallback does not merely fail to fix precision: it
+   manufactures the false positives the current matcher avoids.
+4. It still does not land, and the reason is a measurement gap rather than a
+   preference. The harm side is now half-measured: the end-to-end probe found a
+   near-miss delivery is ignored in five of eight turns and adds only a trailing
+   irrelevant paragraph when adopted (carried 3/8, harmed 0), but the
+   same-subject wrong-value case is a different shape — there the agent refused
+   to answer at all, which is a real cost. So the ledger reads: +25 recall on
+   literal queries, 4/41 wrong deliveries, two of them on the surface where the
+   agent cannot decline to look, and a delivered-block cost that only some of the
+   harm probes cover. The shipped path keeps spending on a second attempt
+   instead of a looser first one: the model-driven rewrite in "Query expansion"
+   recovers 50 of 52 literal misses for $0.0103, fired only on turns that came
+   back empty, and the empty-result hint tells the agent to retry with 1-3 words
+   before it gives up.
 
 The first two rows of the hand-confirmed table are also worth reading as a
 precision statement: `and` finds 21 of 54, so a third of this dataset cannot be

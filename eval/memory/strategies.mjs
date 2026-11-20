@@ -39,7 +39,13 @@ const LIMIT = 10;
 const sourceArgument = argument("--source");
 const SOURCES =
 	sourceArgument === null
-		? ["cases.jsonl", "candidates.jsonl", "candidates.batch-2.jsonl", "candidates.batch-3.jsonl"]
+		? [
+				"cases.jsonl",
+				"candidates.jsonl",
+				"candidates.batch-2.jsonl",
+				"candidates.batch-3.jsonl",
+				"candidates.batch-4.jsonl",
+			]
 		: [sourceArgument];
 
 const tempDir = mkdtempSync(join(tmpdir(), "vestigio-strategies-"));
