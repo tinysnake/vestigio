@@ -39,6 +39,12 @@ const SCENARIOS = [
 	{ id: "recall-migration-rollback", expect: "query", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
 	{ id: "recall-cache-invalidation", expect: "query", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
 	{ id: "recall-stale-timeout", expect: "query", question: "空闲会话多久自动断开？这个值之前是不是改过" },
+	// Cold: the hotspot layer injects nothing for these (checked with
+	// planInjection), so only a deliberate search can answer them.
+	{ id: "cold-conn-limit", expect: "query", question: "我们数据库连接那儿最多允许多少个" },
+	{ id: "cold-log-retention", expect: "query", question: "那些访问记录一般留多久" },
+	{ id: "cold-image-tag", expect: "query", question: "打包成容器的时候名字怎么起" },
+	{ id: "cold-secret-rotation", expect: "query", question: "凭证多久换一次" },
 	{ id: "quiet-readme-heading", expect: "no_query", question: "把 README 里的一级标题改成中文，只改标题这一行" },
 	{ id: "quiet-explain-index", expect: "no_query", question: "用三句话解释一下数据库索引为什么能加速查询" },
 	{ id: "quiet-hello-world", expect: "no_query", question: "写一个最小的 node hello world 脚本，打印一行字" },

@@ -235,28 +235,37 @@ node --import ../pi/hook.mjs ./trigger.mjs --repeats 2
 
 Each turn is a real `pi -p` run with the extension loaded, an isolated store
 seeded from `catalog.mjs`, and `--no-context-files --no-mcp --no-session` so the
-only project knowledge available is memory. Eight scenarios, four that need
-memory (deploy port, migration rollback, cache invalidation, a timeout that
-changed) and four that do not (rename a heading, explain an index, hello world,
-an ENOENT error). A turn counts as a hit when it calls `memory_search`,
-`memory_resolve`, `memory_read` or `memory_mark_stale`.
+only project knowledge available is memory. Twelve scenarios:
 
-Measured over two runs of 16 turns each (cost $0.011–$0.014 per run):
+- four **warm** — deploy port, migration rollback, cache invalidation, a timeout
+  that changed. The hotspot layer injects a block, so answering means reading it.
+- four **cold** — a connection limit, log retention, an image tag, secret
+  rotation, all phrased so that `planInjection` matches nothing. Only a
+  deliberate search can answer them.
+- four **quiet** — rename a heading, explain an index, hello world, an ENOENT
+  error. Any memory call here is noise.
 
-| metric | run 1 | run 2 |
-| --- | --- | --- |
-| should-recall rate | 1.000 | 1.000 |
-| of those, active retrieval (`search`/`resolve`) | — | 0.250 |
-| over-trigger rate | 0.125 | 0.000 |
+A turn counts as a hit when it calls `memory_search`, `memory_resolve`,
+`memory_read` or `memory_mark_stale`.
 
-The interesting number is the second row. Every recall turn hit, but three
-quarters of them only *read the block the hotspot layer had already injected* —
-the model follows the pointer, it rarely decides to search on its own. One
-`memory_search` on the ENOENT question appeared in run 1 and not in run 2, so
-treat the over-trigger rate as noise until there are more turns.
+Measured over two runs of 24 turns (cost $0.011–$0.019 per run):
 
+| metric | value |
+| --- | --- |
+| should-recall rate | 1.000 |
+| of those, active retrieval (`search`/`resolve`) | 0.750 |
+| over-trigger rate | 0.125 |
+
+The split is the finding, not the total. All eight cold turns performed an
+active search, and all eight warm turns only read the injected block — so the
+agent does decide to look things up, and it does not search twice when the
+pointer is already in context. A run with only warm scenarios reads as
+"active 0.250", which is why the cold set exists.
+
+One `memory_search` on the heading-rename question appeared in one run and not
+the other, so treat over-trigger as noise until there are more turns.
 Non-deterministic by construction: same model, same prompts, different calls.
-p50 was 8.8–9.5 s per turn with one 40 s outlier, and the answer text is not
+p50 was 9–10 s per turn with a 29–40 s outlier, and the answer text is not
 judged here — correctness still needs `usage.mjs` or a human.
 
 ## Precision history
