@@ -1121,7 +1121,7 @@ node ./compare.mjs --baseline=HEAD~1 out/report.json
 Every other number here starts from a case set someone wrote. Coverage starts at
 the other end: the questions real work actually asked.
 
-`coverage.jsonl` holds 40 questions harvested from the author's own sessions on
+`coverage.jsonl` holds 35 questions harvested from the author's own sessions on
 this project (2026-11-17 .. 11-20, 61 sessions), each with its `session_id`,
 `message_uuid` and the verbatim question. Two axes are annotated separately:
 
@@ -1132,16 +1132,18 @@ this project (2026-11-17 .. 11-20, 61 sessions), each with its `session_id`,
 
 Coverage = store / (store + history + nowhere) over the `durable` rows. The store
 column needs a real store, so on a machine without one the honest reading is the
-task list: **31 of 40 rows are durable and all 31 answers live only in raw
-transcripts** — nothing in this sample is carried by a memory yet. The other nine
-are `durable: false` (session-local references, one-off plans, run details).
+task list: **30 of 35 rows are durable and all 30 answers live only in raw
+transcripts** — nothing in this sample is carried by a memory yet. The other five
+are `durable: false` (session-local references, one-off plans, run details). Five
+more rows were withdrawn during review as too ambiguous to label, which is why
+the ids have gaps.
 
 ```sh
 node ./coverage.mjs                       # counts + sheet on stdout
 node ./coverage.mjs --out out/coverage.md
 ```
 
-A second pass re-found every answer with `obelisk` (66 quotes checked as verbatim
+A second pass re-found every answer with `obelisk` (60 quotes checked as verbatim
 substrings of the cited messages) and corrected 6 classifications and 8 draft
 answers; the `draft_*` fields keep the first pass so a reviewer can compare.
 `docs/memory-eval-coverage.md` has the harvest rule, the annotation contract and
