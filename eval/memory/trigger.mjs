@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore } from "@vestigio/core/storage";
 import { PROJECT, seedStore } from "./catalog.mjs";
+import { seedPortConflictSuperseded } from "./catalog.mjs";
 import { ask } from "./judge.mjs";
 import { navEntry } from "./replay.mjs";
 
@@ -84,6 +85,10 @@ const SCENARIOS = [
 		id: "conflict-deploy-port",
 		expect: "query",
 		fact: "18080",
+		// The injected block carries both 端口约定 values, so the fact check alone
+		// cannot tell an answer that picks 18080 from one that lists it beside
+		// 8080 and gives up. The judge settles which one happened.
+		decided_fact: "18080",
 		question: "部署脚本默认端口是多少？",
 		contaminated_by: "mem-port-rule-a",
 	},
@@ -103,6 +108,11 @@ mkdirSync(cwd, { recursive: true });
 writeFileSync(join(cwd, "README.md"), "# trigger eval\n\nNothing here answers the questions.\n");
 const store = openStore({ path: storePath });
 seedStore(store);
+// The two 端口约定 memories contradict each other and the store says nothing
+// about which one superseded the other. `--stale-port-rule` records that
+// supersession with the marker the product already has, which is how the
+// conflict scenario tests whether presentation or data is the gap.
+if (process.argv.includes("--stale-port-rule")) seedPortConflictSuperseded(store);
 store.close();
 
 function runTurn(question) {
@@ -257,11 +267,40 @@ for (const scenario of SCENARIOS) {
 					: turn.surfaced !== true
 						? "retrieval_miss"
 						: "usage_miss";
+		// `fact` only proves a value appears somewhere in the answer, which is
+		// how a refusal that lists both candidates still reads as a hit. A
+		// scenario that declares `decided_fact` asks the judge whether the answer
+		// committed to one value.
+		let decision = null;
+		if (scenario.decided_fact !== undefined && JUDGE_HARM) {
+			try {
+				const reply = ask({
+					text: [
+						"一个记忆系统已经把相关记忆注入到 Agent 的上下文里，Agent 的回答如下。",
+						`问题：${scenario.question}`,
+						`回答：${(turn.text ?? "").slice(0, 1200)}`,
+						"",
+						"请判断：Agent 是否给出了一个明确的取值作为答案（而不是并列几个候选、或表示无法确定）？",
+						"只输出 JSON：{\"decided\": true|false, \"value\": \"<它给出的值，没有就写空>\", \"why\": \"<=30字\"}",
+					].join("\n"),
+				});
+				const parsed = parseJudgement(reply.reply);
+				decision = {
+					decided: parsed.decided === true,
+					value: typeof parsed.value === "string" ? parsed.value : null,
+					why: typeof parsed.why === "string" ? parsed.why : null,
+					cost_usd: reply.cost_usd,
+				};
+			} catch (error) {
+				decision = { error: String(error) };
+			}
+		}
 		rows.push({
 			id: scenario.id,
 			expect: scenario.expect,
 			status,
 			stale_misuse: staleMisuse,
+			decision,
 			failure,
 			surfaced: turn.surfaced === true,
 			question: scenario.question,
@@ -378,6 +417,10 @@ const report = {
 			graded.filter((row) => row.contamination.carried === true).length,
 			graded.length,
 		),
+		decision_rate: rate(
+			rows.filter((row) => row.decision?.decided === true).length,
+			rows.filter((row) => row.decision !== null && row.decision !== undefined).length,
+		),
 		cost_usd: Number(rows.reduce((sum, row) => sum + row.cost_usd, 0).toFixed(6)),
 		p50_ms: percentile(rows.map((row) => row.wall_ms), 50),
 		p95_ms: percentile(rows.map((row) => row.wall_ms), 95),
@@ -395,9 +438,17 @@ console.log(
 console.log(
 	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,
 );
+console.log(
+	`decision: ${summary.decision_rate === null ? "-" : `${(summary.decision_rate * 100).toFixed(1)}% committed to one value`}`,
+);
 for (const row of graded) {
 	console.log(
 		`contamination ${row.id}: carried=${row.contamination.carried} harmed=${row.contamination.harmed} (${row.contamination.memory_id}) ${row.contamination.why ?? row.contamination.error ?? ""}`,
+	);
+}
+for (const row of rows.filter((item) => item.decision !== null && item.decision !== undefined)) {
+	console.log(
+		`decision ${row.id}: ${row.decision.decided === true ? "committed" : "no single value"}${row.decision.value ? ` (${row.decision.value})` : ""} ${row.decision.why ?? row.decision.error ?? ""}`,
 	);
 }
 console.log(

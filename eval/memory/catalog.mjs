@@ -321,3 +321,22 @@ export function seedStore(store) {
 	}
 	return { memories: MEMORIES.length };
 }
+
+/**
+ * The two 端口约定 memories contradict each other and nothing in the store says
+ * which one superseded the other, so an injected block leaves the agent to
+ * choose between 8080 and 18080 with no evidence. This records the supersession
+ * the way the product already supports it — a pending stale event on the older
+ * memory — so the same question can be asked again with the marker present.
+ */
+export function seedPortConflictSuperseded(store) {
+	store.markStale({
+		memory_id: "mem-port-rule-a",
+		observed_revision: 1,
+		reason: "later evidence: 端口约定改为 18080，8080 只保留一周用于回滚",
+		excerpt: "2026-11-18 的评审把端口约定改成 18080，旧的 8080 仅保留一周。",
+		sources: [source("stale-port-rule", PROJECT, 7)],
+		producer: "detector",
+		at: AT,
+	});
+}

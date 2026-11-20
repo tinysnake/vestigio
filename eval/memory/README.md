@@ -359,8 +359,11 @@ only project knowledge available is memory. Fourteen scenarios:
   `mem-deploy-port` next to two 端口约定 memories that disagree.
 
 Every scenario may also declare `contaminated_by: <memory-id>`, which grades what
-an unnecessary delivery did to the answer; see "What a wrong or irrelevant
-delivery costs the answer".
+an unnecessary delivery did to the answer, or `decided_fact: <value>`, which asks
+the judge whether the answer committed to one value instead of listing
+candidates; `--stale-port-rule` additionally records the supersession the two
+端口约定 memories are missing. See "What a wrong or irrelevant delivery costs the
+answer" and "Can the agent settle a contradiction?".
 
 A turn counts as a hit when it calls `memory_search`, `memory_resolve`,
 `memory_read` or `memory_mark_stale`.
@@ -625,10 +628,55 @@ Counting a leak says retrieval delivered something it should not have. It does n
 Readings:
 
 1. A near-miss delivery does not turn into a wrong answer on its own: the model ignored it in 5 of 8 turns, and where the judge saw the content reused it was a closing paragraph about image tags, not a corrupted answer. So the 1-in-19 leak rate above is a noise rate, not a correctness rate.
-2. The expensive shape is a same-subject conflict, but the cost is a refusal rather than a wrong value: all 3 turns answered that the port could not be confirmed, because the two records are parallel and carry nothing (time, commit, revision) that would let one supersede the other. `mem-deploy-port` was in the same context. This is the 多条记忆冲突 → Conflict Resolution row of the diagnosis matrix, and it is a presentation/证据缺口 question, not a matching one.
+2. The expensive shape is a same-subject conflict, but the cost is a refusal rather than a wrong value: all 3 turns answered that the port could not be confirmed, because the two records are parallel and carry nothing (time, commit, revision) that would let one supersede the other. `mem-deploy-port` was in the same context. This is the 多条记忆冲突 → Conflict Resolution row of the diagnosis matrix. It is not a matching question; the experiment below settles whether it is a presentation question or a data one.
 3. The `fact` check is a substring test, so all 3 conflict turns count as `hit` with `used=true` (18080 appears in the answer). Only the judge shows that the conclusion was "unknown". Read the two together; a `hit` alone does not mean the question was answered.
 
-Both shapes are method plus baseline: 8 and 3 turns cannot set a rate. The missing measurement is the same conflict shape against a memory that states the value itself, which would separate "the system cannot choose" from "the value was never recorded".
+Both shapes are method plus baseline: 8 and 3 turns cannot set a rate.
+
+### Can the agent settle a contradiction?
+
+The reading above left one question open: with two memories disagreeing about the
+same subject, is the gap in what the agent is shown (no ordering evidence in the
+block) or in what the store knows (nobody ever recorded which value superseded
+which)? The product already has a place to record that — a pending stale event —
+so the experiment is to record the supersession and ask the same question again.
+`--stale-port-rule` does exactly that: it marks the older `mem-port-rule-a`
+stale with the later evidence (「2026-11-18 的评审把端口约定改成 18080，旧的 8080
+仅保留一周」) and leaves everything else — retrieval, injection, the question —
+unchanged. `decided_fact` is what makes the outcome visible: a scenario may name
+it, and the judge is asked whether the answer committed to one value or listed
+candidates and gave up, because a substring test cannot tell those apart.
+
+| arm | turns | committed to 18080 | refused (no single value) |
+| --- | --- | --- | --- |
+| no supersession recorded | 3 | 0 | 3 |
+| supersession recorded (`--stale-port-rule`) | 3 | 2 | 1 |
+
+```sh
+node --import ../pi/hook.mjs ./trigger.mjs --only conflict-deploy-port --repeats 3 --out out/decide-baseline.json
+node --import ../pi/hook.mjs ./trigger.mjs --only conflict-deploy-port --repeats 3 --stale-port-rule --out out/decide-stale.json
+```
+
+The two committed answers are not guesses; each one lays out the evidence
+(`mem-port-rule-b` 18080 现行, `mem-port-rule-a` 8080 with **STALE** and the recorded
+later evidence, `mem-deploy-port` recording only that the two must change
+together) and then treats the stale event as the later fact that supersedes the
+older record: 「这是一次已生效的后续变更，按规则它取代较早的 8080」. The third turn
+still refused, and its answer explains why in a way that is itself a finding: it
+reports the freshness of `mem-deploy-port` (current, no pending) and never
+mentions `rule-a`'s stale event, so it either read the wrong memory or ignored
+the marker — reading the pending detail is a second, separate decision.
+
+What this is worth: the fix for a same-subject contradiction is in the data, not
+in presentation — record which record superseded which (the stale event does it
+today, without new schema) — and the retrieval layer's `conflicted` status plus
+per-entry freshness is enough for the agent to reason about it once the data says
+so. What it is not: a rate. Three turns per arm, one question, one day, and
+gateway contention made the latencies in these two reports useless (p50 ≈ 260 s);
+do not quote a timing from them. A follow-up worth having is the same A/B on a
+sharper question where the answer cannot be reasoned out from the rules alone,
+and a cheaper variant that asks the agent only to read the memory and report its
+freshness.
 
 ### Archived memories
 
