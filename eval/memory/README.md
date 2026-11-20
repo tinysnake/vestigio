@@ -350,6 +350,9 @@ only project knowledge available is memory. Fourteen scenarios:
 
 - four **warm** — deploy port, migration rollback, cache invalidation, a timeout
   that changed. The hotspot layer injects a block, so answering means reading it.
+  The timeout scenario re-records its pending change before the turn
+  (`stale_before`), because the `agent_end` repair pass spends every pending evento
+  after the first turn of a session — see "Shadow view of a real session".
 - four **cold** — a connection limit, log retention, an image tag, secret
   rotation, all phrased so that `planInjection` matches nothing. Only a
   deliberate search can answer them.
@@ -359,11 +362,14 @@ only project knowledge available is memory. Fourteen scenarios:
   `mem-deploy-port` next to two 端口约定 memories that disagree.
 
 Every scenario may also declare `contaminated_by: <memory-id>`, which grades what
-an unnecessary delivery did to the answer, or `decided_fact: <value>`, which asks
+an unnecessary delivery did to the answer, `decided_fact: <value>`, which asks
 the judge whether the answer committed to one value instead of listing
-candidates; `--stale-port-rule` additionally records the supersession the two
-端口约定 memories are missing. See "What a wrong or irrelevant delivery costs the
-answer" and "Can the agent settle a contradiction?".
+candidates, or `stale_before: true`, which re-records the timeout change just
+before that turn so a stale delivery stays observable in a multi-turn run;
+`--stale-port-rule` additionally records the supersession the two 端口约定
+memories are missing. See "What a wrong or irrelevant delivery costs the
+answer", "Can the agent settle a contradiction?" and "Shadow view of a real
+session".
 
 A turn counts as a hit when it calls `memory_search`, `memory_resolve`,
 `memory_read` or `memory_mark_stale`.
@@ -855,8 +861,16 @@ and the stored body becomes 「会话空闲超时的现行取值是 15 分钟…
 Planning alone does not do this (seed → `recordProjectInput` → `planInjection`
 leaves the event pending), so the offline stale case stays deterministic — it
 just proves the marker reaches the plan, not that a session will still see it.
-To observe a stale delivery, run the one scenario alone (`--only
-recall-stale-timeout`) or mark the memory stale after the session's first turn.
+The stale scenario therefore re-records the same change right before its turn
+(`stale_before`, `markTimeoutStaleAgain` in `catalog.mjs`), which is what makes
+the signal visible in a multi-turn run. Measured, two turns in one run
+(`--only recall-deploy-port,recall-stale-timeout --repeats 1`): turn 1 delivers
+`mem-deploy-port` with `stale=[]`, turn 2 delivers `mem-stale-ttl` with
+`stale=["mem-stale-ttl"]`, and shadow reports
+`gather turns that got nothing: - of 0; stale delivered 1 (read 100.0%)`. That
+turn made no gather call at all — the stale line sent it straight to
+`memory_read`, the answer gave 15 rather than the superseded 30, and
+`stale-misuse 0`.
 
 The cold turn's trace shows the whole chain in a production artifact:
 `no_match → tool_search(not_found, cards=0) → tool_resolve(resolved, mem-conn-pool)

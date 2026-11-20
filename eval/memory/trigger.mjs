@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore } from "@vestigio/core/storage";
-import { PROJECT, seedStore } from "./catalog.mjs";
+import { markTimeoutStaleAgain, PROJECT, seedStore } from "./catalog.mjs";
 import { seedPortConflictSuperseded } from "./catalog.mjs";
 import { ask } from "./judge.mjs";
 import { navEntry } from "./replay.mjs";
@@ -60,7 +60,16 @@ const SCENARIOS = [
 	// `misused` names the value the memory itself carries: `mem-stale-ttl` holds
 	// 30 minutes with a pending event that moved it to 15, so an answer of 30 is
 	// a stale memory used as current, not merely a missed fact.
-	{ id: "recall-stale-timeout", expect: "query", fact: "15", misused: "30", question: "空闲会话多久自动断开？" },
+	{
+		id: "recall-stale-timeout",
+		expect: "query",
+		fact: "15",
+		misused: "30",
+		// Re-record the pending change right before the turn, so the marker is
+		// present whether or not this run already ran a repair pass.
+		stale_before: true,
+		question: "空闲会话多久自动断开？",
+	},
 	// Cold: the hotspot layer injects nothing for these (checked with
 	// planInjection), so only a deliberate search can answer them.
 	{ id: "cold-conn-limit", expect: "query", fact: "20", question: "我们数据库连接那儿最多允许多少个" },
@@ -117,6 +126,20 @@ seedStore(store);
 // conflict scenario tests whether presentation or data is the gap.
 if (process.argv.includes("--stale-port-rule")) seedPortConflictSuperseded(store);
 store.close();
+
+/**
+ * Open the run's store, hand it to `fn`, and close it again. The harness keeps
+ * the store closed between steps on purpose: a turn is a separate `pi` process,
+ * and a stale marker written from this process has to survive into that process.
+ */
+function withStore(fn) {
+	const handle = openStore({ path: storePath });
+	try {
+		return fn(handle);
+	} finally {
+		handle.close();
+	}
+}
 
 function runTurn(question) {
 	const args = [
@@ -228,6 +251,11 @@ const rows = [];
 for (const scenario of SCENARIOS) {
 	if (ONLY_IDS !== null && !ONLY_IDS.has(scenario.id)) continue;
 	for (let index = 0; index < REPEATS; index += 1) {
+		// Mark before the turn, not at seeding time: after the first turn of a
+		// session the `agent_end` repair pass has already spent every pending
+		// event, so a stale delivery is only observable if it is recorded again
+		// once that pass is behind us.
+		if (scenario.stale_before === true) withStore((handle) => markTimeoutStaleAgain(handle));
 		const turn = runTurn(scenario.question);
 		const calls = turn.memoryCalls ?? [];
 		const called = calls.length > 0;

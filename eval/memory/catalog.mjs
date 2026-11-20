@@ -340,3 +340,24 @@ export function seedPortConflictSuperseded(store) {
 		at: AT,
 	});
 }
+
+/**
+ * Re-record the 30 → 15 timeout change on a store whose seeded event has already
+ * been spent. A real session's `agent_end` repair pass absorbs every pending
+ * event after the first turn (`packages/pi-extension/src/extension.ts:101-105`),
+ * so by the time a later turn asks about the timeout the marker is gone; a run
+ * that wants to observe a stale delivery has to mark it again first. The source
+ * anchor is distinct on purpose: `store.markStale` treats the same evidence
+ * under the same event id as an idempotent no-op.
+ */
+export function markTimeoutStaleAgain(store) {
+	return store.markStale({
+		memory_id: "mem-stale-ttl",
+		observed_revision: 1,
+		reason: "later evidence again: 空闲超时按 15 分钟执行",
+		excerpt: "2026-11-18 的例行检查再次确认空闲会话超时按 15 分钟执行。",
+		sources: [source("stale-ttl-mid-session", PROJECT, 8)],
+		producer: "detector",
+		at: AT,
+	});
+}
