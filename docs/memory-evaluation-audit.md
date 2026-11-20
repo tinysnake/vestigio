@@ -104,15 +104,17 @@
 
 其九，离线侧新增了解析器观测面 `eval/memory/resolution.mjs`（7 条用例，裁判脚本化，不联网、不花钱、结果固定）。它逐条钉住 walk 的分支：第一轮就接受即 `resolved` 并停止；判证据不足且不给 `next_queries` 时只花一次裁判调用、`missing` 记 `evidence_insufficient`；给了改写词会重新 gather 并在第二轮 `resolved`；完全空 gather 且配置了模型时仍会花一次裁判调用；未配置模型时零调用、`missing` 记 `model_not_configured`；裁判输出无法解析会重试一次，之后 `missing` 以 `model_malformed_output` 开头。它暴露并用一次生产改动补掉了一个可诊断性缺口：空 gather 也会调用裁判，因此记录下来的 `missing` 原本只是裁判对空集合的结论（`evidence_insufficient`），「库里有这条记忆但从没匹配上」和「库里根本没有」在这一列同形。现在 `packages/core/src/resolver/resolver.ts` 的 `stopAssembly` 在整轮没有拿到任何卡片与历史摘录时额外追加 `no_candidates_gathered`，并且保留 `reason` 在首位，所以 `missing[0]` 的既有语义（`degraded_reason` 用的就是它）不变，而第 4.8 节 Memory Coverage 需要的区分变得可读；`packages/core/test/resolver/resolver.test.ts` 用正反两例钉住它（「nothing is found」必须带标记，「候选被裁判拒绝」不得带标记）。红绿验证：把 `judged.retryable && !retryUsed` 改成 `&& false` 停掉重试后，`res-malformed-judge` 立即变成 `judge_calls=1` 的 FAIL 并让脚本退出码为 1，改回后 7/7 通过。诚实边界也一并写进 README：裁判是脚本化的，因此改写用例只能证明「裁判给出的词会被重新检索并能救回」，把 `MAX_LAYER_GATHERS` 或 `MAX_LAYER_REQUERIES` 改成 0/1 并不会让它变红。
 
+其十，真实回合侧的最后一个缺口由 `eval/memory/trace.mjs` 补上：它用 `replay.mjs` 为每个回合重建热点层计划（同一个固定 catalog、临时 store、`recordProjectInput` 之后的 `planInjection`），再合并 `out/trigger.json` 的 Agent 行为与 `out/usage.json` 的裁判判定，写出一条覆盖 trigger → hotspot → delivery → usage → cost 的 Trace（`out/trace.json`），因此「该查没查」「查了没交付」「交付了没用上」「注入了什么、是否带过期标记」都在同一条记录里可读。24 回合（`CATALOG_VERSION` 5，`magpie/auto/deepseek-v4.1-flash` + 本地解析器模型）实测：热点层注入 8 次（4 个热场景各 2 次），交付 15 次（8 热 + 8 冷中的 7 次），**Rescue Rate 0.875（8 条冷回合中 7 条最终命中）**，失败归因 trigger 0 / retrieval 1 / usage 0，总成本 $0.024278、每命中 $0.001619、p50 16.1 s、p95 39.2 s；唯一的 retrieval miss 是一次冷回合里 `memory_search` 与 `memory_resolve` 都调用了却什么都没交付，同一问句在别的回合能命中，属于解析与改写的波动而不是固定缺口。同一批数据也暴露了本目录里最不稳定的指标：over-trigger 在两次重复下先后测到 0.125、0.250、0.500，因为「hello world」「重命名标题」「ENOENT」这类无关问题有时也会触发检索，所以它只能当作「要单独看的场景清单」，`--only <id> --repeats N` 才是量它的正确方式。裁判一致性同样有批次波动：同一批 16 条真实回答，两次运行分别是 0.938 与 0.867（差 0.07，约一条判定），与人工集上的 0.833 一起说明它只适合看趋势。
+
 | 1 固定 Dataset 重复运行 | 已满足 | 52 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
 | 2 区分四类 Miss | 已满足 | Trigger Miss 由 `trigger.mjs` 的 `failures.trigger_miss` 给出，Retrieval Miss 由同处的 `retrieval_miss`（调了工具但没有任何 `memory://` 交付）与离线 `miss` 给出，Usage Miss 由 `usage.mjs` / `trigger.mjs` 的 `usage_miss` 给出，Resolution Miss 由 `resolution.mjs` 的 7 条解析器用例按分支固定（裁判脚本化，不依赖模型状态） |
 | 3 Recall@1/3/5 | 已满足 | 当前均 0.943，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
 | 4 Candidate / Injection FP 分层 | 已满足 | 两个比率共用分母，另有 `budget_rescued` 计数据 |
 | 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
 | 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |
-| 7 一次完整查询的 Trace | 部分 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联（触发 → 注入 → 使用）缺 |
+| 7 一次完整查询的 Trace | 已满足 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联由 `eval/memory/trace.mjs` 完成：它对每个真实回合重建热点层计划（`replay.mjs`）、合并 Agent 行为与裁判判定，输出一条覆盖 trigger → hotspot → delivery → usage → cost 的 JSON Trace（`out/trace.json`） |
 | 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`；`compare.mjs --baseline=<git-ref>` 直接用 `git show <ref>:eval/memory/baseline.json` 取旧版本的基线，不必再切 worktree（实测 `--baseline=bd4a4ae` 输出 `added in candidate: 34`、无回归） |
-| 9 P50/P95 与有效召回成本 | 部分 | 离线 harness 不调用模型、不做索引，计时与 token 都无意义；真实链路上的 `trigger.mjs` 报 P50/P95、总成本，并新增 `cost_per_hit_usd`（总成本 ÷ 命中回合数），`usage.mjs` 报每次判定成本。仍需的「一次有效召回的完整成本」要等 shadow/生产埋点 |
+| 9 P50/P95 与有效召回成本 | 已满足 | 离线 harness 不调用模型、不做索引，因此计时与 token 挂在真实链路上：`trigger.mjs` 报 P50/P95 与总成本并新增 `cost_per_hit_usd`，`usage.mjs` 报每次判定成本。24 回合实测：总 $0.024278、$0.001619 / 命中、p50 16.1 s、p95 39.2 s。生产路径上的完整成本仍要等 shadow 埋点 |
 | 10 Shadow 不改变生产行为 | 已满足 | 无 shadow 组件接入生产；harness 只读生产代码，写独立 store |
 | 11 评估失败不影响记忆读写 | 已满足 | 工具未接入生产路径，失败只体现为自身退出码 |
 | 12 结果可追溯 | 已满足 | 离线报告写 `commit` / `catalog_version` / `dataset_sha256`，真实链路报告再写 `model` 与 `resolver_model`，`usage.mjs` 写裁判模型与成本 |

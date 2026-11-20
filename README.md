@@ -56,7 +56,8 @@ node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/r
 `resolution.mjs` pins the resolver's own branches with a scripted judge (seven
 cases, no network). Model-backed evals in the same directory: `usage.mjs` (was
 the injected memory used?), `rescue.mjs` (does query expansion recover a lexical
-miss?), and
+miss?), `trace.mjs` (one joined record per turn: trigger, hotspot, delivery,
+usage, cost), and
 `trigger.mjs` (does the agent look things up at all?).
 
 ## Contracts

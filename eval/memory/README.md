@@ -495,6 +495,54 @@ through non-adjacent bigram fragments — the fragment `旧版格式` against
 `旧版配置格式` — matches nothing, which is the overlap rule, not an archive
 policy.
 
+## One trace per turn
+
+`trace.mjs` joins the three real-turn artifacts into one record per agent turn:
+what the hotspot layer would have offered (`replay.mjs` reconstructs it), what
+the agent did (`out/trigger.json`), and what the judge said about the answer
+(`out/usage.json`, optional). The result is the chain the proposal describes —
+trigger, hotspot, delivery, usage, cost — as a single JSON per turn, plus the
+rescue rate measured on real turns rather than on a fixture.
+
+```sh
+node --import ../pi/hook.mjs ./trigger.mjs --repeats 2   # 24 turns
+node --import ../pi/hook.mjs ./usage-from-trigger.mjs
+node --import ../pi/hook.mjs ./usage.mjs --cases out/usage-from-trigger.jsonl
+node --import ../pi/hook.mjs ./trace.mjs
+```
+
+A 24-turn run on `CATALOG_VERSION` 5, `magpie/auto/deepseek-v4.1-flash` with the
+resolver model wired:
+
+| reading | value |
+| --- | --- |
+| turns / recall turns | 24 / 16 |
+| hotspot injected | 8 (the four warm scenarios, twice) |
+| delivery reached the model | 15 (8 warm + 7 of 8 cold) |
+| rescue rate over the 8 cold turns | 0.875 |
+| attributed failures | trigger 0, retrieval 1, usage 0 |
+| should-recall / active retrieval | 0.938 / 0.813 |
+| usage-miss rate | 0.063 |
+| over-trigger rate | 0.500 |
+| cost | $0.024278 total, $0.001619 per hit |
+| p50 / p95 | 16.1 s / 39.2 s |
+
+Two readings of that table matter. The rescue rate answers the proposal's
+question about `Archived`/`Obelisk` rescue on the real pipeline: the hotspot layer
+offered nothing on eight turns and seven of them still ended with the fact in the
+answer, because the agent looked it up. And the one retrieval miss is a cold turn
+where both `memory_search` and `memory_resolve` were called and nothing ever
+reached the model — with the same question succeeding on other runs, so it is
+resolution variance rather than a permanent gap (the image-tag coverage gap that
+used to live here was fixed by giving that memory the words users say; see
+"A coverage gap the trigger harness found").
+
+The over-trigger rate is the least stable number in this directory: it has been
+0.125, 0.250 and 0.500 across runs at two repeats per scenario, driven by
+unrelated questions ("hello world", an ENOENT error) that the agent sometimes
+searches memory for anyway. Treat it as a list of scenarios to look at, not as a
+rate; `--only <id> --repeats N` is how to measure one scenario properly.
+
 ## Compare two runs
 
 ```sh
