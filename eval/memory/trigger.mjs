@@ -54,7 +54,18 @@ const MEMORY_TOOLS = new Set(["memory_search", "memory_resolve", "memory_read", 
  * cwd holds nothing that could answer it either way.
  */
 const SCENARIOS = [
-	{ id: "recall-deploy-port", expect: "query", fact: "18080", question: "这个项目的部署脚本默认端口是多少？之前定过吗" },
+	// The catalogue plants two contradicting 端口约定 memories, and both of them join
+	// this question's hotspot plan, so its block cannot settle the port on its own:
+	// the same refusal shape the conflict scenario exists to study. It is graded by
+	// the judge for the same reason — a refusal that quotes 18080 beside 8080 is not
+	// a hit, and a substring check would count it as one.
+	{
+		id: "recall-deploy-port",
+		expect: "query",
+		fact: "18080",
+		decided_fact: "18080",
+		question: "这个项目的部署脚本默认端口是多少？之前定过吗",
+	},
 	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
 	{ id: "recall-cache-invalidation", expect: "query", fact: "删缓存", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
 	// `misused` names the value the memory itself carries: `mem-stale-ttl` holds
@@ -115,9 +126,12 @@ function argument(name) {
 
 const scratch = mkdtempSync(join(tmpdir(), "vestigio-trigger-"));
 const storePath = join(scratch, "store.sqlite");
-const cwd = join(scratch, "cwd");
-mkdirSync(cwd, { recursive: true });
-writeFileSync(join(cwd, "README.md"), "# trigger eval\n\nNothing here answers the questions.\n");
+// Every turn gets its own working directory. The scenarios share one store (that
+// is the project's memory), but they must not share a filesystem: the hello-world
+// scenario writes a file, and a later turn that sees it answers differently — the
+// first repeat run showed exactly that, with a turn quoting `hello.js` that it
+// never created.
+const CWD_FIXTURE = "# trigger eval\n\nNothing here answers the questions.\n";
 const store = openStore({ path: storePath });
 seedStore(store);
 // The two 端口约定 memories contradict each other and the store says nothing
@@ -158,8 +172,10 @@ function runTurn(question) {
 	];
 	if (DRY) return { args, env: {}, tools: [], text: "", cost: 0, wall_ms: 0 };
 	const started = Date.now();
+	const turnCwd = mkdtempSync(join(tmpdir(), "vestigio-trigger-turn-"));
+	writeFileSync(join(turnCwd, "README.md"), CWD_FIXTURE);
 	const stdout = execFileSync("pi", args, {
-		cwd,
+		cwd: turnCwd,
 		encoding: "utf8",
 		maxBuffer: 32 * 1024 * 1024,
 		env: {
@@ -230,7 +246,8 @@ function runTurn(question) {
 
 if (DRY) {
 	const turn = runTurn("dry");
-	console.log(`cd ${cwd} && pi ${turn.args.map((part) => (part.includes(" ") ? JSON.stringify(part) : part)).join(" ")}`);
+	// Each turn makes its own directory, so the dry run just names the shape of it.
+	console.log(`cd ${join(scratch, "cwd")} && pi ${turn.args.map((part) => (part.includes(" ") ? JSON.stringify(part) : part)).join(" ")}`);
 	process.exit(0);
 }
 
@@ -310,24 +327,32 @@ for (const scenario of SCENARIOS) {
 				? null
 				: !compact(turn.text).includes(compact(scenario.fact)) &&
 					compact(turn.text).includes(compact(scenario.misused));
+		// `surfaced` is authoritative about delivery, so it decides "miss" before
+		// the refusal wording does: a turn that searched and was handed nothing is
+		// a retrieval miss even when its answer talks about the topic instead of
+		// saying it found nothing (the first 3-repeat run had three such rows
+		// scored `usage_miss`). A warm turn that never called a tool is not a
+		// trigger miss either, because the block reached it without a call.
 		const status =
 			scenario.expect === "query"
-				? !called
+				? !called && turn.surfaced !== true
 					? "trigger_miss"
-					: scenario.decided_fact !== undefined
-						? used === true
-							? "hit"
-							: "refused"
-						: used === false
-							? staleMisuse === true
-								? "stale_misuse"
-								: REFUSAL.test(turn.text ?? "")
-									? "miss"
-									: "usage_miss"
-							: "hit"
-				: called
-					? "over_trigger"
-					: "clean";
+					: turn.surfaced !== true
+						? "miss"
+						: scenario.decided_fact !== undefined
+							? used === true
+								? "hit"
+								: "refused"
+							: used === false
+								? staleMisuse === true
+									? "stale_misuse"
+									: REFUSAL.test(turn.text ?? "")
+										? "miss"
+										: "usage_miss"
+								: "hit"
+					: called
+						? "over_trigger"
+						: "clean";
 		// Attribution for the proposal's four-way split. A turn that reached a
 		// memory and still did not carry the fact is a usage miss; one that
 		// called a tool and was shown nothing is a retrieval miss.

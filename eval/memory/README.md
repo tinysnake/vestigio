@@ -423,6 +423,79 @@ configured unconditionally rather than probed, because a reachability probe turn
 a busy gateway into a silently degraded run. `--no-resolve-model` keeps the
 zero-LLM path measurable, and both runs report which mode they used.
 
+Both warm recall scenarios that mention a port are judge-graded (`decided_fact`),
+not substring-checked: the catalogue deliberately holds two contradicting
+端口约定 memories and they join the deploy-port question's hotspot plan too, so an
+answer that lists 18080 beside 8080 and declines is a refusal, not a hit. The
+first full run after that change is recorded below.
+
+### How repeatable is a run?
+
+Every number above comes from asking a real model, so the honest question about
+the harness itself is how often a scenario ends differently on a second run.
+`stability.mjs` answers it from a report that used `--repeats` — it groups the
+rows by scenario id (the report has no repeat field, so the grouping is by id)
+and prints the outcome spread plus a per-repeat headline:
+
+```sh
+node --import ../pi/hook.mjs ./trigger.mjs --repeats 3 --out out/trigger-repeat.json
+node ./stability.mjs --report out/trigger-repeat.json
+```
+
+Measured on a 3-repeat, 42-turn run (`eval/memory/out/trigger-repeat.json`,
+`$0.061022`, p50 16.4 s / p95 41.9 s solo):
+
+| scenario | expect | outcomes over 3 repeats | stable |
+| --- | --- | --- | --- |
+| `cold-conn-limit` | query | hit×3 | yes |
+| `cold-image-tag` | query | miss×3 | yes |
+| `cold-log-retention` | query | hit×2 miss×1 | NO |
+| `cold-secret-rotation` | query | hit×3 | yes |
+| `conflict-deploy-port` | query | refused×2 hit×1 | NO |
+| `quiet-docker-nginx` | no_query | over_trigger×3 | yes |
+| `quiet-enoent` | no_query | over_trigger×2 clean×1 | NO |
+| `quiet-explain-index` | no_query | clean×3 | yes |
+| `quiet-hello-world` | no_query | clean×3 | yes |
+| `quiet-readme-heading` | no_query | clean×2 over_trigger×1 | NO |
+| `recall-cache-invalidation` | query | hit×3 | yes |
+| `recall-deploy-port` | query | refused×2 hit×1 | NO |
+| `recall-migration-rollback` | query | hit×3 | yes |
+| `recall-stale-timeout` | query | hit×3 | yes |
+
+| repeat | should-recall | active | over-trigger | refused |
+| --- | --- | --- | --- | --- |
+| 1 | 0.667 | 1.000 | 0.200 | 2 |
+| 2 | 0.778 | 0.889 | 0.200 | 0 |
+| 3 | 0.667 | 1.000 | 0.600 | 2 |
+
+`stable: 9/14; flipped: cold-log-retention, conflict-deploy-port,
+quiet-enoent, quiet-readme-heading, recall-deploy-port.`
+
+Three things this run settled:
+
+1. **The recall side is stable where it is lexical, unstable where it is a
+   judgment.** The four cold scenarios and two of the warm ones hit three times in
+   a row; `cold-image-tag` misses three times in a row. The flips are exactly the
+   turns whose outcome depends on a model choice: `conflict-deploy-port` and
+   `recall-deploy-port` (the same contradiction, sometimes resolved), and
+   `cold-log-retention` (one of three turns searched with a phrase that matches
+   and two did not).
+2. **Over-trigger is noise, on a floor.** Three of the five quiet scenarios
+   flipped, always between `clean` and one `over_trigger` search, but
+   `quiet-docker-nginx` searched every single time — it is the false positive the
+   hotspot layer injects, so it is deterministic. So a quiet regression is "this
+   scenario searched every repeat", and a single search in one repeat is not
+   evidence of anything; the rate only makes sense as a range (0.200–0.600 here).
+3. **The first attempt at this measurement was invalid, and how.** That run gave
+   `cold-image-tag` `usage_miss×3` while attribution said `retrieval_miss`, and a
+   `conflict-deploy-port` answer quoted a `hello.js` file it never created — the
+   turns all ran in one scratch `cwd`, so `quiet-hello-world` planted a file that
+   later turns saw. `trigger.mjs` now gives every turn its own directory (only the
+   store is shared, because that is the project's memory), and `surfaced` decides
+   `miss` before the refusal wording does. Both changes are why `active` moved
+   from 0.704 to 0.963 and `cold-image-tag` reads `miss`: the earlier numbers
+   measured the harness, not the product.
+
 ### What the resolver is worth
 
 Twelve turns per run, same scenarios and same empty-result hint in the extension:
@@ -717,23 +790,27 @@ counted separately in `failures` and in `decision_rate`, and the latest full run
 reads
 
 ```
-resolver model: auto/deepseek-v4.1-flash 14 turns: should-recall 0.889 (active 0.667), usage-miss 0, stale-misuse 0, over-trigger 0.4, cost $0.013583
-failures: trigger 0 retrieval 0 usage 0 refused 1
+resolver model: auto/deepseek-v4.1-flash 14 turns: should-recall 0.667 (active 0.889), usage-miss 0, stale-misuse 0, over-trigger 0.4, cost $0.019033
+failures: trigger 0 retrieval 1 usage 0 refused 2
 decision: 0.0% committed to one value
-cost per hit: $0.001698  (14 turns, $0.013583 total)
-p50 14972ms p95 181127ms
+cost per hit: $0.003172  (14 turns, $0.019033 total)
+p50 16330ms p95 277841ms
 14 turns (14 sessions, sample 1): 6 injected
   after injection: tools 100.0%, body read 100.0%
   nothing injected: unprompted search 62.5%; reasons {"no_match":8}
-  gather calls 16 (search 10, resolve 6 / degraded 0), zero-hit 50.0%
-  gather turns that got nothing: 14.3% of 7; stale delivered 1 (read 100.0%)
+  gather calls 21 (search 13, resolve 8 / degraded 0), zero-hit 57.1%
+  gather turns that got nothing: 20.0% of 10; stale delivered 1 (read 100.0%)
+  injected budget: p50 133 tokens, p95 191, total 848 over 6 injected turns
   injected most: mem-deploy-port×2, mem-migration×1, mem-cache×1, mem-stale-ttl×1, mem-docker-image×1
-  input handler p50 5.94ms p95 6.32ms
+  input handler p50 5.76ms p95 6.17ms
 ```
 
-(`eval/memory/out/trigger-current2.json`, `/tmp/shadow-current2.jsonl`; the run
-shared the gateway, so p95 181 s is an upper bound, not a latency claim.) The
-offline surrogate for a real-memory absence is the last shadow line: one of seven
+(`eval/memory/out/trigger-postfix.json`, `eval/memory/out/shadow-postfix.json`,
+`/tmp/shadow-postfix.jsonl`; the run shared the gateway, so p95 278 s is an upper
+bound, not a latency claim. The 3-repeat run that this section's stability tables
+come from reports `should-recall 0.704 (active 0.963)`, `refused 4`, p50 16.4 s and
+p95 41.9 s solo — use those for latency, not this one.) The
+offline surrogate for a real-memory absence is the last shadow line: two of ten
 gather turns searched and got nothing, which is the closest a label-free log gets
 to a Retrieval Miss.
 
@@ -914,6 +991,17 @@ it shows a cost that counting a leak cannot: because the block was delivered, th
 agent spent an extra `memory_read` pulling the irrelevant body into context. So a
 false positive can be priced as one extra read plus its tokens, independently of
 whether the judge thinks the answer got worse.
+
+**What a delivery costs.** The injected input record also carries `block_bytes`
+and `estimated_tokens`, so shadow reports the injection's own price:
+`injected_tokens_p50` / `p95` / `injected_tokens_total` and `injected_bytes_p50`,
+and prints `injected budget: p50 N tokens, p95 N, total N over N injected turns`.
+Measured on the log of the 3-repeat trigger run (43 input records, 19 deliveries):
+`p50 134 tokens, p95 201, total 2624`. That is the half of "what does one useful
+recall cost" a log can answer on its own — the token side of the delivery, at a
+steady one-to-two-hundred tokens for the three-memory budget. Whether that
+delivery was *useful* is the other half, and it needs the answer text
+(`trigger.mjs`) or a label (`run.mjs`).
 
 Limits: `shadow.mjs` has no labels, so it reports no recall — that stays with
 `run.mjs` and `trace.mjs`; the three turns above validate the pipeline, not a

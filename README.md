@@ -59,8 +59,9 @@ the injected memory used?), `rescue.mjs` (does query expansion recover a lexical
 miss?), `trace.mjs` (one joined record per turn: trigger, hotspot, delivery,
 usage, cost), `trigger.mjs` (does the agent look things up at all, and does it use
 what it was given?), `strategies.mjs` (what would a gather fallback buy?), and
-`shadow.mjs` (a real session's decision log, joined into one trace per turn —
-ids and hashes only, no query text).
+`shadow.mjs` (a real session's decision log, joined into one trace per turn — ids
+and hashes only, no query text), `stability.mjs` (how often a scenario flips
+between repeats, read from an existing trigger report).
 
 ## Contracts
 

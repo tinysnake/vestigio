@@ -82,6 +82,12 @@ function buildTurns(records) {
 				stale_ids: record.stale_ids ?? [],
 				query_hash: record.query_hash ?? null,
 				query_chars: record.query_chars ?? null,
+				// What the injection cost this turn: the block the extension built,
+				// as bytes and as the extension's own token estimate. A turn that
+				// injected nothing has null here rather than 0, so an average over
+				// the injected turns cannot be dragged down by quiet ones.
+				injected_tokens: record.estimated_tokens ?? null,
+				injected_bytes: record.block_bytes ?? null,
 				elapsed_ms: record.elapsed_ms ?? null,
 				tools: [],
 			};
@@ -139,6 +145,12 @@ const gatherEmpty = gathered.filter(
 	(turn) => turn.injected_ids.length === 0 && turn.tools.every((tool) => tool.memory_ids.length === 0),
 );
 const staleDelivered = injected.filter((turn) => turn.stale_ids.length > 0);
+const injectedTokens = injected
+	.map((turn) => turn.injected_tokens)
+	.filter((value) => typeof value === "number");
+const injectedBytes = injected
+	.map((turn) => turn.injected_bytes)
+	.filter((value) => typeof value === "number");
 const resolves = searches.filter((tool) => tool.kind === "tool_resolve");
 const zeroHit = searches.filter((tool) => tool.memory_ids.length === 0);
 
@@ -186,6 +198,13 @@ const summary = {
 	// needs the answer text, which only `trigger.mjs` has.
 	stale_delivered_turns: staleDelivered.length,
 	stale_read_after_delivery_rate: rate(staleDelivered.filter(readBody).length, staleDelivered.length),
+	// The cost side the proposal asks for and a log can answer without labels:
+	// how many tokens a delivery spends. The model turn's own latency is not in
+	// this file (the log sees the hook, not the answer).
+	injected_tokens_p50: percentile(injectedTokens, 50),
+	injected_tokens_p95: percentile(injectedTokens, 95),
+	injected_tokens_total: injectedTokens.reduce((total, value) => total + value, 0),
+	injected_bytes_p50: percentile(injectedBytes, 50),
 	gather_turns: gathered.length,
 	gather_empty_rate: rate(gatherEmpty.length, gathered.length),
 	search_statuses: statuses(searches.filter((tool) => tool.kind === "tool_search")),
@@ -242,6 +261,9 @@ console.log(
 );
 console.log(
 	`  gather turns that got nothing: ${percent(summary.gather_empty_rate)} of ${summary.gather_turns}; stale delivered ${summary.stale_delivered_turns} (read ${percent(summary.stale_read_after_delivery_rate)})`,
+);
+console.log(
+	`  injected budget: p50 ${summary.injected_tokens_p50 ?? "-"} tokens, p95 ${summary.injected_tokens_p95 ?? "-"}, total ${summary.injected_tokens_total} over ${injected.length} injected turns`,
 );
 if (topInjected.length > 0) {
 	console.log(`  injected most: ${topInjected.map((entry) => `${entry.memory_id}×${entry.count}`).join(", ")}`);
