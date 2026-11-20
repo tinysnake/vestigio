@@ -346,15 +346,21 @@ node --import ../pi/hook.mjs ./trigger.mjs --repeats 2
 
 Each turn is a real `pi -p` run with the extension loaded, an isolated store
 seeded from `catalog.mjs`, and `--no-context-files --no-mcp --no-session` so the
-only project knowledge available is memory. Twelve scenarios:
+only project knowledge available is memory. Fourteen scenarios:
 
 - four **warm** — deploy port, migration rollback, cache invalidation, a timeout
   that changed. The hotspot layer injects a block, so answering means reading it.
 - four **cold** — a connection limit, log retention, an image tag, secret
   rotation, all phrased so that `planInjection` matches nothing. Only a
   deliberate search can answer them.
-- four **quiet** — rename a heading, explain an index, hello world, an ENOENT
-  error. Any memory call here is noise.
+- five **quiet** — rename a heading, explain an index, hello world, an ENOENT
+  error, and installing nginx in a container. Any memory call here is noise.
+- one **conflict** — the deploy port, where the injection plan hands over
+  `mem-deploy-port` next to two 端口约定 memories that disagree.
+
+Every scenario may also declare `contaminated_by: <memory-id>`, which grades what
+an unnecessary delivery did to the answer; see "What a wrong or irrelevant
+delivery costs the answer".
 
 A turn counts as a hit when it calls `memory_search`, `memory_resolve`,
 `memory_read` or `memory_mark_stale`.
@@ -604,6 +610,25 @@ The first two rows of the hand-confirmed table are also worth reading as a
 precision statement: `and` finds 21 of 54, so a third of this dataset cannot be
 answered by the lexical layer at all — that is the denominator the resolver is
 filling, and why its expansion was measured separately rather than assumed.
+
+### What a wrong or irrelevant delivery costs the answer
+
+Counting a leak says retrieval delivered something it should not have. It does not say whether the answer got worse, and that is the half of the gather-step trade the section above could not supply. `trigger.mjs` measures it end to end: a scenario may name `contaminated_by: <memory-id>`, and after the turn the judge is shown the question, the answer and the memory that was in context, and asked for `{"carried": bool, "harmed": "yes"|"no"|"unclear", "why": ...}`. `carried` means the answer reused the memory's content; `harmed` means that reuse made the answer incorrect or misleading, while merely adding an irrelevant line is `unclear`. The judge never sees a label, one call per graded turn is spent, and `--no-judge` turns it off.
+
+| scenario | shape | turns | carried | harmed=yes | unclear | cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| `quiet-docker-nginx` (容器里怎么装 nginx？) | near-miss, unrelated subject | 8 | 3 | 0 | 2 | $0.0089 |
+| `conflict-deploy-port` (部署脚本默认端口是多少？) | conflicting values, same subject | 3 | 3 | 0 | 0 | $0.0056 |
+
+`quiet-docker-nginx` is the one false positive the hotspot layer produces on the labelled set (`inject-neg-docker-image`), because the question starts with 容器, a whole keyword of `mem-docker-image`, so the memory is injected before the agent speaks. `conflict-deploy-port` injects `mem-deploy-port` together with both 端口约定 memories, which disagree about 8080 against 18080.
+
+Readings:
+
+1. A near-miss delivery does not turn into a wrong answer on its own: the model ignored it in 5 of 8 turns, and where the judge saw the content reused it was a closing paragraph about image tags, not a corrupted answer. So the 1-in-19 leak rate above is a noise rate, not a correctness rate.
+2. The expensive shape is a same-subject conflict, but the cost is a refusal rather than a wrong value: all 3 turns answered that the port could not be confirmed, because the two records are parallel and carry nothing (time, commit, revision) that would let one supersede the other. `mem-deploy-port` was in the same context. This is the 多条记忆冲突 → Conflict Resolution row of the diagnosis matrix, and it is a presentation/证据缺口 question, not a matching one.
+3. The `fact` check is a substring test, so all 3 conflict turns count as `hit` with `used=true` (18080 appears in the answer). Only the judge shows that the conclusion was "unknown". Read the two together; a `hit` alone does not mean the question was answered.
+
+Both shapes are method plus baseline: 8 and 3 turns cannot set a rate. The missing measurement is the same conflict shape against a memory that states the value itself, which would separate "the system cannot choose" from "the value was never recorded".
 
 ### Archived memories
 

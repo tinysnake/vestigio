@@ -20,6 +20,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore } from "@vestigio/core/storage";
 import { PROJECT, seedStore } from "./catalog.mjs";
+import { ask } from "./judge.mjs";
+import { navEntry } from "./replay.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const EXTENSION = join(ROOT, "packages/pi-extension/src/extension.ts");
@@ -27,6 +29,9 @@ const MODEL = argument("--model") ?? "magpie/auto/deepseek-v4.1-flash";
 const REPEATS = Number(argument("--repeats") ?? "2");
 const ONLY = argument("--only");
 const DRY = process.argv.includes("--dry");
+// The contamination judge costs one model call per graded turn, so it can be
+// turned off the same way the resolver model can.
+const JUDGE_HARM = !process.argv.includes("--no-judge");
 /**
  * The resolver needs a model to rewrite a question into index terms. Pointed at
  * the local gateway by default; `--no-resolve-model` keeps the degraded
@@ -59,6 +64,26 @@ const SCENARIOS = [
 	{ id: "quiet-explain-index", expect: "no_query", question: "用三句话解释一下数据库索引为什么能加速查询" },
 	{ id: "quiet-hello-world", expect: "no_query", question: "写一个最小的 node hello world 脚本，打印一行字" },
 	{ id: "quiet-enoent", expect: "no_query", question: "报错 ENOENT: no such file or directory 一般是哪里写错了？" },
+	// This one is a false positive the hotspot layer produces today: the query
+	// starts with 容器, which is a whole keyword of `mem-docker-image`, so the
+	// memory is injected before the agent speaks. It is the only shape in which
+	// the *harm* of a false positive can be observed end to end.
+	{
+		id: "quiet-docker-nginx",
+		expect: "no_query",
+		question: "容器里怎么装 nginx？",
+		contaminated_by: "mem-docker-image",
+	},
+	// The dangerous class: the plan injects the deploy-port memory together with
+	// two same-subject 端口约定 memories that disagree with it, so the answer can
+	// adopt a superseded value while the correct one is sitting right there.
+	{
+		id: "conflict-deploy-port",
+		expect: "query",
+		fact: "18080",
+		question: "部署脚本默认端口是多少？",
+		contaminated_by: "mem-port-rule-a",
+	},
 ];
 
 function argument(name) {
@@ -252,6 +277,50 @@ for (const scenario of SCENARIOS) {
 const shouldRecall = rows.filter((row) => row.expect === "query");
 const shouldStayQuiet = rows.filter((row) => row.expect === "no_query");
 const rate = (count, total) => (total === 0 ? null : count / total);
+
+// Harm of a false positive, end to end. Counting a leak says retrieval delivered
+// something it should not have; it does not say whether that changed the answer.
+// Here the memory is already in context, so the answer either adopts its content
+// or does not, and a judge can be asked about carry and harm without being told
+// which answer is "right".
+if (JUDGE_HARM && !DRY) {
+	for (const row of rows) {
+		const scenario = SCENARIOS.find((item) => item.id === row.id);
+		if (scenario?.contaminated_by === undefined) continue;
+		if (row.surfaced !== true || row.answer === "") continue;
+		const memory = navEntry(scenario.contaminated_by);
+		const text = [
+			"一个编码 Agent 在回答问题时，上下文里被自动注入了下面这条项目记忆（不是它自己搜的）。请判断这条记忆有没有影响回答。",
+			"",
+			`用户问题：${row.question}`,
+			`Agent 回答：${row.answer}`,
+			`被注入的记忆（${memory.memory_id}）：摘要「${memory.nav_text}」`,
+			memory.body_text === "" ? "" : `正文「${memory.body_text}」`,
+			"",
+			'只输出 JSON：{"carried": true/false, "harmed": "yes"|"no"|"unclear", "why": "不超过 30 字"}',
+			"- carried：回答是否重述或采纳了这条记忆的内容，哪怕只是顺著它的说法。",
+			"- harmed：若采纳了，是否让回答对当前问题变得不正确或误导；只是多提一句无关信息算 unclear，不算 yes。",
+		].filter((line) => line !== "").join("\n");
+		try {
+			const judged = ask({ text });
+			const parsed = parseJudgement(judged.reply);
+			row.contamination = {
+				memory_id: memory.memory_id,
+				carried: parsed?.carried === true,
+				harmed: parsed?.harmed ?? null,
+				why: typeof parsed?.why === "string" ? parsed.why.slice(0, 80) : "",
+				cost_usd: judged.cost_usd,
+			};
+		} catch (caught) {
+			row.contamination = {
+				memory_id: memory.memory_id,
+				error: caught instanceof Error ? caught.message : String(caught),
+			};
+		}
+	}
+}
+
+const graded = rows.filter((row) => row.contamination !== undefined);
 const report = {
 	schema_version: 1,
 	generated_at: new Date().toISOString(),
@@ -294,6 +363,18 @@ const report = {
 			retrieval_miss: rows.filter((row) => row.failure === "retrieval_miss").length,
 			usage_miss: rows.filter((row) => row.failure === "usage_miss").length,
 		},
+		// Contamination is the false-positive counterpart of usage: a quiet turn
+		// that was handed a memory anyway, graded on whether the answer adopted it
+		// and whether that adoption hurt.
+		contamination: {
+			graded: graded.length,
+			carried: graded.filter((row) => row.contamination.carried === true).length,
+			harmed: graded.filter((row) => row.contamination.harmed === "yes").length,
+		},
+		contamination_rate: rate(
+			graded.filter((row) => row.contamination.carried === true).length,
+			graded.length,
+		),
 		cost_usd: Number(rows.reduce((sum, row) => sum + row.cost_usd, 0).toFixed(6)),
 		p50_ms: percentile(rows.map((row) => row.wall_ms), 50),
 		p95_ms: percentile(rows.map((row) => row.wall_ms), 95),
@@ -311,6 +392,11 @@ console.log(
 console.log(
 	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,
 );
+for (const row of graded) {
+	console.log(
+		`contamination ${row.id}: carried=${row.contamination.carried} harmed=${row.contamination.harmed} (${row.contamination.memory_id}) ${row.contamination.why ?? row.contamination.error ?? ""}`,
+	);
+}
 console.log(
 	`cost per hit: ${summary.cost_per_hit_usd === null ? "-" : `$${summary.cost_per_hit_usd.toFixed(6)}`}  (${summary.turns} turns, $${Number(summary.cost_usd).toFixed(6)} total)`,
 );
@@ -320,6 +406,19 @@ console.log(`report ${outPath}`);
 /** Space-insensitive comparison, so 15 分钟 and 15分钟 both match. */
 function compact(value) {
 	return value.replace(/\s+/g, "").toLowerCase();
+}
+
+/** The judge's JSON verdict, tolerating fences and prose around it. */
+function parseJudgement(reply) {
+	if (typeof reply !== "string") return null;
+	const start = reply.indexOf("{");
+	const end = reply.lastIndexOf("}");
+	if (start === -1 || end <= start) return null;
+	try {
+		return JSON.parse(reply.slice(start, end + 1));
+	} catch {
+		return null;
+	}
 }
 
 function percentile(values, quantile) {
