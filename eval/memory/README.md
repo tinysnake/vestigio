@@ -112,7 +112,7 @@ the activity sequence of that moment.
 
 ## Dataset
 
-`cases.jsonl` has one case per line, 99 of them at `CATALOG_VERSION` 6. The
+`cases.jsonl` has one case per line, 99 of them at `CATALOG_VERSION` 7. The
 sixteen `search-near-miss-*` rows were promoted from `candidates.batch-3.jsonl`
 after a hand check: each shares vocabulary with a memory and asks about
 something else, and each currently comes back `not_found`, so they exist to give
@@ -318,6 +318,40 @@ unchanged because no offline case asked that way. The general lesson is the one
 written with decide whether it can ever be found, and that is a formation
 question rather than a matcher one.
 
+### A fixture that made its own question unanswerable
+
+`recall-deploy-port` used to be graded by substring: `18080` anywhere in the
+answer counted as a hit. Judge-based grading (`decided_fact`) showed what those
+hits were made of — in three runs out of three the answer said 「这条记忆没有记录
+默认端口的具体数值」. Two causes, both in the fixture:
+
+- `mem-deploy-port` stated a change rather than a value: 「把服务端口从 8080 改成
+  18080 时，部署脚本里的默认值也要一起改」. An agent that reads that as an
+  instruction about editing a script is right to refuse to quote a default.
+- The two 端口约定 memories exist for the conflict scenario, but they also join
+  this question's plan and disagree with `mem-deploy-port`, so the delivered
+  block could not settle the port even once the memory said so.
+
+Fixes, in the order they matter: the sentence now states the value (「默认端口是
+18080；此前默认 8080」, `CATALOG_VERSION` 7); every scenario, and every repeat,
+is seeded into its own store, so a turn inherits no hotspot recency, no repair
+effect and no other scenario's fixtures from an earlier turn; and a scenario may
+declare `omit: ["<memory-id>", …]` to drop fixtures that belong elsewhere — the
+warm question omits the two rule memories, the conflict question omits
+`mem-deploy-port`.
+
+The conflict question changed too. Two current rules with nothing saying which
+one superseded make 「无法确定」 the correct answer, so it asks about the 端口约定
+itself and declares `refusal_ok: true`, which scores the judge's "no single
+value" verdict as a hit. `--stale-port-rule` records the supersession the
+catalogue leaves out, which switches that off: the same question then has one
+right value and refusing is a miss again.
+
+Measured (`--only recall-deploy-port,conflict-deploy-port --repeats 3`): six
+hits, $0.001349 per hit. The warm turn committed to 18080 in 3 of 3
+(「默认端口 18080，8080 是历史值」); the conflict turn refused in 3 of 3
+(「两条记忆冲突，当前有效端口未知」) and was accepted each time.
+
 ### Judging real answers
 
 Hand-written answers cannot show whether the judge agrees with reality, so
@@ -412,9 +446,9 @@ the project's own history. `trigger.mjs` measures it against the real provider.
 node --import ../pi/hook.mjs ./trigger.mjs --repeats 2
 ```
 
-Each turn is a real `pi -p` run with the extension loaded, an isolated store
-seeded from `catalog.mjs`, and `--no-context-files --no-mcp --no-session` so the
-only project knowledge available is memory. Fourteen scenarios:
+Each turn is a real `pi -p` run with the extension loaded, its own store seeded
+from `catalog.mjs`, and `--no-context-files --no-mcp --no-session` so the only
+project knowledge available is memory. Fourteen scenarios:
 
 - four **warm** — deploy port, migration rollback, cache invalidation, a timeout
   that changed. The hotspot layer injects a block, so answering means reading it.
@@ -426,13 +460,15 @@ only project knowledge available is memory. Fourteen scenarios:
   deliberate search can answer them.
 - five **quiet** — rename a heading, explain an index, hello world, an ENOENT
   error, and installing nginx in a container. Any memory call here is noise.
-- one **conflict** — the deploy port, where the injection plan hands over
-  `mem-deploy-port` next to two 端口约定 memories that disagree.
+- one **conflict** — the 端口约定, where the injection plan hands over two
+  memories that disagree and nothing in the store says which one superseded.
 
 Every scenario may also declare `contaminated_by: <memory-id>`, which grades what
 an unnecessary delivery did to the answer, `decided_fact: <value>`, which asks
 the judge whether the answer committed to one value instead of listing
-candidates, or `stale_before: true`, which re-records the timeout change just
+candidates, `refusal_ok: true`, which accepts 「无法确定」 as the right answer
+where the store cannot settle the question, `omit: [...]`, which keeps a
+scenario to its own fixtures, or `stale_before: true`, which re-records the timeout change just
 before that turn so a stale delivery stays observable in a multi-turn run;
 `--stale-port-rule` additionally records the supersession the two 端口约定
 memories are missing. See "What a wrong or irrelevant delivery costs the

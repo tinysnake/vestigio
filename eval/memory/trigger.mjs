@@ -33,6 +33,12 @@ const REPEATS = Number(argument("--repeats") ?? "2");
 const ONLY = argument("--only");
 const ONLY_IDS = ONLY === null ? null : new Set(ONLY.split(",").map((id) => id.trim()));
 const DRY = process.argv.includes("--dry");
+/**
+ * Records that `mem-port-rule-b` superseded `mem-port-rule-a`. Without it the
+ * store genuinely cannot settle a conflicting 端口约定 question, so a refusal is
+ * the correct answer there and a guess is not.
+ */
+const STALE_PORT_RULE = process.argv.includes("--stale-port-rule");
 // Kept outside the scratch dir so a real turn's decision log can be read by
 // shadow.mjs after the run.
 const DECISION_LOG = argument("--decision-log");
@@ -54,16 +60,18 @@ const MEMORY_TOOLS = new Set(["memory_search", "memory_resolve", "memory_read", 
  * cwd holds nothing that could answer it either way.
  */
 const SCENARIOS = [
-	// The catalogue plants two contradicting 端口约定 memories, and both of them join
-	// this question's hotspot plan, so its block cannot settle the port on its own:
-	// the same refusal shape the conflict scenario exists to study. It is graded by
-	// the judge for the same reason — a refusal that quotes 18080 beside 8080 is not
-	// a hit, and a substring check would count it as one.
+	// The two 端口约定 memories belong to the conflict scenario, but they also join
+	// this question's hotspot plan and contradict `mem-deploy-port`, which made the
+	// warm question unanswerable by construction: it refused and flipped between
+	// repeats. `omit` keeps a scenario to its own fixtures, so the block settles the
+	// port. It is still graded by the judge, because a refusal that quotes 18080
+	// beside 8080 must not read as a hit.
 	{
 		id: "recall-deploy-port",
 		expect: "query",
 		fact: "18080",
 		decided_fact: "18080",
+		omit: ["mem-port-rule-a", "mem-port-rule-b"],
 		question: "这个项目的部署脚本默认端口是多少？之前定过吗",
 	},
 	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
@@ -112,12 +120,28 @@ const SCENARIOS = [
 		// 8080 and gives up. The judge settles which one happened, and only a
 		// committed value counts as a hit.
 		decided_fact: "18080",
-		question: "部署脚本默认端口是多少？",
+		// Only the two rule memories: the concrete `mem-deploy-port` value is the
+		// other scenario's fixture and would settle the question.
+		omit: ["mem-deploy-port"],
+		// Two current rules that disagree, with nothing saying which one is newer:
+		// 「无法确定」 is the correct answer there and a guess is not. With
+		// `--stale-port-rule` the store does carry the supersession, so the same
+		// question has one right value and refusing becomes a miss.
+		refusal_ok: true,
+		question: "这个项目的端口约定是多少？",
 		contaminated_by: "mem-port-rule-a",
 	},
 ];
 
 function argument(name) {
+	// `--only=id` is accepted as well as `--only id`: a silent miss here once ran
+	// the whole suite instead of two scenarios, because the filter read as absent.
+	const inline = process.argv.find((part) => part.startsWith(`${name}=`));
+	if (inline !== undefined) {
+		const value = inline.slice(name.length + 1);
+		if (value === "") throw new Error(`${name} needs a value`);
+		return value;
+	}
 	const index = process.argv.indexOf(name);
 	if (index === -1) return null;
 	if (process.argv[index + 1] === undefined) throw new Error(`${name} needs a value`);
@@ -125,21 +149,31 @@ function argument(name) {
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "vestigio-trigger-"));
-const storePath = join(scratch, "store.sqlite");
+let storePath = join(scratch, "store.sqlite");
 // Every turn gets its own working directory. The scenarios share one store (that
 // is the project's memory), but they must not share a filesystem: the hello-world
 // scenario writes a file, and a later turn that sees it answers differently — the
 // first repeat run showed exactly that, with a turn quoting `hello.js` that it
 // never created.
 const CWD_FIXTURE = "# trigger eval\n\nNothing here answers the questions.\n";
-const store = openStore({ path: storePath });
-seedStore(store);
-// The two 端口约定 memories contradict each other and the store says nothing
-// about which one superseded the other. `--stale-port-rule` records that
-// supersession with the marker the product already has, which is how the
-// conflict scenario tests whether presentation or data is the gap.
-if (process.argv.includes("--stale-port-rule")) seedPortConflictSuperseded(store);
-store.close();
+/**
+ * Seed one store for one turn. Every scenario, and every repeat, gets its own
+ * file: the catalogue's fixtures overlap (the two 端口约定 memories that the
+ * conflict scenario exists to study also join the warm deploy-port question's
+ * plan, which turns an answerable question into a refusal), and a shared store
+ * also let a turn inherit hotspot recency and repair effects from earlier turns
+ * — 5 of 14 scenarios flipped between repeats before this.
+ */
+function seedScenarioStore(path, skip) {
+	const handle = openStore({ path });
+	seedStore(handle, { skip });
+	// The two 端口约定 memories contradict each other and the store says nothing
+	// about which one superseded the other. `--stale-port-rule` records that
+	// supersession with the marker the product already has, which is how the
+	// conflict scenario tests whether presentation or data is the gap.
+	if (STALE_PORT_RULE) seedPortConflictSuperseded(handle);
+	handle.close();
+}
 
 /**
  * Open the run's store, hand it to `fn`, and close it again. The harness keeps
@@ -155,7 +189,7 @@ function withStore(fn) {
 	}
 }
 
-function runTurn(question) {
+function runTurn(question, storeFile) {
 	const args = [
 		"-p",
 		"--mode",
@@ -181,7 +215,7 @@ function runTurn(question) {
 		env: {
 			...process.env,
 			PI_SKIP_VERSION_CHECK: "1",
-			VESTIGIO_STORE: storePath,
+			VESTIGIO_STORE: storeFile,
 			VESTIGIO_PROJECT_ID: PROJECT,
 			VESTIGIO_OBELISK_HOME: join(scratch, "obelisk"),
 			VESTIGIO_DECISION_LOG: DECISION_LOG ?? join(scratch, "decisions.jsonl"),
@@ -268,12 +302,14 @@ const rows = [];
 for (const scenario of SCENARIOS) {
 	if (ONLY_IDS !== null && !ONLY_IDS.has(scenario.id)) continue;
 	for (let index = 0; index < REPEATS; index += 1) {
+		storePath = join(scratch, `store-${scenario.id}-${index}.sqlite`);
+		seedScenarioStore(storePath, scenario.omit ?? []);
 		// Mark before the turn, not at seeding time: after the first turn of a
 		// session the `agent_end` repair pass has already spent every pending
 		// event, so a stale delivery is only observable if it is recorded again
 		// once that pass is behind us.
 		if (scenario.stale_before === true) withStore((handle) => markTimeoutStaleAgain(handle));
-		const turn = runTurn(scenario.question);
+		const turn = runTurn(scenario.question, storePath);
 		const calls = turn.memoryCalls ?? [];
 		const called = calls.length > 0;
 		// `memory_read` consumes a block that was already delivered, so a turn
@@ -307,6 +343,11 @@ for (const scenario of SCENARIOS) {
 				decision = { error: String(error) };
 			}
 		}
+		// A refusal only counts as a hit where the store genuinely cannot settle
+		// the question, which is what `refusal_ok` marks.
+		const refusalAccepted =
+			scenario.refusal_ok === true && STALE_PORT_RULE !== true && decision !== null && decision.decided === false;
+		if (refusalAccepted) decision.accepted_refusal = true;
 		// The fact is a literal from the memory's own text; the answer has to
 		// carry it for the turn to count as using memory, not just retrieving it.
 		// A conflict scenario is graded on committing to a value instead, because
@@ -340,7 +381,7 @@ for (const scenario of SCENARIOS) {
 					: turn.surfaced !== true
 						? "miss"
 						: scenario.decided_fact !== undefined
-							? used === true
+							? used === true || refusalAccepted
 								? "hit"
 								: "refused"
 							: used === false

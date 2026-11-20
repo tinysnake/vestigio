@@ -9,7 +9,7 @@
 
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 
-export const CATALOG_VERSION = 6;
+export const CATALOG_VERSION = 7;
 export const PROJECT = "p-memory-eval";
 export const OTHER_PROJECT = "p-memory-eval-other";
 export const AT = "2026-11-17T12:00:00.000Z";
@@ -66,7 +66,11 @@ export const MEMORIES = [	memory({
 		title: "部署脚本默认端口",
 		keywords: ["部署", "端口", "deploy-port"],
 		nav: "部署配置与默认端口，改端口前值得读取。",
-		prefix: "把服务端口从 8080 改成 18080 时，部署脚本里的默认值也要一起改。",
+		// States the value, not just the change: the sentence that only said
+		// "when you change 8080 to 18080, also change the deploy script" left both
+		// real trigger turns answering 「这条记忆没记录默认端口」 — a defensible
+		// reading, and a fixture defect rather than agent behaviour.
+		prefix: "部署脚本 deploy.sh 的默认端口是 18080；此前默认 8080，改端口时脚本里的默认值要一起改。",
 	}),
 	memory({
 		id: "mem-migration",
@@ -292,9 +296,15 @@ export function scriptedHistoryPort(scenario) {
 }
 
 /** Save every catalog memory, admit it to its project pool, and fix project activity. */
-export function seedStore(store) {
-	for (const item of MEMORIES) store.saveMemory(item);
-	for (const item of MEMORIES) {
+export function seedStore(store, options = {}) {
+	// `skip` exists for the trigger harness: a scenario must carry only its own
+	// fixtures. The two 端口约定 memories that the conflict scenario needs also
+	// join the *warm* deploy-port question's plan, where they turn an answerable
+	// question into a refusal — a fixture defect, not agent behaviour.
+	const skip = new Set(options.skip ?? []);
+	const seeded = MEMORIES.filter((item) => !skip.has(item.memory_id));
+	for (const item of seeded) store.saveMemory(item);
+	for (const item of seeded) {
 		store.upsertHotspotMembership({
 			project_id: item.scope.project_id,
 			memory_id: item.memory_id,
@@ -319,7 +329,7 @@ export function seedStore(store) {
 	for (const projectId of [PROJECT, OTHER_PROJECT]) {
 		store.upsertProjectActivity({ project_id: projectId, activity_seq: 10, last_input_at: AT });
 	}
-	return { memories: MEMORIES.length };
+	return { memories: seeded.length };
 }
 
 /**

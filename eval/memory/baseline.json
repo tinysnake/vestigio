@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-20T04:38:06.986Z",
-  "commit": "ad7f80a",
-  "catalog_version": 6,
+  "generated_at": "2026-11-20T11:01:30.176Z",
+  "commit": "6311a71",
+  "catalog_version": 7,
   "dataset_sha256": "9ddd13ba9f12c24cf417b2d7ce56da9da175f0b8eed6dfd02286dbce83914fd0",
   "seed": {
     "store": "temporary",
-    "memories": 20
+    "memories": 20,
+    "seeded": true
   },
   "summary": {
     "cases": 99,
