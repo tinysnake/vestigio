@@ -274,6 +274,34 @@ from the indexed text. This is a property of the matcher, not of the eval; the
 extension's `memory_search` tool documents the same expectation, and
 `memory_resolve` is the natural-language path.
 
+### Query expansion
+
+`memory_resolve` does not bypass that matcher: it searches the same index and
+relies on the judge's `next_queries` to name phrasings the matcher can use.
+`rescue.mjs` measures that step on its own:
+
+```
+node --import ../pi/hook.mjs ./rescue.mjs --cases candidates.batch-2.jsonl
+```
+
+For every labelled candidate it runs the literal text, and for each miss asks
+the model (`magpie/auto/deepseek-v4.1-flash:low`) for up to three short
+retrieval phrasings, then searches again. Measured on batch 2 (84 labelled
+cases):
+
+| step | cases |
+| --- | --- |
+| found by the literal query | 32 |
+| recovered by one expansion | 42 |
+| still missing | 10 |
+
+50 of the 52 literal misses are recoverable at the gather step, for $0.0103
+across 52 calls. So the lexical matcher is not the whole recall story: the
+resolver's expansion is what makes a natural-language question work, and it
+only works when the model names a phrase that shares whole words with the
+memory. The measurement is a proxy for that one step — it does not run the
+judge, the descent, or the archived/history layers.
+
 ## Compare two runs
 
 ```sh
