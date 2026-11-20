@@ -96,10 +96,10 @@ const SCENARIOS = [
 	{
 		id: "conflict-deploy-port",
 		expect: "query",
-		fact: "18080",
-		// The injected block carries both 端口约定 values, so the fact check alone
+		// The injected block carries both 端口约定 values, so a substring check
 		// cannot tell an answer that picks 18080 from one that lists it beside
-		// 8080 and gives up. The judge settles which one happened.
+		// 8080 and gives up. The judge settles which one happened, and only a
+		// committed value counts as a hit.
 		decided_fact: "18080",
 		question: "部署脚本默认端口是多少？",
 		contaminated_by: "mem-port-rule-a",
@@ -262,46 +262,10 @@ for (const scenario of SCENARIOS) {
 		// `memory_read` consumes a block that was already delivered, so a turn
 		// that only reads proves delivery, not the decision to look something up.
 		const active = calls.some((name) => name !== "memory_read");
-		// The fact is a literal from the memory's own text; the answer has to
-		// carry it for the turn to count as using memory, not just retrieving it.
-		const used = scenario.fact === undefined ? null : compact(turn.text ?? "").includes(compact(scenario.fact));
-		// Naming the superseded value is the right thing to do as long as the answer
-		// also states the current one; only an answer that carries the old value
-		// *instead of* the new one is a misuse, so this needs both halves.
-		const staleMisuse =
-			scenario.misused === undefined || turn.text === undefined
-				? null
-				: !compact(turn.text).includes(compact(scenario.fact)) &&
-					compact(turn.text).includes(compact(scenario.misused));
-		const status =
-			scenario.expect === "query"
-				? !called
-					? "trigger_miss"
-					: used === false
-						? staleMisuse === true
-							? "stale_misuse"
-							: REFUSAL.test(turn.text ?? "")
-								? "miss"
-								: "usage_miss"
-						: "hit"
-				: called
-					? "over_trigger"
-					: "clean";
-		// Attribution for the proposal's four-way split. A turn that reached a
-		// memory and still did not carry the fact is a usage miss; one that
-		// called a tool and was shown nothing is a retrieval miss.
-		const failure =
-			scenario.expect !== "query" || status === "hit"
-				? "none"
-				: !called
-					? "trigger_miss"
-					: turn.surfaced !== true
-						? "retrieval_miss"
-						: "usage_miss";
 		// `fact` only proves a value appears somewhere in the answer, which is
 		// how a refusal that lists both candidates still reads as a hit. A
 		// scenario that declares `decided_fact` asks the judge whether the answer
-		// committed to one value.
+		// committed to one value, and that verdict is what decides `used`.
 		let decision = null;
 		if (scenario.decided_fact !== undefined && JUDGE_HARM) {
 			try {
@@ -326,6 +290,57 @@ for (const scenario of SCENARIOS) {
 				decision = { error: String(error) };
 			}
 		}
+		// The fact is a literal from the memory's own text; the answer has to
+		// carry it for the turn to count as using memory, not just retrieving it.
+		// A conflict scenario is graded on committing to a value instead, because
+		// the right answer there is "these two disagree", not a number.
+		const used =
+			scenario.decided_fact !== undefined
+				? decision === null
+					? null
+					: decision.decided === true
+				: scenario.fact === undefined
+					? null
+					: compact(turn.text ?? "").includes(compact(scenario.fact));
+		// Naming the superseded value is the right thing to do as long as the answer
+		// also states the current one; only an answer that carries the old value
+		// *instead of* the new one is a misuse, so this needs both halves.
+		const staleMisuse =
+			scenario.misused === undefined || turn.text === undefined
+				? null
+				: !compact(turn.text).includes(compact(scenario.fact)) &&
+					compact(turn.text).includes(compact(scenario.misused));
+		const status =
+			scenario.expect === "query"
+				? !called
+					? "trigger_miss"
+					: scenario.decided_fact !== undefined
+						? used === true
+							? "hit"
+							: "refused"
+						: used === false
+							? staleMisuse === true
+								? "stale_misuse"
+								: REFUSAL.test(turn.text ?? "")
+									? "miss"
+									: "usage_miss"
+							: "hit"
+				: called
+					? "over_trigger"
+					: "clean";
+		// Attribution for the proposal's four-way split. A turn that reached a
+		// memory and still did not carry the fact is a usage miss; one that
+		// called a tool and was shown nothing is a retrieval miss.
+		const failure =
+			scenario.expect !== "query" || status === "hit"
+				? "none"
+				: status === "refused"
+					? "refused"
+					: !called
+						? "trigger_miss"
+						: turn.surfaced !== true
+							? "retrieval_miss"
+							: "usage_miss";
 		rows.push({
 			id: scenario.id,
 			expect: scenario.expect,
@@ -435,6 +450,7 @@ const report = {
 			trigger_miss: rows.filter((row) => row.failure === "trigger_miss").length,
 			retrieval_miss: rows.filter((row) => row.failure === "retrieval_miss").length,
 			usage_miss: rows.filter((row) => row.failure === "usage_miss").length,
+			refused: rows.filter((row) => row.failure === "refused").length,
 		},
 		// Contamination is the false-positive counterpart of usage: a quiet turn
 		// that was handed a memory anyway, graded on whether the answer adopted it
@@ -467,7 +483,7 @@ console.log(
 	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), usage-miss ${summary.usage_miss_rate}, stale-misuse ${summary.stale_misuse_rate}, over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
 );
 console.log(
-	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,
+	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss} refused ${summary.failures.refused}`,
 );
 console.log(
 	`decision: ${summary.decision_rate === null ? "-" : `${(summary.decision_rate * 100).toFixed(1)}% committed to one value`}`,

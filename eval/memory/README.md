@@ -384,24 +384,30 @@ names a `fact` taken from the memory body (`18080`, `第五步`, `删缓存`, `1
 | `hit` | called a memory tool and the answer carries the fact |
 | `usage_miss` | called a memory tool, answered without the fact |
 | `miss` | called a memory tool, then said it found nothing (the answer matches a refusal: 没有找到 / 查不到 / 无结果 / 记忆库为空 / no matching memory) |
+| `refused` | a `decided_fact` scenario that looked, then declined to commit to a value (the judge's call, not a substring) |
 | `trigger_miss` | never called a memory tool |
 | `over_trigger` | a quiet scenario called one |
 | `clean` | a quiet scenario stayed quiet |
 
 `miss` is deliberately not `usage_miss`: a search that returns nothing and a
 search whose result was ignored are different failures with different owners.
+`refused` is its own outcome for the same reason: on the conflict scenario the
+right answer is 「这两条记忆互相矛盾」, so counting a refusal that happens to
+mention 8080 and 18080 as a hit would flatter the run — the judge decides
+whether a value was committed to, and `decision_rate` reports it.
 
 Each turn also records whether any memory URI ever reached the model — the
 injected block arrives as a user message, tool results as their own messages, so
 the harness scans every non-assistant message for `memory://`. That is what turns
 the proposal's four-way split into per-turn attribution, printed as
-`failures: trigger N retrieval N usage N`:
+`failures: trigger N retrieval N usage N refused N`:
 
 | condition | attribution |
 | --- | --- |
 | no memory tool called | `trigger_miss` |
 | called, but no memory URI ever reached the model | `retrieval_miss` |
 | a memory reached the model, but the answer lacks the fact | `usage_miss` |
+| a `decided_fact` turn that looked and declined to commit | `refused` |
 | (Resolution Miss is not attributed here — it needs the resolver's own outcome, which the harness does not see) | — |
 
 The distinction has already paid for itself: a cold image-tag turn that called
@@ -702,6 +708,34 @@ do not quote a timing from them. A follow-up worth having is the same A/B on a
 sharper question where the answer cannot be reasoned out from the rules alone,
 and a cheaper variant that asks the agent only to read the memory and report its
 freshness.
+
+When a `decided_fact` scenario does not commit, the turn's status is `refused`
+rather than `hit` or `miss`. That is deliberate: the refusal quotes both 8080 and
+18080, so the substring check would read it as a hit and `should_recall_rate`
+would report 1.000 while the question went unanswered. `refused` is therefore
+counted separately in `failures` and in `decision_rate`, and the latest full run
+reads
+
+```
+resolver model: auto/deepseek-v4.1-flash 14 turns: should-recall 0.889 (active 0.667), usage-miss 0, stale-misuse 0, over-trigger 0.4, cost $0.013583
+failures: trigger 0 retrieval 0 usage 0 refused 1
+decision: 0.0% committed to one value
+cost per hit: $0.001698  (14 turns, $0.013583 total)
+p50 14972ms p95 181127ms
+14 turns (14 sessions, sample 1): 6 injected
+  after injection: tools 100.0%, body read 100.0%
+  nothing injected: unprompted search 62.5%; reasons {"no_match":8}
+  gather calls 16 (search 10, resolve 6 / degraded 0), zero-hit 50.0%
+  gather turns that got nothing: 14.3% of 7; stale delivered 1 (read 100.0%)
+  injected most: mem-deploy-port×2, mem-migration×1, mem-cache×1, mem-stale-ttl×1, mem-docker-image×1
+  input handler p50 5.94ms p95 6.32ms
+```
+
+(`eval/memory/out/trigger-current2.json`, `/tmp/shadow-current2.jsonl`; the run
+shared the gateway, so p95 181 s is an upper bound, not a latency claim.) The
+offline surrogate for a real-memory absence is the last shadow line: one of seven
+gather turns searched and got nothing, which is the closest a label-free log gets
+to a Retrieval Miss.
 
 ### Archived memories
 
