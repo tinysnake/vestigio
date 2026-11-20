@@ -13,13 +13,12 @@
  */
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { INJECTION_BLOCK_CLOSE, INJECTION_BLOCK_OPEN } from "@vestigio/core/hotspots";
 import type { FreshnessBrief, SourceRef } from "@vestigio/core";
 import { DETECTOR_MAX_EVIDENCE, detectStale } from "@vestigio/core/stale";
 import type { DetectorEvidence, DetectorResult, StaleCandidate } from "@vestigio/core/stale";
 import type { MemoryStore } from "@vestigio/core/storage";
 import { errorText, nowIso, type VestigioState } from "./state.js";
-import { memoryUriOf, sessionEntryText, sourceRefForEntry } from "./session-source.js";
+import { memoryUriOf, sessionEntryText, sourceRefForEntry, stripInjectedNote } from "./session-source.js";
 
 export const DETECTOR_TIMEOUT_MS = 15_000;
 export const DETECTOR_MAX_ENTRIES = 200;
@@ -59,13 +58,7 @@ const IDLE: DetectorRunOutcome = {
 	detail: null,
 };
 
-export function stripInjectedNote(text: string): string {
-	const open = text.indexOf(INJECTION_BLOCK_OPEN);
-	if (open < 0) return text;
-	const close = text.indexOf(INJECTION_BLOCK_CLOSE, open);
-	if (close < 0) return text.slice(0, open);
-	return `${text.slice(0, open)}${text.slice(close + INJECTION_BLOCK_CLOSE.length)}`;
-}
+export { stripInjectedNote };
 
 function isControlEntry(entry: SessionEntry): boolean {
 	if (entry.type !== "custom_message") return false;

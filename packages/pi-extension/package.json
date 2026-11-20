@@ -15,14 +15,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vestigio/client": "workspace:*",
     "@vestigio/core": "workspace:*",
     "@vestigio/model-client": "workspace:*",
-    "@vestigio/source-obelisk": "workspace:*"
+    "@vestigio/source-obelisk": "workspace:*",
+    "typebox": "^1.4.7"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@types/node": "^26.6.6",
-    "typebox": "^1.4.7",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   }

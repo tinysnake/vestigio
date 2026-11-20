@@ -189,6 +189,9 @@ export function captureIo(): CapturedIo {
       err: (text) => {
         err += text;
       },
+      write: async (text) => {
+        out += text;
+      },
     },
     stdout: () => out,
     stderr: () => err,

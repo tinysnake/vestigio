@@ -12,16 +12,31 @@
  * failure of the command.
  */
 
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { isAbsolute, normalize, sep } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { MemoryUri, Scope } from "@vestigio/core";
-import { runDueJobs } from "@vestigio/core/jobs";
 import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/core/retrieval";
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
-import { formatFreshnessLines, formatJobsHuman, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
+import { formatFreshnessLines, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
+import { VestigioClient } from "@vestigio/client";
+import {
+  DAEMON_KINDS,
+  formatEventHuman,
+  formatEventsHuman,
+  formatJobHuman,
+  formatJobListHuman,
+  readJobPage,
+  resolveSessionRef,
+  type DaemonClient,
+  type SessionKey,
+  type SessionTarget,
+} from "./daemon.js";
 
 /** The plan's one configured backend; never upgraded automatically. */
 export const DEFAULT_RESOLVE_MODEL_ID = "auto/deepseek-v4.1-flash";
@@ -63,13 +78,28 @@ Resolve options:
 
 Jobs options:
   --limit <1..20>          Jobs to attempt in this batch (default 3).
-  --model-base-url <url>   Required to generate navs; without it every job stays
-                           pending and the run says model_not_configured.
-  --model-id <id>          Model id (default auto/deepseek-v4.1-flash).
-  --model-api-key <key>    Bearer key (default: VESTIGIO_MODEL_API_KEY).
-  --model-thinking <level> off|low|medium|high (default low).
-  --cost-input <usd-per-1m>     Input price used to report cost; omit for null.
-  --cost-output <usd-per-1m>    Output price used to report cost; omit for null.
+  Model configuration comes from VESTIGIO_MODEL_* when the daemon starts.
+
+Daemon jobs (compatibility adapters; the daemon owns scheduling and delivery):
+  vestigio submit  --db <path> --source <s> --session-id <id>
+                   --kind <maintenance|detector|search>
+                   (--input <json> | --input-file <path>) [--request-id <id>] [--json]
+  vestigio get     --db <path> --job <jobId> [--json]
+  vestigio list    --db <path> (--session-ref <n> | --source <s> --session-id <id>)
+                   [--after <cursor>] [--json]
+  vestigio cancel  --db <path> --job <jobId> [--json]
+  vestigio receive --db <path> (--session-ref <n> | --source <s> --session-id <id>) [--json]
+  vestigio watch   --db <path> (--session-ref <n> | --source <s> --session-id <id>)
+                   [--interval <ms>] [--count <n>] [--json]
+  vestigio stop    --db <path> [--json]
+
+  --source is the caller's own label for its session; nothing pins it to "cli".
+  submit exits after the daemon accepts the job; the job keeps running without
+  this process. receive/watch bind to this process lifetime and claim terminal
+  results in relay mode: the result is marked delivered only after stdout
+  accepts the full payload, so a failed write leaves it pending for a retry.
+  --session-ref is the numeric ref from a previous submit/get; --source and
+  --session-id reopen the same session by its stable identity instead.
 
 --project must be a normalised absolute path: it is used verbatim as the store
 scope and as Obelisk's project_path, so a typo is a different project, not a
@@ -78,17 +108,37 @@ convenience.`;
 export type CliIo = {
   out(text: string): void;
   err(text: string): void;
+  /**
+   * Deliver a daemon payload and resolve only once stdout accepted it. The
+   * relay commands use it so a terminal result is marked delivered after the
+   * write, never before. Injected IO without it falls back to `out`.
+   */
+  write?(text: string): Promise<void>;
 };
 
 export type CliDeps = {
   open?: (options: { path: string }) => MemoryStore;
   createHistoryPort?: (options: ObeliskHistoryOptions) => HistoryPort;
   createModel?: (options: OpenAiCompatibleOptions) => ModelPort;
+  createClient?: (storePath: string) => DaemonClient;
 };
 
 const DEFAULT_IO: CliIo = {
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),
+  write: (text) =>
+    new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const done = (error?: Error | null): void => {
+        if (settled) return;
+        settled = true;
+        process.stdout.off("error", onError);
+        error ? reject(error) : resolve();
+      };
+      const onError = (error: Error): void => done(error);
+      process.stdout.once("error", onError);
+      process.stdout.write(text, (error: Error | null | undefined) => done(error ?? null));
+    }),
 };
 
 class UsageError extends Error {
@@ -119,6 +169,17 @@ const VALUE_FLAGS = new Set([
   "model-thinking",
   "cost-input",
   "cost-output",
+  "source",
+  "session-id",
+  "session-ref",
+  "kind",
+  "input",
+  "input-file",
+  "request-id",
+  "job",
+  "after",
+  "interval",
+  "count",
 ]);
 
 const BOOLEAN_FLAGS = new Set(["global", "archived", "history", "history-read", "json", "help"]);
@@ -364,26 +425,208 @@ async function runJobs(context: CommandContext): Promise<number> {
   if (sub !== "run" || context.parsed.positionals.length !== 1) {
     throw new UsageError("jobs needs exactly one subcommand: run");
   }
-  const store = openDatabase(context);
+  const flags = ["model-base-url", "model-id", "model-api-key", "model-thinking", "cost-input", "cost-output"];
+  if (flags.some((flag) => context.parsed.flags.has(flag))) {
+    throw new UsageError("jobs run uses the daemon's VESTIGIO_MODEL_* configuration");
+  }
+  const client = daemonClient(context);
+  const limit = integerFlag(context.parsed, "limit", 1, 20);
+  const requestId = randomUUID();
+  const { sessionRef } = await client.submit({
+    session: { source: "vestigio-cli", sessionId: requestId },
+    requestId,
+    kind: "maintenance",
+    input: { op: "nav.run", limit },
+  });
+  for (;;) {
+    const [event] = await client.receive(sessionRef, true);
+    if (!event) {
+      await delay(100);
+      continue;
+    }
+    if (event.state !== "succeeded") {
+      const failure = event.result as { error?: string } | undefined;
+      await deliver(context.io, `error: ${failure?.error ?? String(event.resultCode)}\n`);
+      await client.relayed(sessionRef, [event.eventId]);
+      return 1;
+    }
+    const { result } = event.result as { result: Record<string, unknown> };
+    const output = context.parsed.flags.has("json") ? JSON.stringify(result, null, 2) :
+      `claimed=${String(result.claimed ?? 0)} completed=${String(result.completed ?? 0)} ${String(result.reason ?? "")}`.trim();
+    await deliver(context.io, `${output}\n`);
+    await client.relayed(sessionRef, [event.eventId]);
+    return 0;
+  }
+}
+
+function daemonClient(context: CommandContext): DaemonClient {
+  const storePath = requireFlag(context.parsed, "db");
+  const create = context.deps.createClient ?? ((path: string) => new VestigioClient(path));
+  return create(storePath);
+}
+
+function sessionKeyFor(parsed: ParsedArgs, command: string): SessionKey {
+  const source = stringFlag(parsed, "source");
+  const sessionId = stringFlag(parsed, "session-id");
+  if (source === undefined || sessionId === undefined) {
+    throw new UsageError(`${command} needs --source and --session-id`);
+  }
+  return { source, sessionId };
+}
+
+/** `--session-ref <n>` wins; `--source`/`--session-id` is the reopen-by-identity form. */
+function sessionTargetFor(parsed: ParsedArgs, command: string): SessionTarget {
+  const raw = stringFlag(parsed, "session-ref");
+  const source = stringFlag(parsed, "source");
+  const sessionId = stringFlag(parsed, "session-id");
+  if (raw !== undefined && (source !== undefined || sessionId !== undefined)) {
+    throw new UsageError(`${command} takes --session-ref or --source/--session-id, not both`);
+  }
+  if (raw !== undefined) {
+    if (!/^\d+$/u.test(raw) || Number.parseInt(raw, 10) <= 0) {
+      throw new UsageError("--session-ref must be a positive integer");
+    }
+    return { kind: "ref", sessionRef: Number.parseInt(raw, 10) };
+  }
+  if (source === undefined || sessionId === undefined) {
+    throw new UsageError(`${command} needs --session-ref or both --source and --session-id`);
+  }
+  return { kind: "key", session: { source, sessionId } };
+}
+
+function readJobInput(parsed: ParsedArgs): unknown {
+  const inline = stringFlag(parsed, "input");
+  const file = stringFlag(parsed, "input-file");
+  if (inline !== undefined && file !== undefined) {
+    throw new UsageError("--input and --input-file are mutually exclusive");
+  }
+  let text: string;
+  if (inline !== undefined) {
+    text = inline;
+  } else if (file !== undefined) {
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (error) {
+      throw new UsageError(`--input-file could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else {
+    throw new UsageError("--input <json> or --input-file <path> is required");
+  }
   try {
-    const wiring = wireModel(context);
-    const limit = integerFlag(context.parsed, "limit", 1, 20);
-    const outcome = await runDueJobs({
-      store,
-      model: wiring.model,
-      model_id: wiring.info.model_id,
-      ...(limit === undefined ? {} : { limit }),
-    });
-    emit(
-      context.io,
-      context.parsed,
-      { ...outcome, model_info: wiring.info, db: store.path },
-      formatJobsHuman(outcome, wiring.info),
-    );
+    return JSON.parse(text);
+  } catch (error) {
+    throw new UsageError(`job input must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function deliver(io: CliIo, text: string): Promise<void> {
+  if (io.write !== undefined) return io.write(text);
+  io.out(text);
+}
+
+async function runSubmit(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "submit");
+  const kind = DAEMON_KINDS.find((candidate) => candidate === requireFlag(context.parsed, "kind"));
+  if (kind === undefined) throw new UsageError(`--kind must be one of ${DAEMON_KINDS.join(", ")}`);
+  const requestId = stringFlag(context.parsed, "request-id") ?? randomUUID();
+  const accepted = await daemonClient(context).submit({
+    session: sessionKeyFor(context.parsed, "submit"),
+    requestId,
+    kind,
+    input: readJobInput(context.parsed),
+  });
+  emit(
+    context.io,
+    context.parsed,
+    { ...accepted, request_id: requestId },
+    `submitted ${accepted.jobId} session=${accepted.sessionRef}\nrequest_id: ${requestId}\n`,
+  );
+  return 0;
+}
+
+async function runGet(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "get");
+  const jobId = requireFlag(context.parsed, "job");
+  const job = await daemonClient(context).get(jobId);
+  emit(context.io, context.parsed, job, formatJobHuman(job));
+  return 0;
+}
+
+async function runList(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "list");
+  const client = daemonClient(context);
+  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "list"));
+  const page = readJobPage(await client.list(sessionRef, stringFlag(context.parsed, "after")));
+  emit(context.io, context.parsed, { sessionRef, ...page }, formatJobListHuman(page));
+  return 0;
+}
+
+async function runCancel(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "cancel");
+  const jobId = requireFlag(context.parsed, "job");
+  const result = await daemonClient(context).cancel(jobId);
+  emit(context.io, context.parsed, { jobId, ...result }, `cancelled=${result.cancelled} job=${jobId}\n`);
+  return 0;
+}
+
+/**
+ * One-shot relay claim: fetch without consuming, print, then mark delivered.
+ * The claim is what makes this an explicit adapter rather than a passive tip.
+ */
+async function runReceive(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "receive");
+  const client = daemonClient(context);
+  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "receive"));
+  const events = await client.receive(sessionRef, true);
+  const payload =
+    context.parsed.flags.get("json") === true
+      ? `${JSON.stringify({ sessionRef, events }, null, 2)}\n`
+      : formatEventsHuman(events);
+  await deliver(context.io, payload);
+  await client.relayed(sessionRef, events.map((event) => event.eventId));
+  return 0;
+}
+
+/**
+ * Keep claiming while this process lives. Each event is delivered to stdout
+ * before its `relayed` call, so a stdout failure leaves it pending for retry.
+ */
+async function runWatch(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "watch");
+  const client = daemonClient(context);
+  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "watch"));
+  const interval = integerFlag(context.parsed, "interval", 50, 3_600_000) ?? 1_000;
+  const count = integerFlag(context.parsed, "count", 1, 1_000_000);
+  const json = context.parsed.flags.get("json") === true;
+  const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  let delivered = 0;
+  try {
+    while (!controller.signal.aborted) {
+      const events = await client.receive(sessionRef, true);
+      for (const event of events) {
+        await deliver(context.io, json ? `${JSON.stringify(event)}\n` : formatEventHuman(event));
+        await client.relayed(sessionRef, [event.eventId]);
+        delivered += 1;
+        if (count !== undefined && delivered >= count) return 0;
+      }
+      if (controller.signal.aborted) break;
+      await delay(interval);
+    }
     return 0;
   } finally {
-    store.close();
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
   }
+}
+
+async function runStop(context: CommandContext): Promise<number> {
+  noExtraPositionals(context.parsed, "stop");
+  const stopped = await daemonClient(context).stop();
+  emit(context.io, context.parsed, { stopped }, `stopped=${stopped}\n`);
+  return 0;
 }
 
 async function runProbe(context: CommandContext): Promise<number> {
@@ -511,7 +754,7 @@ async function runResolve(context: CommandContext): Promise<number> {
             cli_path: stringFlag(context.parsed, "obelisk-cli"),
             source_instance: stringFlag(context.parsed, "source-instance"),
           });
-    const outcome = await resolveMemory({ store, question, scope, model, history });
+    const outcome = await resolveMemory({ store, question, scope, model, history, defer_persistence: true });
     const modelInfo = {
       ...wiring.info,
       degraded: outcome.measured.degraded,
@@ -597,6 +840,20 @@ export async function main(
         return await runResolve(context);
       case "jobs":
         return await runJobs(context);
+      case "submit":
+        return await runSubmit(context);
+      case "get":
+        return await runGet(context);
+      case "list":
+        return await runList(context);
+      case "cancel":
+        return await runCancel(context);
+      case "receive":
+        return await runReceive(context);
+      case "watch":
+        return await runWatch(context);
+      case "stop":
+        return await runStop(context);
       default:
         throw new UsageError(`unknown command ${JSON.stringify(parsed.command)}`);
     }

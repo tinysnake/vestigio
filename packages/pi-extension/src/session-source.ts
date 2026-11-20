@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { MemoryUri, SourceRef } from "@vestigio/core";
 import { boundStaleExcerpt, parseSourceRef } from "@vestigio/core";
+import { INJECTION_BLOCK_CLOSE, INJECTION_BLOCK_OPEN } from "@vestigio/core/hotspots";
 
 export type EntrySourceContext = {
 	session_id: string;
@@ -100,9 +101,12 @@ export function evidenceFromEntries(
 ): EntryEvidence[] {
 	const out: EntryEvidence[] = [];
 	for (const entry of entries) {
+		if (entry.type === "custom_message" && entry.customType.startsWith("vestigio")) continue;
 		const sourceRef = sourceRefForEntry(entry, context);
 		if (sourceRef === null) continue;
-		const bounded = boundStaleExcerpt(sessionEntryText(entry) ?? "");
+		const excerpt = stripInjectedNote(sessionEntryText(entry) ?? "").trim();
+		if (!excerpt) continue;
+		const bounded = boundStaleExcerpt(excerpt);
 		out.push({
 			entry_id: entry.id,
 			source_ref: sourceRef,
@@ -112,6 +116,14 @@ export function evidenceFromEntries(
 		});
 	}
 	return out.slice(-maxEntries);
+}
+
+export function stripInjectedNote(text: string): string {
+	const open = text.indexOf(INJECTION_BLOCK_OPEN);
+	if (open < 0) return text;
+	const close = text.indexOf(INJECTION_BLOCK_CLOSE, open);
+	if (close < 0) return text.slice(0, open);
+	return text.slice(0, open) + text.slice(close + INJECTION_BLOCK_CLOSE.length);
 }
 
 export function memoryUriOf(storeId: string, memoryId: string): MemoryUri {

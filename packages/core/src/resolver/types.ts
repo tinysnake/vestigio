@@ -176,6 +176,27 @@ export type PersistenceOutcome = {
   call: ResolveCallRecord | null;
 };
 
+/**
+ * The self-contained request a deferred resolve hands to the write side when
+ * `ResolveInput.defer_persistence` is set. It carries everything persistence
+ * needs and nothing that cannot survive a process boundary: no budget ledger,
+ * no deadline clock, no store handle. A caller that serializes it (a daemon
+ * maintenance job, a durable queue row) can run it later, after the read job
+ * has already returned its answer.
+ */
+export type PendingResolvePersistence = {
+  question: string;
+  scope: Scope;
+  answer: string;
+  evidence: SourceRef[];
+  excerpts: HistoryExcerpt[];
+  cards: MemoryCard[];
+  request_id?: string | undefined;
+  session_id?: string | undefined;
+  /** Index the deferred summary call gets in `ResolveOutcome.calls`. */
+  call_index: number;
+};
+
 export type ResolveOutcome = {
   result: RetrievalResult;
   layers: LayerOutcome[];
@@ -183,6 +204,13 @@ export type ResolveOutcome = {
   calls: ResolveCallRecord[];
   /** PR-07 medium-summary write, or `null` when the walk never reached it. */
   persistence: PersistenceOutcome | null;
+  /**
+   * The write the walk deferred instead of running itself, or `null`. Non-null
+   * only when `defer_persistence` was set and the walk actually reached the
+   * persistence point; the read result is then unchanged except that nothing
+   * was saved.
+   */
+  pending_persistence: PendingResolvePersistence | null;
   /** Candidates a later call may reuse, or `null` when there is nothing to reuse. */
   continuation: ResolveContinuation | null;
   measured: ResolveMeasured;
@@ -204,7 +232,15 @@ export type ResolveInput = {
    * resolver never keeps session state itself.
    */
   session_resolves_used?: number | undefined;
+  /**
+   * When true, the walk stops short of writing and returns the write as
+   * `pending_persistence` instead. Used when the caller must serialize all
+   * shared writes behind a single maintenance boundary but still wants the
+   * read result (cards, answer, evidence) from the same walk.
+   */
+  defer_persistence?: boolean | undefined;
   continuation?: ResolveContinuation | null | undefined;
+  unbounded_time?: boolean | undefined;
   /** Absolute-time source for continuation expiry. Default `Date.now`. */
   wall_now?: (() => number) | undefined;
   /** Monotonic-time source for the deadline. Default `performance.now`. */

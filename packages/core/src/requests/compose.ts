@@ -314,7 +314,9 @@ export async function composeMemoryRequest(input: ComposeMemoryRequestInput): Pr
     );
   }
 
-  if (extraction.status === "cancelled") return outcome("retry", extraction.reason, null, calls);
+  if (input.signal.aborted || extraction.status === "cancelled") {
+    return outcome("retry", extraction.reason ?? "cancelled", null, calls);
+  }
   if (extraction.status === "failed") {
     return outcome("retry", extraction.reason, null, calls);
   }

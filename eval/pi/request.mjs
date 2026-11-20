@@ -10,6 +10,7 @@
  * or Obelisk home; every check reads the isolated SQLite file the harness owns.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { openStore } from "@vestigio/core/storage";
 
@@ -61,7 +62,7 @@ function systemOf(body) {
 		.join("\n");
 }
 
-export async function scenarioRequest({ mock, spawnPi, check, storePath, port, reseed }) {
+export async function scenarioRequest({ mock, spawnPi, check, storePath, port }) {
 	const env = {
 		VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${port}/v1`,
 		VESTIGIO_MODEL_ID: "mock-1",
@@ -75,7 +76,10 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port, r
 			store.close();
 		}
 	};
-	reseed();
+	const waitForRequest = async (predicate) => {
+		const end = Date.now() + 5_000;
+		while (!inspect((store) => store.listMemoryRequests().some(predicate)) && Date.now() < end) await delay(25);
+	};
 
 	let phase = "context";
 	let step = 0;
@@ -167,6 +171,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port, r
 
 	try {
 		const direct = await ask(DIRECT, "direct");
+		await waitForRequest((row) => row.status === "saved" && row.navigation_status === "ready");
 		const first = inspect((store) => ({ requests: store.listMemoryRequests() }));
 		check("request: a self-contained direct command is queued without a dialog", first.requests.length === 1, JSON.stringify(first.requests));
 		check("request: the direct command creates no question in its own turn", !toolResultText(direct.events).includes("Append the question"), toolResultText(direct.events).slice(-300));
@@ -201,6 +206,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port, r
 		});
 
 		await ask(OVERLAP, "overlap");
+		await waitForRequest((row) => row.status === "merged");
 		const merged = inspect((store) => {
 			const memory = store.readMemory(memoryUri);
 			return {
@@ -225,10 +231,11 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port, r
 		const offerReply = assistantText(offer.events);
 		check("request: the proactive reply ends with the offer question", /[?？]/u.test(offerReply) && offerReply.includes("记忆") && offerReply.includes("全量测试"), offerReply.slice(-300));
 		check("request: the prompt rule reaches the agent", offer.wire.some((entry) => systemOf(entry.body).includes("end your reply with one short question")), offer.wire.length + " wire");
-		check("request: the offer turn opens no UI request", offer.events.every((event) => event.type !== "extension_ui_request"));
+		check("request: the offer turn opens no confirm dialog", offer.events.every((event) => event.type !== "extension_ui_request" || event.method === "notify"));
 
 		// The operator's next message clearly agrees: the agent now calls the tool.
 		const approve = await ask("好", "approve");
+		await waitForRequest((row) => row.intent === PROPOSE_INTENT && row.status === "saved");
 		const afterApprove = inspect((store) => store.listMemoryRequests());
 		const approved = afterApprove.find((row) => row.intent === PROPOSE_INTENT);
 		check("request: the agreement turn creates the request", approved !== undefined, JSON.stringify(afterApprove));
@@ -263,7 +270,9 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port, r
 		for (const event of client.client.events) {
 			if (event.type === "extension_ui_request") uiRequests.push(event);
 		}
-		check("request: no confirm dialog was ever opened", uiRequests.length === 0, JSON.stringify(uiRequests));
+		const dialogs = uiRequests.filter((event) => event.method !== "notify");
+		check("request: no confirm dialog was ever opened", dialogs.length === 0, JSON.stringify(dialogs));
+		check("request: pi displays a background save notification", uiRequests.some((event) => event.method === "notify" && event.message.includes("条记忆保存请求")));
 
 		const statusText = toolResultText(client.client.events);
 		check("request: the write tool reports the accepted request id", statusText.includes("req-"), statusText.slice(-300));

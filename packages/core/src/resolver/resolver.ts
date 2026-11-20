@@ -67,6 +67,7 @@ import {
 import type {
   ModelPort,
   ModelRequest,
+  PendingResolvePersistence,
   ResolveCallRecord,
   ResolveContinuation,
   ResolveInput,
@@ -321,6 +322,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   let summaryMs = 0;
   let persistMs = 0;
   let persistence: ResolveOutcome["persistence"] = null;
+  let pendingPersistence: PendingResolvePersistence | null = null;
 
   const controller = new AbortController();
   const userSignal = input.signal;
@@ -330,6 +332,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   }
 
   const remaining = (): number => {
+    if (input.unbounded_time) return Infinity;
     const limit = cold ? options.cold_deadline_ms : options.warm_deadline_ms;
     return limit - (mono() - started);
   };
@@ -499,7 +502,8 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     if (!ledger.canCallModel(estimated)) {
       return { kind: "stop", reason: ledger.stopReason(estimated) ?? "model_call_cap", retryable: false };
     }
-    const local = AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, Math.floor(remaining())))]);
+    const local = input.unbounded_time ? controller.signal :
+      AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, Math.floor(remaining())))]);
     const request: ModelRequest = {
       model: input.model_id,
       messages,
@@ -640,6 +644,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       history,
       calls,
       persistence,
+      pending_persistence: pendingPersistence,
       continuation,
       measured: {
         elapsed_ms: mono() - started,
@@ -902,6 +907,23 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
         }
       }
       if (input.model !== null && input.model !== undefined && hasRawHistoryEvidence(evidence, bundle.excerpts)) {
+        // The caller owns the write boundary: hand back a self-contained write
+        // request and return the read result untouched. A later, separately
+        // scheduled job runs `persistPendingResolve` on it.
+        if (input.defer_persistence === true) {
+          pendingPersistence = {
+            question,
+            scope,
+            answer,
+            evidence: [...evidence],
+            excerpts: [...bundle.excerpts],
+            cards: [...bundle.cards],
+            request_id: input.request_id,
+            session_id: input.session_id,
+            call_index: calls.length,
+          };
+          return finish(assembled, continuationFor(bundle, layer), false, bundle.excerpts);
+        }
         const persisted = await persistResolvedMemory({
           store: input.store,
           question,
