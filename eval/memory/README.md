@@ -519,6 +519,15 @@ node --import ../pi/hook.mjs ./run.mjs --out out/candidate.json  # on the new on
 node ./compare.mjs out/baseline.json out/candidate.json
 ```
 
+`--baseline=<git-ref>` skips the first step by reading
+`eval/memory/baseline.json` out of that revision with `git show`, so the current
+worktree can be diffed against any commit without checking it out:
+
+```sh
+node --import ../pi/hook.mjs ./run.mjs --out out/report.json
+node ./compare.mjs --baseline=HEAD~1 out/report.json
+```
+
 ## What this does not measure
 
 - Model behaviour: nothing is generated, so answer quality is out of scope.

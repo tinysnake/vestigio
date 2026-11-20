@@ -111,7 +111,7 @@
 | 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
 | 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |
 | 7 一次完整查询的 Trace | 部分 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联（触发 → 注入 → 使用）缺 |
-| 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`，跨 commit 只需各自产出报告再 `compare.mjs`；尚无自动取两次 worktree 的脚本 |
+| 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`；`compare.mjs --baseline=<git-ref>` 直接用 `git show <ref>:eval/memory/baseline.json` 取旧版本的基线，不必再切 worktree（实测 `--baseline=bd4a4ae` 输出 `added in candidate: 34`、无回归） |
 | 9 P50/P95 与有效召回成本 | 未做 | 离线 harness 不调用模型、不做索引，计时与 token 都无意义，成本应挂在真实链路上测 |
 | 10 Shadow 不改变生产行为 | 已满足 | 无 shadow 组件接入生产；harness 只读生产代码，写独立 store |
 | 11 评估失败不影响记忆读写 | 已满足 | 工具未接入生产路径，失败只体现为自身退出码 |

@@ -8,17 +8,38 @@
  * the exit code is 1 when there is at least one, so CI can gate on this alone.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const [baselinePath, candidatePath] = process.argv.slice(2);
 if (baselinePath === undefined || candidatePath === undefined) {
 	console.error("usage: compare.mjs <baseline.json> <candidate.json>");
+	console.error("       compare.mjs --baseline=<git-ref> <candidate.json>");
 	process.exit(2);
+}
+
+/**
+ * A baseline may be a file or a committed revision, so a regression can be
+ * stated against another commit without checking it out:
+ *
+ *   node ./compare.mjs --baseline=HEAD~1 out/report.json
+ */
+function loadBaseline(spec) {
+	const prefix = "--baseline=";
+	if (!spec.startsWith(prefix)) return JSON.parse(readFileSync(spec, "utf8"));
+	const ref = spec.slice(prefix.length);
+	if (ref.length === 0) {
+		console.error("--baseline= needs a git ref, e.g. --baseline=HEAD~1");
+		process.exit(2);
+	}
+	const text = execFileSync("git", ["show", `${ref}:eval/memory/baseline.json`], { encoding: "utf8" });
+	console.log(`baseline read from ${ref}:eval/memory/baseline.json`);
+	return JSON.parse(text);
 }
 
 const GOOD = new Set(["hit", "clean"]);
 const byId = (report) => new Map(report.cases.map((item) => [item.case_id, item]));
-const baselineReport = JSON.parse(readFileSync(baselinePath, "utf8"));
+const baselineReport = loadBaseline(baselinePath);
 const candidateReport = JSON.parse(readFileSync(candidatePath, "utf8"));
 const before = byId(baselineReport);
 const after = byId(candidateReport);
