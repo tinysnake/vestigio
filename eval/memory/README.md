@@ -502,6 +502,15 @@ The 99-case baseline is not clean, and the misses are the point:
   `hand-b3-comp-log-stale`) and two search rows
   (`hand-b3-scomp-deploy-port-rule`, `hand-b3-scomp-pool-timeout`).
 
+These four stay in the baseline on purpose, and the decision is measured rather
+than assumed: raising the floor to 2 removes every false positive but costs
+`inject-implicit-migration` (one shared token is all it has), taking
+`inject_hit_rate` to 0.800 and Recall@1 to 0.889, while the end-to-end harm probe
+shows a near-miss delivery is usually ignored and never made an answer wrong
+(carried 3 of 8, harmed 0). So the upside of tightening here is noise removed
+from 4 of 99 cases and the downside is roughly a tenth of recall — write the
+mechanisms down, keep the cases, and revisit only with a bigger negative set.
+
 The floor itself is still 1, and the baseline records what moving it costs.
 Setting `DEFAULT_MIN_MATCH_SCORE` to 2 keeps false positives at 0.000 but turns
 `inject-implicit-migration` into a miss (one shared token is all it has), taking

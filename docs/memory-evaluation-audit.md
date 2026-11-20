@@ -47,6 +47,8 @@
 
 生产 store 的 revision 序列只提供部分历史。`setMemoryState` 会就地更新 head revision 的状态和 FTS 成员关系。导航、Hotspot ledger、stale 事件与会话分支也需要对应时间点的证据。历史快照缺失时，标为 `current_snapshot` 或 `approximate`，单独报告。`ResolveInput` 已提供 `wall_now` 与 `mono_now` 时钟入口。Resolver 发现并使用原始历史时可持久化总结，所以须通过隔离副本运行，命中和覆盖按运行前快照评分。 [状态更新](../packages/core/src/storage/store.ts#L395) · [Resolver 时钟](../packages/core/src/resolver/types.ts#L208) · [Resolver 持久化](../packages/core/src/resolver/resolver.ts#L896)
 
+**回放在本 harness 里是怎么成立的。** 离线面不做「历史 store 回放」，而是做「规范种子 + 隔离副本」：每条样本都从 `catalog.mjs` 的可重建种子（20 条记忆、2 个项目、固定 `AT` 时钟、固定 activity_seq）建一个临时 SQLite，样本自带查询前快照，因此同一次运行内不存在跨样本污染。这样得到的可重复性与生产 store 的时间点回放是两件不同的事：生产 store 只有 head revision 的一部分历史，`setMemoryState` 就地改写状态与 FTS 成员关系，导航、Hotspot ledger、stale 事件与会话分支都缺当时证据，所以对真实历史做回放需要额外记录（按 revision 的 store 快照或带清单校验的种子）。本轮没有做这件事，也没有把它伪装成已做：`run.mjs` 的 `seed` 字段会如实写出 `temporary`，`dataset_sha256` 与 `commit` 让任何一次报告都能追到具体数据集和代码版本。真正需要历史回放的场景（例如复现某次线上召回）仍属于未交付项。
+
 ### 混淆矩阵
 
 上面两个指标回答的是「有没有做到」，混淆矩阵回答的是「分母是谁」。离线 harness 只把样本分成两类，因为数据集本身只有这两类标注：**应该交付**（`expected_memory_ids` 或 `expected_source_refs` 非空，或要求交付 stale 标记）与**应该安静**（没有期望，但写了 `forbidden_memory_ids` 或 `expected_status`）。只写 `forbidden_memory_ids` 的空期望样本不算「未被测试」：它带着可被违反的约束。真正的空样本（既无期望也无禁止项、无期望状态）单独报告为 `unlabelled`，不计入任一侧，否则「没标注」会被当成「通过」。
@@ -55,8 +57,8 @@
 
 | | delivered / quiet | missed | leaked |
 | --- | --- | --- | --- |
-| 应该交付（56） | 49 | 7 | 0 |
-| 应该安静（39） | 38 | 0（期望状态未达成） | 1 |
+| 应该交付（57） | 50 | 7 | 0 |
+| 应该安静（42） | 38 | 0（期望状态未达成） | 4 |
 
 由它得到两个指标：`expectation_hit_rate` = 50/57 = 0.877，回答「该给的东西给了几次」；`quiet_rate` = 38/42 = 0.905，回答「不该出声的时候有多安静」。`unlabelled` 为 0。7 条 missed 是已经记录在案的缺口（两条 archived 措辞问句、三条多记忆组合、两条多主题检索行），不是新增失败；4 条 leaked 见下一条的口径说明与第 7 节的机制记录（`inject-neg-docker-image` 的首词别名，加上候选批第 4 批并入的三条：`feature flag` 按空格拆成两个 ASCII 词元、共享「连接」与「超时」两个常用词、以及「缓存」与「monorepo」各给一条证据）。
 
@@ -132,6 +134,8 @@
 其十四，那项「代价不对称」现在有了一半数字。`trigger.mjs` 让场景声明 `contaminated_by: <memory-id>`，回合结束后把「用户问题 + Agent 回答 + 当时就在上下文里的那条记忆」交给裁判，只问两件事：`carried`（回答是否重述或采纳了这条记忆的内容）与 `harmed`（采纳是否让回答变得不正确或误导；只是多提一句无关信息算 `unclear`，不算 `yes`）。裁判看不到标签，`--no-judge` 可关。两批实测：near-miss 形态（`quiet-docker-nginx`，问「容器里怎么装 nginx」，而热点层因为「容器」是 `mem-docker-image` 的整词关键词而把它注入）8 回合 carried 3、harmed yes 0、unclear 2；冲突形态（`conflict-deploy-port`，问「部署脚本默认端口是多少」，注入计划会同时给出 `mem-deploy-port` 与两条互相矛盾的 `mem-port-rule-a`/`mem-port-rule-b`）3 回合 carried 3、harmed yes 0，但三次回答都拒绝给出端口，理由是「两条同主体记忆并列且没有可比较的时间/提交证据，不能替你选一个」。两条读法：其一，无关的近邻误交付不会自动变成错误答案，模型多数直接忽略，采纳时也只是多一段无关内容，所以「每 19 个该安静的问题泄漏 1 条」（其十三）不能被等同于「错误率 +5%」；其二，真正贵的是同主体冲突值，但代价不是答错而是**答不出来**——即使 `mem-deploy-port` 就在上下文里，两条冲突记录也会让 Agent 选择澄清而不是给值，这正是第 10 节诊断矩阵里「多条记忆冲突 → 版本和事实关系不足 → Conflict Resolution」那一行，现在有了可复现的观测面。诚实边界：`fact` 判据是子串命中，所以 `conflict-deploy-port` 三回合都记 `hit`/`used=true`（18080 出现在回答里），只有裁判才指出结论是「未知」；冲突形态的 n=3、near-miss 的 n=8 都只是方法加基线，还不能当比率用。
 
 其十五，真实 session 的观测面也已经接上，而且不需要新的生产通道：`packages/pi-extension/src/decision-log.ts` 的 decision log 原本就是「按需开启的诊断日志」，这轮只给记录补了 `memory_ids`、`matched_ids`、`query_hash`、`query_chars`（仍然只有标识、计数、耗时，没有正文和问句），`eval/memory/shadow.mjs` 再按 session 与 `input_id` 把 input / tool_search / tool_resolve / tool_read 拼成一条 trace 并输出不需要标签的比率。端到端验证用的是 `trigger.mjs --decision-log <path>` 产出的真实三回合日志：一条冷问题走成 `no_match → tool_search(not_found, cards=0) → tool_resolve(resolved, mem-conn-pool) → tool_read`，一条「容器里怎么装 nginx」被热点层注入了 `mem-docker-image`（一次真实的误交付），一条 hello world 保持安静；`shadow.mjs` 报出 3 turns / 1 injected、交付后调用工具 100%、读了正文 100%、未交付时主动检索 50%、gather 零命中 50%、`top_injected mem-docker-image×1`、input handler p50 5.77 ms。这里有一个新的可观测代价：误交付并不是「白给一段文本」——那一回合 Agent 因此多调用了一次 `memory_read`（把无关记忆的正文也读进了上下文），所以误交付的成本可以用「多一次 read + 其 token」直接计量，而不用只靠裁判判「答案是否变坏」。诚实边界：样本只有 3 回合，比率只是管线验证；`shadow.mjs` 无标签，因此它不报 Recall（那仍归 `run.mjs`/`trace.mjs`）；抽样与容量限制都在日志之后执行，生产侧不知道也不可能被它拖慢。
+
+其十七，第 10 节诊断矩阵里「误注入 → 收紧阈值/别名」这一支现在有实测答案：四条已知误注入全部保留在基线里，不改匹配器。理由是两条已经量到的数据——把 `DEFAULT_MIN_MATCH_SCORE` 抬到 2 会让误注入归零但代价是 `inject_implicit_migration` 变成 miss（`inject_hit_rate` 0.800、Recall@1 0.889，见第 7 节上面的扫描），而同形近义误注入的真实代价在端到端测量里是「多一次 read + 一段被忽略或顺带复述的文本」（8 回合中 carried 3、harmed 0）。也就是说这条分支的收益上限是 4/99 的噪声，成本却可能是 10% 的召回，所以先记录、不动作；四条各自对应的机制（首词整词别名、「两条独立词元」、`feature flag` 的空格拆分）都写进了 `eval/memory/README.md` 的「Known gaps in the baseline」，下一次动这条判据时它们是可回退的对照物。
 
 其十六，同名冲突到底是「呈现缺证据」还是「数据没记录」也已经问了：产品本来就有记录替代关系的地方——pending stale event，所以实验就是把这条替代关系记上，再问同一个问题。`trigger.mjs --stale-port-rule` 只给较旧的 `mem-port-rule-a` 补一条 stale 事件（「2026-11-18 的评审把端口约定改成 18080，旧的 8080 仅保留一周」），检索、注入、问题全部不动；同时给场景加了 `decided_fact`，因为子串判据分不清「给出一个值」和「并列候选后表示无法确定」，只有裁判能。结果：不记替代关系时 3/3 拒绝（0/3 committed），记上之后 2/3 明确结论为 18080、并逐条列出证据（`mem-port-rule-b` 现行、`mem-port-rule-a` 标 STALE 且带后续证据、`mem-deploy-port` 只记录两者要一起改），原文说「这是一次已生效的后续变更，按规则它取代较早的 8080」；第三回合仍然拒绝，而它的回答只报告了 `mem-deploy-port` 的 freshness（current、无 pending），完全没提 `rule-a` 的 stale 事件，所以它的失败点是自己没去读那条 pending 详情，而不是标记缺失。结论：同名冲突的修法在**数据**——用既有的 stale 事件记录谁替代了谁，不需要新 schema——检索层的 `conflicted` 状态加每条 freshness 已经够 Agent 推理；这仍然只是方法加方向信号（每臂 3 回合、一个问题），而且那两次跑在网关争用下 p50 约 260 秒，延迟数字不可引用。
 
