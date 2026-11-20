@@ -46,7 +46,7 @@ Baseline harness (writes `eval/baseline/out/`):
 node eval/baseline/run.mjs --question "记得之前定过记忆层用哪个 SQLite 驱动吗"
 ```
 
-Memory eval (runs 52 labeled cases, then diffs against the committed baseline):
+Memory eval (runs 79 labeled cases, then diffs against the committed baseline):
 
 ```sh
 cd eval/memory

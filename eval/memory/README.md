@@ -44,7 +44,10 @@ baseline diff is never noise.
 
 ## Dataset
 
-`cases.jsonl` has one case per line, 52 of them at `CATALOG_VERSION` 4.
+`cases.jsonl` has one case per line, 79 of them at `CATALOG_VERSION` 6.
+Coverage by category: `implicit-recall` 33, `negative` 22, `composition`
+11, `cross-project` 4, `stale` 3, `explicit-recall` 2, `conflict` 2,
+`source-gap` 2; by surface: `inject` 51, `search` 28.
 `catalog.mjs` holds the fixed 20-memory, 2-project catalog, `seedStore` (which
 also records one pending stale event on `mem-stale-ttl`), and
 `HISTORY_SCENARIOS` + `scriptedHistoryPort` for the history surface. Changing the catalog means bumping `CATALOG_VERSION`
@@ -68,7 +71,7 @@ Case fields:
 | `history_scenario` | key into `HISTORY_SCENARIOS`; defaults to `none` |
 | `rank_ignored` | presence only, no rank credit or penalty (conflict cases, where order carries no information) |
 | `expected_only` | assert "these and nothing else": any other injected id scores `false_positive` and is listed in `extra_ids` |
-| `category` | `explicit-recall`, `implicit-recall`, `negative`, `cross-project`, `conflict`, `source-gap`, `stale` |
+| `category` | `explicit-recall`, `implicit-recall`, `negative`, `cross-project`, `conflict`, `source-gap`, `stale`, `composition` |
 | `note` | why the label is what it is |
 
 ## Annotation rules
@@ -221,7 +224,7 @@ the user's words to it, and the judge had nothing to rewrite toward.
 
 Adding 容器 to that memory's keywords (`CATALOG_VERSION` 5) turns the same
 scenario green: `--only cold-image-tag --repeats 2` goes from
-`miss (retrieval_miss)` to `hit hit`, and the 52-case offline baseline is
+`miss (retrieval_miss)` to `hit hit`, and the offline baseline of the time is
 unchanged because no offline case asked that way. The general lesson is the one
 `Memory Coverage` exists for: for a lexical retriever, the words a memory is
 written with decide whether it can ever be found, and that is a formation
@@ -438,8 +441,27 @@ pool leak debugging, an i18n upgrade) — a lexical matcher cannot separate
 those, and two of them run in the other project's scope where the injected
 memory is the right one anyway.
 
-That left the baseline at zero false positives on the 18 cases of the time, which is a small
+That left the baseline at zero false positives on the cases of the time, which is a small
 set: treat it as a floor to defend, not as proof of precision.
+
+### Known gaps in the baseline
+
+The 79-case baseline is not clean, and the misses are the point:
+
+- `inject-neg-docker-image`: "容器里怎么装 nginx" injects `mem-docker-image`,
+  because 容器 is a whole keyword and the query opens with it, so the
+  keyword-alone rule lets it decide. This is the first labelled false positive
+  since the three precision fixes, and it is the same rule that keeps
+  "迁移失败后先做什么" working — the rule cannot tell 容器 as a topic from 容器
+  as one word in a different task.
+- `search-comp-migration-port` ("迁移 端口") and `search-comp-cache-timeout`
+  ("缓存 超时") find nothing: the index is AND-combined, so naming two topics
+  in one query requires a single memory carrying every token. Gathering across
+  topics needs one search per topic, which the runner does not yet model.
+- The five older misses still stand: three inject composition rows
+  (`hand-b3-comp-port-deploy`, `hand-b3-comp-monorepo-i18n`,
+  `hand-b3-comp-log-stale`) and two search rows
+  (`hand-b3-scomp-deploy-port-rule`, `hand-b3-scomp-pool-timeout`).
 
 The floor itself is still 1, and the baseline records what moving it costs.
 Setting `DEFAULT_MIN_MATCH_SCORE` to 2 keeps false positives at 0.000 but turns

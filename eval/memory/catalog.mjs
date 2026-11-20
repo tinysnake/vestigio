@@ -253,6 +253,18 @@ export const HISTORY_SCENARIOS = {
 			project_resolved: false,
 		},
 	],
+	// The correction a stale memory waits for: the memory still carries the old
+	// value, and this excerpt is where the new one lives.
+	"newer-timeout": [
+		{
+			source_ref: source("history-timeout", PROJECT, 9),
+			text: "空闲会话超时已经从 30 分钟改成 15 分钟，评审记录在 2026-11-16。",
+			timestamp: AT,
+			role: "assistant",
+			evidence_complete: true,
+			project_resolved: true,
+		},
+	],
 };
 
 /** A scripted HistoryPort: probe ok, one bounded search, one bounded read. */
