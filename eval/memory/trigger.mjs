@@ -28,7 +28,10 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const EXTENSION = join(ROOT, "packages/pi-extension/src/extension.ts");
 const MODEL = argument("--model") ?? "magpie/auto/deepseek-v4.1-flash";
 const REPEATS = Number(argument("--repeats") ?? "2");
+// Comma-separated ids let a subset run together, which is how a signal that
+// depends on what ran earlier in the same store stays reproducible.
 const ONLY = argument("--only");
+const ONLY_IDS = ONLY === null ? null : new Set(ONLY.split(",").map((id) => id.trim()));
 const DRY = process.argv.includes("--dry");
 // Kept outside the scratch dir so a real turn's decision log can be read by
 // shadow.mjs after the run.
@@ -223,7 +226,7 @@ function resolveModelPort() {
 
 const rows = [];
 for (const scenario of SCENARIOS) {
-	if (ONLY !== null && scenario.id !== ONLY) continue;
+	if (ONLY_IDS !== null && !ONLY_IDS.has(scenario.id)) continue;
 	for (let index = 0; index < REPEATS; index += 1) {
 		const turn = runTurn(scenario.question);
 		const calls = turn.memoryCalls ?? [];
