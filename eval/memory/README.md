@@ -1116,6 +1116,37 @@ node --import ../pi/hook.mjs ./run.mjs --out out/report.json
 node ./compare.mjs --baseline=HEAD~1 out/report.json
 ```
 
+## Coverage of real demand
+
+Every other number here starts from a case set someone wrote. Coverage starts at
+the other end: the questions real work actually asked.
+
+`coverage.jsonl` holds 40 questions harvested from the author's own sessions on
+this project (2026-11-17 .. 11-20, 61 sessions), each with its `session_id`,
+`message_uuid` and the verbatim question. Two axes are annotated separately:
+
+| field | meaning |
+| --- | --- |
+| `durable` | the answer is long-lived, project-scoped knowledge a memory should hold, not session-local reasoning |
+| `answer_lives` | where the answer is actually recorded: `history` (raw transcripts only), `nowhere`, or `unverified` |
+
+Coverage = store / (store + history + nowhere) over the `durable` rows. The store
+column needs a real store, so on a machine without one the honest reading is the
+task list: **31 of 40 rows are durable and all 31 answers live only in raw
+transcripts** — nothing in this sample is carried by a memory yet. The other nine
+are `durable: false` (session-local references, one-off plans, run details).
+
+```sh
+node ./coverage.mjs                       # counts + sheet on stdout
+node ./coverage.mjs --out out/coverage.md
+```
+
+A second pass re-found every answer with `obelisk` (66 quotes checked as verbatim
+substrings of the cited messages) and corrected 6 classifications and 8 draft
+answers; the `draft_*` fields keep the first pass so a reviewer can compare.
+`docs/memory-eval-coverage.md` has the harvest rule, the annotation contract and
+the limits.
+
 ## What this does not measure
 
 - Model behaviour: nothing is generated, so answer quality is out of scope.
@@ -1130,6 +1161,8 @@ node ./compare.mjs --baseline=HEAD~1 out/report.json
 - Whether stale memory is *used*: `expected_stale_ids` only proves the pending
   event reached the surface (the card and the ⚠ hint). Misuse Rate needs the
   agent's answer, so it is out of scope here.
+- Memory coverage: the demand side (`coverage.jsonl`) and its labels exist,
+  but the store side needs a populated store — see "Coverage of real demand".
 - Multi-turn dedup and concurrency: each inject case gets a fresh
   `InjectionLedger` and each run a fresh store, with fixed seeded activity, so
   recency stays constant.
