@@ -25,6 +25,7 @@ hook `eval/pi` uses. Do not copy it here.
 | `--cases <path>` | `cases.jsonl` | dataset to run |
 | `--out <path>` | `out/report.json` | report path, parent dirs created |
 | `--store <path>` | fresh `mkdtemp` store | reuse/extend a specific store; never deleted |
+| `--no-seed` | off | score against the store as it stands instead of planting the catalog; needs `--store` |
 | `--keep` | off | keep the temp store and print its path for inspection |
 
 Exit code is 1 only when a case is `error` (the harness itself broke). `miss`
@@ -41,6 +42,46 @@ node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/r
 
 Two runs of the same dataset are byte-identical apart from `generated_at`, so a
 baseline diff is never noise.
+
+### Auditing a store the product filled
+
+`run.mjs` builds the lab store from `catalog.mjs`, so every expected id is
+planted before the question is asked. Two flags move the same machinery onto a
+store the product filled instead:
+
+```sh
+cd eval/memory
+node ./audit.mjs --store ~/.vestigio/store.sqlite --cases cases.jsonl --out out/audit.json
+cp ~/.vestigio/store.sqlite /tmp/store-copy.sqlite
+node --import ../pi/hook.mjs ./run.mjs --store /tmp/store-copy.sqlite --no-seed --cases my-questions.jsonl --out out/real.json
+```
+
+`audit.mjs` opens the file read-only (falling back to `PRAGMA query_only` for a
+store that is mid-write) and every statement is a SELECT, so it can run while an
+agent works. It reports what is in there — memories by state and project, body
+chars, pending stale events, hotspot memberships, FTS rows, and the rows only a
+real delivery writes (injection receipts, resolver versions, usage events, hit
+counters) — and, given `--cases`, the **Memory Gap** split: how many of the
+labelled expected ids are absent from this store at all. A gap is a memory that
+was never formed, which no search change can fix; `store_coverage` is the share
+of those expectations the store contains.
+
+`--no-seed` scores a case set against the store as it stands. Measured both
+ways: against the lab store it reproduces the baseline exactly (50 hit / 38
+clean / 7 miss / 4 false_positive), and against an empty store the same 99 cases
+become 2 hit / 42 clean / 55 miss / 0 false_positive — the honest reading of an
+empty store, and the reason the audit reports coverage next to the score.
+
+Scoring is not read-only: `recordProjectInput` appends to `project_activity`, so
+copy the store before pointing `run.mjs` at a real one. `audit.mjs` never writes.
+`--no-seed` needs `--store`: with a temporary store the flag would change nothing
+and is refused.
+
+The verdict line reads delivery rows, not activity: `project_activity` is
+written for any input, including the lab's, while receipts, resolver versions,
+usage events and hit counters are written only by a real delivery. A store with
+activity but no delivery rows reports "inputs were recorded but nothing was ever
+delivered".
 
 ## Dataset
 

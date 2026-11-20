@@ -33,12 +33,19 @@ const casesPath = resolve(argument("--cases") ?? "cases.jsonl");
 const outPath = resolve(argument("--out") ?? "out/report.json");
 const storeArgument = argument("--store");
 const keep = process.argv.includes("--keep");
+// `--no-seed` scores a case set against a store the product filled instead of
+// building the lab catalogue in it. Without it, `--store` would overwrite the
+// question being asked, because every expected id would be planted first.
+const noSeed = process.argv.includes("--no-seed");
+if (noSeed && storeArgument === null) {
+	throw new Error("--no-seed needs --store: a temporary store starts empty either way");
+}
 
 const tempDir = storeArgument === null ? mkdtempSync(join(tmpdir(), "vestigio-memory-eval-")) : null;
 const storePath = storeArgument === null ? join(tempDir, "store.sqlite") : resolve(storeArgument);
 mkdirSync(dirname(storePath), { recursive: true });
 const store = openStore({ path: storePath });
-const seed = seedStore(store);
+const seed = noSeed ? { memories: 0 } : seedStore(store);
 
 const casesBytes = readFileSync(casesPath);
 const cases = casesBytes
@@ -230,7 +237,7 @@ const report = {
 	commit: gitCommit,
 	catalog_version: CATALOG_VERSION,
 	dataset_sha256: createHash("sha256").update(casesBytes).digest("hex"),
-	seed: { store: storeArgument === null ? "temporary" : storePath, memories: seed.memories },
+	seed: { store: storeArgument === null ? "temporary" : storePath, memories: seed.memories, seeded: !noSeed },
 	summary,
 	confusion,
 	metrics: {

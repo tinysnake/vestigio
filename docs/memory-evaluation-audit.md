@@ -196,6 +196,8 @@
 
 结论：覆盖率不是加埋点能得到的数字，是一次人工标注工作，规模约 30–50 条问题、每条一次人工判定，产出是三个比例（库内 / 仅历史 / 缺失）。在它落地之前，本文件把它记为「尚未」，并且不用 `gather_empty_rate` 冒充覆盖率。
 
+**现在有了工具，仍缺那份标注。** 上面那两件事现在各交付了一半。`eval/memory/audit.mjs` 只读打开一个真实 store（WAL 争用下退化为 `PRAGMA query_only`，全程 SELECT），报出库存——按状态与项目的记忆数、正文字符、待处理 stale 事件、热点成员、FTS 行数——以及只有真实交付才会写的行（injection receipts、`resolve_versions`、`usage_events`、hit/access 计数）；给 `--cases` 时给出 **Memory Gap** 拆分：被标为正确的 id 有多少根本不在这份库里，`store_coverage` = 存在的期望 id / 全部期望 id。判 `product has run here` 看的正是那几类交付行而不是 `project_activity`——后者任何输入都会写，包括 lab 自己，所以「有活动但没有任何交付」会被单独说成一种状态。另一半是让同一批样本对着真实库计分：`run.mjs --store <副本> --no-seed` 跳过 catalog 播种、直接按库现状判。两个方向都实测过：对着 lab store 复现基线（50 hit / 38 clean / 7 miss / 4 false_positive），对着空库同样的 99 条变成 2 / 42 / 55 / 0——这是空库的诚实读数，也是审计把覆盖率报在分数旁边的原因。计分不是只读的（`recordProjectInput` 会追加 `project_activity`），对真实库计分要先复制文件；`audit.mjs` 不写。仍然缺的还是那 30–50 条真实问题的人工判定：工具能算出「期望 id 在不在库里」，算不出「这个问题本来就该有记忆，以及答案是否只存在于原始历史」。
+
 ### 一个已经查清的观测：过期标记在真实链路里是短暂的
 
 14 回合那次运行里，`recall-stale-timeout` 交付的 `mem-stale-ttl` 记录为 `stale_ids: []`（shadow 因此报 `stale delivered 0`），而单独只跑这一条场景时同一字段是 `["mem-stale-ttl"]`（`stale delivered 1 (read 100%)`）。当时记为待查项，现在查清了，结论与最初列出的候选原因接近但不是它。
