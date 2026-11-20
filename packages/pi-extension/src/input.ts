@@ -194,6 +194,9 @@ export function handleInput(
 		// budget dropped without reading any memory body back out of the log.
 		matched_ids: plan.matched.map((match) => match.memory_id),
 		memory_ids: plan.injected.map((match) => match.memory_id),
+		stale_ids: plan.injected
+			.filter((match) => match.freshness.is_stale)
+			.map((match) => match.memory_id),
 		block_bytes: plan.budget.used_bytes,
 		estimated_tokens: plan.budget.estimated_tokens,
 		elapsed_ms: plan.elapsed_ms,

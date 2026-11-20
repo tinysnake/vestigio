@@ -79,6 +79,7 @@ function buildTurns(records) {
 				reason: record.reason ?? null,
 				matched_ids: record.matched_ids ?? [],
 				injected_ids: record.memory_ids ?? [],
+				stale_ids: record.stale_ids ?? [],
 				query_hash: record.query_hash ?? null,
 				query_chars: record.query_chars ?? null,
 				elapsed_ms: record.elapsed_ms ?? null,
@@ -130,6 +131,14 @@ const readBody = (turn) => turn.tools.some((tool) => tool.kind === "tool_read");
 const searched = (turn) => turn.tools.some((tool) => tool.kind === "tool_search" || tool.kind === "tool_resolve");
 
 const searches = limited.flatMap((turn) => turn.tools.filter((tool) => tool.kind !== "tool_read"));
+// A turn that gathered and got nothing back is an inferred retrieval miss: the
+// log cannot say whether a memory should have existed, so this is reported as a
+// rate over gather turns rather than as recall.
+const gathered = limited.filter(searched);
+const gatherEmpty = gathered.filter(
+	(turn) => turn.injected_ids.length === 0 && turn.tools.every((tool) => tool.memory_ids.length === 0),
+);
+const staleDelivered = injected.filter((turn) => turn.stale_ids.length > 0);
 const resolves = searches.filter((tool) => tool.kind === "tool_resolve");
 const zeroHit = searches.filter((tool) => tool.memory_ids.length === 0);
 
@@ -172,6 +181,13 @@ const summary = {
 	resolve_calls: resolves.length,
 	resolve_degraded: resolves.filter((tool) => (tool.detail ?? "").includes("degraded=true")).length,
 	zero_hit_rate: rate(zeroHit.length, searches.length),
+	// Stale Misuse, the part a log can see on its own: a stale memory reached the
+	// turn, and whether the agent then opened the pending detail. Heeding it still
+	// needs the answer text, which only `trigger.mjs` has.
+	stale_delivered_turns: staleDelivered.length,
+	stale_read_after_delivery_rate: rate(staleDelivered.filter(readBody).length, staleDelivered.length),
+	gather_turns: gathered.length,
+	gather_empty_rate: rate(gatherEmpty.length, gathered.length),
 	search_statuses: statuses(searches.filter((tool) => tool.kind === "tool_search")),
 	resolve_statuses: statuses(resolves),
 	top_injected: topInjected,
@@ -202,6 +218,7 @@ const report = {
 		query_chars: turn.query_chars,
 		matched_ids: turn.matched_ids,
 		injected_ids: turn.injected_ids,
+		stale_ids: turn.stale_ids,
 		tools: turn.tools,
 		elapsed_ms: turn.elapsed_ms,
 	})),
@@ -222,6 +239,9 @@ console.log(
 );
 console.log(
 	`  gather calls ${summary.search_calls + summary.resolve_calls} (search ${summary.search_calls}, resolve ${summary.resolve_calls} / degraded ${summary.resolve_degraded}), zero-hit ${percent(summary.zero_hit_rate)}`,
+);
+console.log(
+	`  gather turns that got nothing: ${percent(summary.gather_empty_rate)} of ${summary.gather_turns}; stale delivered ${summary.stale_delivered_turns} (read ${percent(summary.stale_read_after_delivery_rate)})`,
 );
 if (topInjected.length > 0) {
 	console.log(`  injected most: ${topInjected.map((entry) => `${entry.memory_id}×${entry.count}`).join(", ")}`);

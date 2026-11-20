@@ -800,6 +800,20 @@ a tool, whether it read a body, whether a turn with nothing delivered searched
 anyway, the share of gather calls that returned nothing, resolver statuses and
 degradation, the most-injected memories, and the `input` handler's p50/p95.
 
+Two of those signals are worth naming, because they are the only stale/retrieval
+evidence a real run offers without a label:
+
+- **stale delivered → was the pending detail read.** The injected record carries
+  `stale_ids` (the delivered memories whose freshness said stale), so shadow can
+  count turns where a stale memory reached the agent and whether that turn then
+  called `memory_read` — the read is what opens the pending event that carries
+  the corrected value. It proves the alert was *openable*, not that it was
+  heeded: heeding needs the answer text, which only `trigger.mjs` sees.
+- **gathered and got nothing.** A turn that called `memory_search` or
+  `memory_resolve` and received no memory is an inferred retrieval miss. It is
+  reported as a rate over gather turns, never as recall: without a label the log
+  cannot say whether a memory should have existed.
+
 Measured on three real turns produced by `trigger.mjs --decision-log <path>`:
 
 ```
@@ -807,8 +821,20 @@ Measured on three real turns produced by `trigger.mjs --decision-log <path>`:
   after injection: tools 100.0%, body read 100.0%
   nothing injected: unprompted search 50.0%; reasons {"no_match":2}
   gather calls 2 (search 1, resolve 1 / degraded 0), zero-hit 50.0%
+  gather turns that got nothing: 0.0% of 1; stale delivered 0 (read -)
   injected most: mem-docker-image×1
   input handler p50 5.77ms p95 6.37ms
+```
+
+The stale signal on a turn that does deliver an outdated memory
+(`trigger.mjs --only recall-stale-timeout --decision-log <path>`, one turn):
+
+```
+1 turns (1 sessions, sample 1): 1 injected
+  after injection: tools 100.0%, body read 100.0%
+  gather calls 2 (search 1, resolve 1 / degraded 0), zero-hit 100.0%
+  gather turns that got nothing: 0.0% of 1; stale delivered 1 (read 100.0%)
+  injected most: mem-stale-ttl×1
 ```
 
 The cold turn's trace shows the whole chain in a production artifact:

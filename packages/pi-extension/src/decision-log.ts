@@ -39,6 +39,8 @@ export type DecisionRecord = {
 	readonly memory_ids?: readonly string[];
 	/** Candidate ids before budget and dedup: the two false-positive tiers. */
 	readonly matched_ids?: readonly string[];
+	/** Injected ids whose freshness said stale: the Stale Misuse side. */
+	readonly stale_ids?: readonly string[];
 	/** 12 hex characters of sha256(query): identity without the words. */
 	readonly query_hash?: string;
 	readonly query_chars?: number;

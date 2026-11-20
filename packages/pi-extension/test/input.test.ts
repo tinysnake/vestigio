@@ -165,6 +165,9 @@ describe("handleInput", () => {
 		const record = decisions().at(-1);
 		expect(record?.memory_ids).toEqual(["mem-deploy"]);
 		expect(record?.matched_ids).toEqual(["mem-deploy"]);
+		// Nothing in this fixture is stale, so the stale side of the delivery is
+		// recorded as empty rather than absent: a shadow run reads the field.
+		expect(record?.stale_ids).toEqual([]);
 		expect(record?.query_hash).toMatch(/^[0-9a-f]{12}$/);
 		expect(record?.query_chars).toBe(Array.from(text).length);
 		expect(JSON.stringify(record)).not.toContain(text);
