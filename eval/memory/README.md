@@ -732,6 +732,29 @@ from the indexed text. This is a property of the matcher, not of the eval; the
 extension's `memory_search` tool documents the same expectation, and
 `memory_resolve` is the natural-language path.
 
+### Why an empty result is not retried with fewer words
+
+A tempting, free-looking fix is to drop the words the pool cannot hold and run
+the conjunction again. Three versions were built and measured, and none cleared
+`compare.mjs`:
+
+| Version | Target query `容器 镜像 命名 container image name` | Offline 99 cases |
+|---|---|---|
+| drop tokens the pool does not hold | still empty — `命`/`名` exist in *other* memories, so the AND is empty again | 0 regressions, 0 fixes |
+| keep only word-shaped tokens with df ≤ 10% of the pool | finds `mem-docker-image` | 6 `clean → false_positive` |
+| keep every word-shaped token the pool holds, require one specific | finds `mem-docker-image` | 5 `clean → false_positive` |
+
+Every leak is a `search-near-miss-*` row, and that is the point of those rows:
+they share the memory's words and ask something else, e.g. 「Redis 连接池的空闲
+连接总是被对端回收，怎么调 TCP keepalive」 against a memory about the pool's
+size. What a widening drops is usually the *subject* (`TCP keepalive`, `API
+版本`, `日志级别`), not a gloss, and telling a gloss from a subject is a semantic
+judgement — that is what `memory_resolve`'s rewrite already does (50 of 52
+literal misses, $0.0103), and what issue `tinysnake/vestigio#3` tracks. The
+retry also cannot be made safe by keeping only common tokens: a lone CJK
+character is a function character far more often than a word, which is why the
+second version pinned shape as well as rarity.
+
 ### Query expansion
 
 `memory_resolve` does not bypass that matcher: it searches the same index and
