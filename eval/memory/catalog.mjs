@@ -9,7 +9,7 @@
 
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 
-export const CATALOG_VERSION = 5;
+export const CATALOG_VERSION = 6;
 export const PROJECT = "p-memory-eval";
 export const OTHER_PROJECT = "p-memory-eval-other";
 export const AT = "2026-11-17T12:00:00.000Z";
@@ -114,8 +114,11 @@ export const MEMORIES = [	memory({
 		project: PROJECT,
 		title: "会话保活时长",
 		keywords: ["会话超时", "空闲断开"],
-		nav: "会话保活时长，后来改短，仅作历史参考。",
-		prefix: "曾经约定空闲会话 30 分钟后自动断开，后来改成了 15 分钟。",
+		// The summary carries the value the project used before the review: the
+		// change lives in the pending stale event, so an answer that repeats 30
+		// proves the agent never read what the marker told it to read.
+		nav: "空闲会话的保活时长。",
+		prefix: "空闲会话 30 分钟后自动断开。",
 	}),
 	memory({
 		id: "mem-port-rule-b",

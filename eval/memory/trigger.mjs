@@ -45,7 +45,10 @@ const SCENARIOS = [
 	{ id: "recall-deploy-port", expect: "query", fact: "18080", question: "这个项目的部署脚本默认端口是多少？之前定过吗" },
 	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
 	{ id: "recall-cache-invalidation", expect: "query", fact: "删缓存", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
-	{ id: "recall-stale-timeout", expect: "query", fact: "15", question: "空闲会话多久自动断开？这个值之前是不是改过" },
+	// `misused` names the value the memory itself carries: `mem-stale-ttl` holds
+	// 30 minutes with a pending event that moved it to 15, so an answer of 30 is
+	// a stale memory used as current, not merely a missed fact.
+	{ id: "recall-stale-timeout", expect: "query", fact: "15", misused: "30", question: "空闲会话多久自动断开？" },
 	// Cold: the hotspot layer injects nothing for these (checked with
 	// planInjection), so only a deliberate search can answer them.
 	{ id: "cold-conn-limit", expect: "query", fact: "20", question: "我们数据库连接那儿最多允许多少个" },
@@ -193,14 +196,24 @@ for (const scenario of SCENARIOS) {
 		// The fact is a literal from the memory's own text; the answer has to
 		// carry it for the turn to count as using memory, not just retrieving it.
 		const used = scenario.fact === undefined ? null : compact(turn.text ?? "").includes(compact(scenario.fact));
+		// Naming the superseded value is the right thing to do as long as the answer
+		// also states the current one; only an answer that carries the old value
+		// *instead of* the new one is a misuse, so this needs both halves.
+		const staleMisuse =
+			scenario.misused === undefined || turn.text === undefined
+				? null
+				: !compact(turn.text).includes(compact(scenario.fact)) &&
+					compact(turn.text).includes(compact(scenario.misused));
 		const status =
 			scenario.expect === "query"
 				? !called
 					? "trigger_miss"
 					: used === false
-						? REFUSAL.test(turn.text ?? "")
-							? "miss"
-							: "usage_miss"
+						? staleMisuse === true
+							? "stale_misuse"
+							: REFUSAL.test(turn.text ?? "")
+								? "miss"
+								: "usage_miss"
 						: "hit"
 				: called
 					? "over_trigger"
@@ -220,6 +233,7 @@ for (const scenario of SCENARIOS) {
 			id: scenario.id,
 			expect: scenario.expect,
 			status,
+			stale_misuse: staleMisuse,
 			failure,
 			surfaced: turn.surfaced === true,
 			question: scenario.question,
@@ -268,6 +282,13 @@ const report = {
 			const total = rows.reduce((sum, row) => sum + row.cost_usd, 0);
 			return hits === 0 ? null : Number((total / hits).toFixed(6));
 		})(),
+		// Stale Misuse Rate: of the turns whose memory carries a superseded value,
+		// how many answered with that value anyway? Only scenarios that name a
+		// `misused` value are graded; the rest have nothing to misuse.
+		stale_misuse_rate: rate(
+			rows.filter((row) => row.stale_misuse === true).length,
+			rows.filter((row) => row.stale_misuse !== null).length,
+		),
 		failures: {
 			trigger_miss: rows.filter((row) => row.failure === "trigger_miss").length,
 			retrieval_miss: rows.filter((row) => row.failure === "retrieval_miss").length,
@@ -285,7 +306,7 @@ writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
 const summary = report.summary;
 console.log(
 	`resolver model: ${summary.resolver_model ?? "none (degraded)"}`,
-	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), usage-miss ${summary.usage_miss_rate}, over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
+	`${summary.turns} turns: should-recall ${summary.should_recall_rate} (active ${summary.should_recall_active_rate}), usage-miss ${summary.usage_miss_rate}, stale-misuse ${summary.stale_misuse_rate}, over-trigger ${summary.over_trigger_rate}, cost $${summary.cost_usd}`,
 );
 console.log(
 	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,

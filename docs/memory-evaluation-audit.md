@@ -106,12 +106,14 @@
 
 其十，真实回合侧的最后一个缺口由 `eval/memory/trace.mjs` 补上：它用 `replay.mjs` 为每个回合重建热点层计划（同一个固定 catalog、临时 store、`recordProjectInput` 之后的 `planInjection`），再合并 `out/trigger.json` 的 Agent 行为与 `out/usage.json` 的裁判判定，写出一条覆盖 trigger → hotspot → delivery → usage → cost 的 Trace（`out/trace.json`），因此「该查没查」「查了没交付」「交付了没用上」「注入了什么、是否带过期标记」都在同一条记录里可读。24 回合（`CATALOG_VERSION` 5，`magpie/auto/deepseek-v4.1-flash` + 本地解析器模型）实测：热点层注入 8 次（4 个热场景各 2 次），交付 15 次（8 热 + 8 冷中的 7 次），**Rescue Rate 0.875（8 条冷回合中 7 条最终命中）**，失败归因 trigger 0 / retrieval 1 / usage 0，总成本 $0.024278、每命中 $0.001619、p50 16.1 s、p95 39.2 s；唯一的 retrieval miss 是一次冷回合里 `memory_search` 与 `memory_resolve` 都调用了却什么都没交付，同一问句在别的回合能命中，属于解析与改写的波动而不是固定缺口。同一批数据也暴露了本目录里最不稳定的指标：over-trigger 在两次重复下先后测到 0.125、0.250、0.500，因为「hello world」「重命名标题」「ENOENT」这类无关问题有时也会触发检索，所以它只能当作「要单独看的场景清单」，`--only <id> --repeats N` 才是量它的正确方式。裁判一致性同样有批次波动：同一批 16 条真实回答，两次运行分别是 0.938 与 0.867（差 0.07，约一条判定），与人工集上的 0.833 一起说明它只适合看趋势。
 
+其十一，Stale Misuse 从「只能测标记」推进到「能在真实回合上判别」：`mem-stale-ttl` 的摘要与正文只保留旧值（空闲会话 30 分钟），新值（15 分钟，2026-11-16 配置评审）只存在于 store 的 pending stale event 里，回合里 Agent 能看到的只有注入块上的 `⚠ 该摘要可能未吸收 1 条后续证据；memory_read 查看待处理详情`。判据因此是可判别的：答 30 且不提 15 记 `stale_misuse`，答 15（无论是否同时说明 30 已被取代）记命中——把「说出被取代的旧值」也判成误用是错的，`usage.mjs` 的裁判规则同样如此（`misused` 只在答案显示依赖了记忆却与记忆当前值冲突时成立）。实测两次重复：两次都调用 `memory_read`、读出 pending 事件、答出「现行 15 分钟，30 分钟已被取代」，`stale_misuse_rate` 0.000，说明 ⚠ 标记加读取工具确实把新值送到了答案里；样本量 2，只是给这条链路一个可回归的基线。同期把 over-trigger 从「跨批次不稳的比率」改成逐场景测量（4 个安静场景 × 3 次 = 12 回合）：重命名标题 1/3、解释索引 0/3、hello world 1/3、ENOENT 1/3，合计 3/12 = 0.250，每次触发都是一次 `memory_search`，代价是一次无效往返而不是错误答案；另外这批运行与另外两个 harness 共用同一个网关，p95 被抬到 117–202 s，因此延迟数字只能取自单独运行的那一批。
+
 | 1 固定 Dataset 重复运行 | 已满足 | 52 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
 | 2 区分四类 Miss | 已满足 | Trigger Miss 由 `trigger.mjs` 的 `failures.trigger_miss` 给出，Retrieval Miss 由同处的 `retrieval_miss`（调了工具但没有任何 `memory://` 交付）与离线 `miss` 给出，Usage Miss 由 `usage.mjs` / `trigger.mjs` 的 `usage_miss` 给出，Resolution Miss 由 `resolution.mjs` 的 7 条解析器用例按分支固定（裁判脚本化，不依赖模型状态） |
 | 3 Recall@1/3/5 | 已满足 | 当前均 0.943，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
 | 4 Candidate / Injection FP 分层 | 已满足 | 两个比率共用分母，另有 `budget_rescued` 计数据 |
 | 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
-| 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |
+| 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；真实回合侧新增可判别的过期场景与 `stale_misuse_rate`（实测 0.000，n=2），见其十一；样本量仍太小 |
 | 7 一次完整查询的 Trace | 已满足 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联由 `eval/memory/trace.mjs` 完成：它对每个真实回合重建热点层计划（`replay.mjs`）、合并 Agent 行为与裁判判定，输出一条覆盖 trigger → hotspot → delivery → usage → cost 的 JSON Trace（`out/trace.json`） |
 | 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`；`compare.mjs --baseline=<git-ref>` 直接用 `git show <ref>:eval/memory/baseline.json` 取旧版本的基线，不必再切 worktree（实测 `--baseline=bd4a4ae` 输出 `added in candidate: 34`、无回归） |
 | 9 P50/P95 与有效召回成本 | 已满足 | 离线 harness 不调用模型、不做索引，因此计时与 token 挂在真实链路上：`trigger.mjs` 报 P50/P95 与总成本并新增 `cost_per_hit_usd`，`usage.mjs` 报每次判定成本。24 回合实测：总 $0.024278、$0.001619 / 命中、p50 16.1 s、p95 39.2 s。生产路径上的完整成本仍要等 shadow 埋点 |

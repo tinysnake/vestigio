@@ -85,6 +85,14 @@ const coldTurns = traces.filter(
 );
 const rescued = coldTurns.filter((trace) => trace.stages.usage.status === "hit");
 const recallTurns = traces.filter((trace) => trace.expect === "query");
+// Stale Misuse Rate, on real turns: of the turns that carried a memory the store
+// already marked stale, how many did the judge call misused? A turn with no
+// verdict is counted once it is graded, not assumed innocent.
+const staleTurns = traces.filter((trace) =>
+	trace.stages.hotspot.injected.some((entry) => entry.stale),
+);
+const staleJudged = staleTurns.filter((trace) => trace.stages.usage.judge !== null);
+const staleMisused = staleJudged.filter((trace) => trace.stages.usage.judge === "misused");
 const summary = {
 	turns: traces.length,
 	recall_turns: recallTurns.length,
@@ -93,6 +101,9 @@ const summary = {
 	rescue_rate: coldTurns.length === 0 ? null : rescued.length / coldTurns.length,
 	rescue_turns: coldTurns.length,
 	judged: traces.filter((trace) => trace.stages.usage.judge !== null).length,
+	stale_turns: staleTurns.length,
+	stale_judged: staleJudged.length,
+	stale_misuse_rate: staleJudged.length === 0 ? null : staleMisused.length / staleJudged.length,
 };
 // Fewer cold turns than scenarios means a filtered run (`--only`), where the
 // rescue rate is a single sample rather than a rate.
@@ -119,6 +130,6 @@ writeFileSync(
 console.log(
 	`${summary.turns} turns: ${summary.hotspot_offered} injected, ${summary.delivered} delivered, ` +
 		`rescue ${summary.rescue_rate === null ? "-" : summary.rescue_rate.toFixed(3)} over ${summary.rescue_turns} cold turns, ` +
-		`${summary.judged} judged`,
+		`${summary.judged} judged, stale misuse ${summary.stale_misuse_rate === null ? "-" : summary.stale_misuse_rate.toFixed(3)} over ${summary.stale_judged} graded stale turns`,
 );
 console.log(`trace: ${outPath}`);

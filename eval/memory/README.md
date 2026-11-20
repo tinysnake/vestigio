@@ -526,22 +526,43 @@ resolver model wired:
 | over-trigger rate | 0.500 |
 | cost | $0.024278 total, $0.001619 per hit |
 | p50 / p95 | 16.1 s / 39.2 s |
+| stale misuse | 0.000 over 2 graded turns |
 
-Two readings of that table matter. The rescue rate answers the proposal's
-question about `Archived`/`Obelisk` rescue on the real pipeline: the hotspot layer
-offered nothing on eight turns and seven of them still ended with the fact in the
-answer, because the agent looked it up. And the one retrieval miss is a cold turn
-where both `memory_search` and `memory_resolve` were called and nothing ever
-reached the model — with the same question succeeding on other runs, so it is
-resolution variance rather than a permanent gap (the image-tag coverage gap that
-used to live here was fixed by giving that memory the words users say; see
-"A coverage gap the trigger harness found").
+The rescue rate answers the proposal's question about `Archived`/`Obelisk` rescue
+on the real pipeline: the hotspot layer offered nothing on eight turns and seven of
+them still ended with the fact in the answer, because the agent looked it up. And
+the one retrieval miss is a cold turn where both `memory_search` and
+`memory_resolve` were called and nothing ever reached the model — with the same
+question succeeding on other runs, so it is resolution variance rather than a
+permanent gap (the image-tag coverage gap that used to live here was fixed by
+giving that memory the words users say; see "A coverage gap the trigger harness
+found").
 
-The over-trigger rate is the least stable number in this directory: it has been
-0.125, 0.250 and 0.500 across runs at two repeats per scenario, driven by
-unrelated questions ("hello world", an ENOENT error) that the agent sometimes
-searches memory for anyway. Treat it as a list of scenarios to look at, not as a
-rate; `--only <id> --repeats N` is how to measure one scenario properly.
+The stale row is the proposal's Stale Misuse question measured on the agent.
+`mem-stale-ttl` carries 30 minutes while a pending event moves it to 15: both
+stale-timeout turns called `memory_read`, read the pending detail, and answered 15
+while saying 30 was superseded, so the ⚠ marker plus the read tool do carry the
+newer value end to end. Naming the superseded value is not counted as misuse —
+only an answer that carries 30 *instead of* 15 is.
+
+The over-trigger rate is the least stable number in this directory, because it
+moves with the scenario mix and the sample size. Measured one scenario at a time,
+three repeats each:
+
+| quiet scenario | over-trigger |
+| --- | --- |
+| `quiet-readme-heading` (rename a heading) | 1/3 |
+| `quiet-explain-index` (explain an index) | 0/3 |
+| `quiet-hello-world` (hello world) | 1/3 |
+| `quiet-enoent` (raw ENOENT error) | 1/3 |
+| total | 3/12 = 0.250 |
+
+Every trigger was a single `memory_search` on a question the store cannot answer,
+so the cost is one wasted round trip rather than a wrong answer. Two caveats for
+anyone reading these runs: their p95 numbers (117–202 s) are contaminated by three
+harness runs sharing one gateway at the same time — latency belongs to a solo run
+— and 8 of these 12 turns produced a full answer, so `clean` means "did not
+search", not "was fast".
 
 ## Compare two runs
 
