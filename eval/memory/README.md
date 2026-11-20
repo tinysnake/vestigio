@@ -44,7 +44,7 @@ baseline diff is never noise.
 
 ## Dataset
 
-`cases.jsonl` has one case per line, 95 of them at `CATALOG_VERSION` 6. The
+`cases.jsonl` has one case per line, 99 of them at `CATALOG_VERSION` 6. The
 sixteen `search-near-miss-*` rows were promoted from `candidates.batch-3.jsonl`
 after a hand check: each shares vocabulary with a memory and asks about
 something else, and each currently comes back `not_found`, so they exist to give
@@ -160,7 +160,7 @@ the two classes the labels actually define:
 A case with no expectation, no forbidden id and no `expected_status` is counted
 apart as `unlabelled` and left out of both sides, so an unlabelled row cannot be
 read as a pass. Note that `false_positive_rate` divides by every scored case
-(1/95 = 0.011) while the matrix divides by the 39 quiet cases (1/39 = 0.026): the
+(4/99 = 0.040) while the matrix divides by the 42 quiet cases (4/42 = 0.095): the
 same leak, diluted differently, so say which denominator you mean.
 
 ## Candidate batches
@@ -475,8 +475,18 @@ set: treat it as a floor to defend, not as proof of precision.
 
 ### Known gaps in the baseline
 
-The 79-case baseline is not clean, and the misses are the point:
+The 99-case baseline is not clean, and the misses are the point:
 
+- Three more false positives joined on batch 4, hand-checked and kept as tracked
+  precision debt rather than fixed on the spot, because each names a mechanism
+  the matcher cannot yet tell apart: `inject-neg-feature-flag-refactor`
+  ("把这个 feature flag 的开关逻辑抽成工具函数") is `feature flag` split into two
+  ASCII tokens and so two independent signals; `inject-neg-conn-timeout-debug`
+  ("数据库连接老是超时") shares the two everyday words 连接 and 超时;
+  `inject-neg-monorepo-ci-cache` ("这个 monorepo 的 CI 缓存老失效") gets one
+  signal from monorepo and one from 缓存, so both `mem-monorepo` and `mem-cache`
+  are injected. Together with the docker case they price the "two independent
+  tokens" rule at 4 in 99 instead of 1 in 95.
 - `inject-neg-docker-image`: "容器里怎么装 nginx" injects `mem-docker-image`,
   because 容器 is a whole keyword and the query opens with it, so the
   keyword-alone rule lets it decide. This is the first labelled false positive

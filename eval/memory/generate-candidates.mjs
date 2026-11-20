@@ -156,10 +156,23 @@ if (reviewPath !== null) {
 const { MEMORIES } = await import("./catalog.mjs");
 const ids = new Set(MEMORIES.map((memory) => memory.memory_id));
 
+// `--memory <id>` (repeatable) keeps a later batch scoped to the memories that
+// have no draft coverage yet, instead of re-drafting the ones already reviewed.
+const onlyMemories = [];
+for (let index = 2; index < process.argv.length; index += 1) {
+	if (process.argv[index] !== "--memory") continue;
+	const id = process.argv[index + 1];
+	if (id === undefined) throw new Error("--memory needs a value");
+	if (!ids.has(id)) throw new Error(`unknown memory id: ${id}`);
+	onlyMemories.push(id);
+}
+const targetMemories =
+	onlyMemories.length === 0 ? MEMORIES : MEMORIES.filter((memory) => onlyMemories.includes(memory.memory_id));
+
 const drafted = [];
 let cost = 0;
 let parsedCalls = 0;
-for (const memory of MEMORIES) {
+for (const memory of targetMemories) {
 	for (let done = 0; done < perMemory; done += BATCH) {
 		const count = Math.min(BATCH, perMemory - done);
 		const call = ask({ text: prompt(memory, count), model, system: SYSTEM });
@@ -185,7 +198,7 @@ const unique = drafted.filter((item) => {
 	return true;
 });
 writeFileSync(outPath, unique.map((item) => JSON.stringify(item)).join("\n") + "\n");
-const calls = MEMORIES.length * Math.ceil(perMemory / BATCH);
+const calls = targetMemories.length * Math.ceil(perMemory / BATCH);
 console.log(`${unique.length} candidate cases from ${parsedCalls}/${calls} calls, cost $${cost.toFixed(6)}`);
 console.log(`wrote ${outPath}`);
 console.log("next: node --import ../pi/hook.mjs ./run.mjs --cases " + outPath + " --out out/candidates.json");

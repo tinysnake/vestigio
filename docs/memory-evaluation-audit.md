@@ -51,16 +51,16 @@
 
 上面两个指标回答的是「有没有做到」，混淆矩阵回答的是「分母是谁」。离线 harness 只把样本分成两类，因为数据集本身只有这两类标注：**应该交付**（`expected_memory_ids` 或 `expected_source_refs` 非空，或要求交付 stale 标记）与**应该安静**（没有期望，但写了 `forbidden_memory_ids` 或 `expected_status`）。只写 `forbidden_memory_ids` 的空期望样本不算「未被测试」：它带着可被违反的约束。真正的空样本（既无期望也无禁止项、无期望状态）单独报告为 `unlabelled`，不计入任一侧，否则「没标注」会被当成「通过」。
 
-当前 95 条基线（`node --import ../pi/hook.mjs ./run.mjs`，读 `out/report.json` 的 `confusion`）：
+当前 99 条基线（`node --import ../pi/hook.mjs ./run.mjs`，读 `out/report.json` 的 `confusion`）：
 
 | | delivered / quiet | missed | leaked |
 | --- | --- | --- | --- |
 | 应该交付（56） | 49 | 7 | 0 |
 | 应该安静（39） | 38 | 0（期望状态未达成） | 1 |
 
-由它得到两个指标：`expectation_hit_rate` = 49/56 = 0.875，回答「该给的东西给了几次」；`quiet_rate` = 38/39 = 0.974，回答「不该出声的时候有多安静」。`unlabelled` 为 0。7 条 missed 是已经记录在案的缺口（两条 archived 措辞问句、三条多记忆组合、两条多主题检索行），不是新增失败；唯一一条 leaked 是 `inject-neg-docker-image`（「容器里怎么装 nginx」→ `mem-docker-image`），原因是查询首词的整词别名规则同时在支撑「迁移失败后先做什么」。
+由它得到两个指标：`expectation_hit_rate` = 50/57 = 0.877，回答「该给的东西给了几次」；`quiet_rate` = 38/42 = 0.905，回答「不该出声的时候有多安静」。`unlabelled` 为 0。7 条 missed 是已经记录在案的缺口（两条 archived 措辞问句、三条多记忆组合、两条多主题检索行），不是新增失败；4 条 leaked 见下一条的口径说明与第 7 节的机制记录（`inject-neg-docker-image` 的首词别名，加上候选批第 4 批并入的三条：`feature flag` 按空格拆成两个 ASCII 词元、共享「连接」与「超时」两个常用词、以及「缓存」与「monorepo」各给一条证据）。
 
-混淆矩阵与 `false_positive_rate` 的口径差异必须保留：后者以全部可评分样本为分母（1/95 = 0.011），前者以「应该安静」的 39 条为分母（1/39），同一个泄漏在两个数字里被稀释程度不同，引用时必须说明用了哪一个。
+混淆矩阵与 `false_positive_rate` 的口径差异必须保留：后者以全部可评分样本为分母（4/99 = 0.040），前者以「应该安静」的 42 条为分母（4/42），同一个泄漏在两个数字里被稀释程度不同，引用时必须说明用了哪一个。
 
 ## 4. 指标与归因
 
@@ -93,7 +93,7 @@
 
 ## 6. 交付顺序与回归门槛
 
-1. **离线评估首批交付。** 设立版本化 schema 和标注规范，从现有 fixture 中选可确认的正负场景与旧值冲突样本做小型校准集。复用现有 harness 增加一个报告入口，先产出可见候选 Recall@K、可测的 Candidate / Injection FP、核验快照上的 Coverage 和已有成本字段。缺乏答案证据的样本保留 Stale Misuse 和 Effective Hit Rate 未知。使用固定数据、快照及配置跑出首份基线，再按分层计划扩展到 100–200 条人工复核样本。首版已交付并扩展到 95 条样本（补入历史层、同名冲突、过期标记、历史补位场景，候选批第 3 批里 35 条可确证的隐式召回与近义否定样本，手写的一批检索面覆盖、跨项目、多主题组合与近义否定样本，以及从候选批人工复核后并入的 16 条检索面近义否定样本），见第 7 节的实测结果。
+1. **离线评估首批交付。** 设立版本化 schema 和标注规范，从现有 fixture 中选可确认的正负场景与旧值冲突样本做小型校准集。复用现有 harness 增加一个报告入口，先产出可见候选 Recall@K、可测的 Candidate / Injection FP、核验快照上的 Coverage 和已有成本字段。缺乏答案证据的样本保留 Stale Misuse 和 Effective Hit Rate 未知。使用固定数据、快照及配置跑出首份基线，再按分层计划扩展到 100–200 条人工复核样本。首版已交付并扩展到 99 条样本（补入历史层、同名冲突、过期标记、历史补位场景，候选批第 3 批里 35 条可确证的隐式召回与近义否定样本，手写的一批检索面覆盖、跨项目、多主题组合与近义否定样本，以及从候选批人工复核后并入的 16 条检索面近义否定样本），见第 7 节的实测结果。
 2. **补齐行为归因。** 用 Pi harness 验证 turn 关联和无工具终态，再补最小 Core observer。构建 Trigger/Retrieval/Resolution/Usage 各一条能稳定区分的 fixture，另外覆盖只靠当前上下文答对、来源存在但仓库缺失、正确候选被裁剪、多证据题和 rescue。交付阶段级 trace、样本级诊断和空分母/未知处理测试。
 3. **接入独立 Shadow 和配对回归。** 先验证禁用、队列满、worker 崩溃、预算耗尽和引用已删时的行为，再开放授权项目抽样。配对报告按 `sample_id + snapshot_id + arm` 核对同一组可比较样本，记录 Git commit、项目版本、数据与快照版本、评估器及 schema 版本、模型和提示词版本、随机参数、策略参数、运行时间及各类实际执行、失败和跳过数。对关键模型样本重复运行，报告每次结果及配对差异，并跟踪同一 session 的样本相关性。
 4. **先门禁确定性契约。** CI 可门禁 fixture 的项目隔离、负例注入、明确的过期冲突、已知匹配的结果顺序、trace 完整性与断队列时的生产行为。总体 Recall、Effective Hit、Stale Misuse、Rescue、P95 与单位成本先以同口径基线和配对报告观测。分母、标签和波动稳定之后，再为重复可测的样本定义回归容差。真实模型使用的质量分数先用于人工评审，确定性产物缺失和错误码仍可做硬门禁。
@@ -102,7 +102,7 @@
 
 `pnpm install --frozen-lockfile` 和 `pnpm -r typecheck` 通过。使用 Pi `1.5.2` 与 loopback mock provider，`eval/pi` 的 `--only new_session` 通过 13/13 项检查，随后全量 harness 通过 110/110 项检查。断言覆盖实际请求中的首次注入、尾部位置、跨项目排除、重复去重、续会话、compaction、queued、steer、stale、request 和进程退出。两次运行前后的真实 Obelisk 索引 mtime 一致。证据位于 `/tmp/vestigio-proof-memory-eval.qmJmfZ/run.log` 与 `/tmp/vestigio-proof-memory-eval-full.FvRTg5/run.log`，各目录保存了 `exit-code`。
 
-离线评估已落地在 `eval/memory/`，由 `run.mjs`（95 条标注样本，固定 20 条记忆 / 2 个项目目录，临时 SQLite store）和 `compare.mjs`（按 `case_id` 配对，回归时退出码 1）组成，复用 `eval/pi/hook.mjs`，不调用模型、不联网。三种观测面：`inject` 走 `recordProjectInput` + `planInjection`，`search` 走 `layeredSearch`（项目作用域，`limit: 10`），`search` 加 `include_history` 时由脚本化 `HistoryPort` 提供 Obelisk 形状的命中。首份基线见 `eval/memory/baseline.json`：95 例中 49 hit / 38 clean / 7 miss / 1 误注入 / 0 error，Recall@1/3/5 均为 0.925，`inject_hit_rate` 0.906，`false_positive_rate` 0.013，`source_gap_rescue_rate` 1.000。7 条 miss 都是有记录的已知缺口而不是噪声：两条「整句问旧版配置」的样本触不到 `mem-archived`（注入面按设计不出现归档记忆，检索面则因重叠二元组规则匹配不到），三条组合样本（如「连接池 超时」这种把两个主题写进一句话的检索）需要两条记忆同时命中，以及两条把两个主题写进一次检索的样本（「迁移 端口」「缓存 超时」）——合取匹配器要求同一条记忆同时具备所有词元，所以跨主题检索本就需要一次一个主题地搜，暴露的是 gather 策略而不是标注问题。唯一一条 `false_positive` 是手写的近义否定样本 `容器里怎么装 nginx`：`容器` 是 `mem-docker-image` 的整词关键词且位于句首，按第三条判据（整条输入以该词开头）允许单独成立，于是被注入——这与「迁移失败后先做什么」能命中出自同一条规则，规则无法区分「容器」是主题还是任务里顺带提到的词。其中一条记忆带待处理的过期事件，`inject-stale-flagged` 断言它出现时确实被标记为 stale（`expected_stale_ids`），也就是「过期信息到达 Agent 时携带警示」这一环已经可测；至于 Agent 是否据此修正判断，仍需真实回合。`candidate_false_positive_rate` 与 `injection_false_positive_rate` 分开统计（都是 0.042，即 24 条带禁止项的注入样本里 1 条在候选阶段就已混入），`budget_rescued` 为 0，说明 3 条预算上限在这批样本上没有参与救场；注入样本同时记录 `InjectionPlan.reason`（`no_match`、`over_budget`、`all_deduped` 等），让「没有注入」附带原因而不再只是一个空结果，这正是第 10 节诊断矩阵所需的字段；`inject-negative-unrelated` 还额外断言 `expected_status: not_injected`，确认流水线是明确判定不注入。这也补齐了 §12 第 4 项「能区分 Candidate False Positive 和 Injection False Positive」。两次运行除 `generated_at` 外报告字节一致；单例耗时不再写入报告，因为这个 harness 不做模型调用与索引工作，计时只会在基线里制造噪声。
+离线评估已落地在 `eval/memory/`，由 `run.mjs`（99 条标注样本，固定 20 条记忆 / 2 个项目目录，临时 SQLite store）和 `compare.mjs`（按 `case_id` 配对，回归时退出码 1）组成，复用 `eval/pi/hook.mjs`，不调用模型、不联网。三种观测面：`inject` 走 `recordProjectInput` + `planInjection`，`search` 走 `layeredSearch`（项目作用域，`limit: 10`），`search` 加 `include_history` 时由脚本化 `HistoryPort` 提供 Obelisk 形状的命中。首份基线见 `eval/memory/baseline.json`：99 例中 50 hit / 38 clean / 7 miss / 4 误注入 / 0 error，Recall@1/3/5 均为 0.926，`inject_hit_rate` 0.909，`false_positive_rate` 0.040，`source_gap_rescue_rate` 1.000。7 条 miss 都是有记录的已知缺口而不是噪声：两条「整句问旧版配置」的样本触不到 `mem-archived`（注入面按设计不出现归档记忆，检索面则因重叠二元组规则匹配不到），三条组合样本（如「连接池 超时」这种把两个主题写进一句话的检索）需要两条记忆同时命中，以及两条把两个主题写进一次检索的样本（「迁移 端口」「缓存 超时」）——合取匹配器要求同一条记忆同时具备所有词元，所以跨主题检索本就需要一次一个主题地搜，暴露的是 gather 策略而不是标注问题。4 条 `false_positive` 都来自手写的近义否定样本，都保留在基线里当作已知精度债：`inject-neg-docker-image`（「容器里怎么装 nginx」→ `mem-docker-image`）因为 `容器` 是整词关键词且位于句首，按第三条判据（整条输入以该词开头）允许单独成立，而这条规则同时在支撑「迁移失败后先做什么」，所以无法区分「容器」是主题还是任务里顺带提到的词；候选批第 4 批复核后并入的三条把另外两个机制也变成可回归的：`inject-neg-feature-flag-refactor`（「把这个 feature flag 的开关逻辑抽成工具函数」）是 `feature flag` 按空格拆成两个 ASCII 词元、凑够两条独立证据；`inject-neg-conn-timeout-debug`（「数据库连接老是超时」）共享「连接」与「超时」两个常用词就够两条；`inject-neg-monorepo-ci-cache`（「这个 monorepo 的 CI 缓存老失效」）由「monorepo」与「缓存」各给一条证据，于是把 `mem-monorepo` 和 `mem-cache` 一起注入。三条都先如实并入基线而不是先改匹配器：它们把「两条独立词元」这条判据的真实代价从 1 例变成 4 例，下一次动这条判据时有可回退的对照物。其中一条记忆带待处理的过期事件，`inject-stale-flagged` 断言它出现时确实被标记为 stale（`expected_stale_ids`），也就是「过期信息到达 Agent 时携带警示」这一环已经可测；至于 Agent 是否据此修正判断，仍需真实回合。`candidate_false_positive_rate` 与 `injection_false_positive_rate` 分开统计（都是 0.148，即 27 条带禁止项的注入样本里 4 条在候选阶段就已混入），`budget_rescued` 为 0，说明 3 条预算上限在这批样本上没有参与救场；注入样本同时记录 `InjectionPlan.reason`（`no_match`、`over_budget`、`all_deduped` 等），让「没有注入」附带原因而不再只是一个空结果，这正是第 10 节诊断矩阵所需的字段；`inject-negative-unrelated` 还额外断言 `expected_status: not_injected`，确认流水线是明确判定不注入。这也补齐了 §12 第 4 项「能区分 Candidate False Positive 和 Injection False Positive」。两次运行除 `generated_at` 外报告字节一致；单例耗时不再写入报告，因为这个 harness 不做模型调用与索引工作，计时只会在基线里制造噪声。
 
 该工具对生产代码的敏感性做过四次红绿验证。其一，把 `packages/core/src/hotspots/match.ts:38` 的 `DEFAULT_MIN_MATCH_SCORE` 从 1 临时改为 99，4 条注入样本转为 miss，`compare.mjs` 报告 `regressions: 4` 并退出 1。其二，让 `packages/core/src/retrieval/conflict.ts` 的 `findConflictingMemoryIds` 返回空，`search-conflict-port-rule` 从 hit 变为 miss（`expected_status: conflicted` 不再满足），退出 1。其三，绕过 `packages/core/src/retrieval/layered.ts` 里 `entry.source_ref.project_id !== projectPath` 的丢弃分支，`history-foreign-dropped` 从 clean 变为 false_positive，退出 1。其四，让 `packages/core/src/hotspots/pool.ts` 的 `freshnessFor` 忽略 `store.readFreshness` 的返回值，`inject-stale-flagged` 从 hit 变为 miss，退出 1。四次均改回后重新全绿，`git diff` 为空。
 
@@ -135,9 +135,9 @@
 
 其十六，同名冲突到底是「呈现缺证据」还是「数据没记录」也已经问了：产品本来就有记录替代关系的地方——pending stale event，所以实验就是把这条替代关系记上，再问同一个问题。`trigger.mjs --stale-port-rule` 只给较旧的 `mem-port-rule-a` 补一条 stale 事件（「2026-11-18 的评审把端口约定改成 18080，旧的 8080 仅保留一周」），检索、注入、问题全部不动；同时给场景加了 `decided_fact`，因为子串判据分不清「给出一个值」和「并列候选后表示无法确定」，只有裁判能。结果：不记替代关系时 3/3 拒绝（0/3 committed），记上之后 2/3 明确结论为 18080、并逐条列出证据（`mem-port-rule-b` 现行、`mem-port-rule-a` 标 STALE 且带后续证据、`mem-deploy-port` 只记录两者要一起改），原文说「这是一次已生效的后续变更，按规则它取代较早的 8080」；第三回合仍然拒绝，而它的回答只报告了 `mem-deploy-port` 的 freshness（current、无 pending），完全没提 `rule-a` 的 stale 事件，所以它的失败点是自己没去读那条 pending 详情，而不是标记缺失。结论：同名冲突的修法在**数据**——用既有的 stale 事件记录谁替代了谁，不需要新 schema——检索层的 `conflicted` 状态加每条 freshness 已经够 Agent 推理；这仍然只是方法加方向信号（每臂 3 回合、一个问题），而且那两次跑在网关争用下 p50 约 260 秒，延迟数字不可引用。
 
-| 1 固定 Dataset 重复运行 | 已满足 | 95 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
+| 1 固定 Dataset 重复运行 | 已满足 | 99 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
 | 2 区分四类 Miss | 已满足 | Trigger Miss 由 `trigger.mjs` 的 `failures.trigger_miss` 给出，Retrieval Miss 由同处的 `retrieval_miss`（调了工具但没有任何 `memory://` 交付）与离线 `miss` 给出，Usage Miss 由 `usage.mjs` / `trigger.mjs` 的 `usage_miss` 给出，Resolution Miss 由 `resolution.mjs` 的 7 条解析器用例按分支固定（裁判脚本化，不依赖模型状态） |
-| 3 Recall@1/3/5 | 已满足 | 当前均 0.925，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
+| 3 Recall@1/3/5 | 已满足 | 当前均 0.926，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
 | 4 Candidate / Injection FP 分层 | 已满足 | 两个比率共用分母，另有 `budget_rescued` 计数据 |
 | 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
 | 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；真实回合侧新增可判别的过期场景与 `stale_misuse_rate`（实测 0.000，n=2），见其十一；样本量仍太小 |
