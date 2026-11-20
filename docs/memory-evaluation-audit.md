@@ -51,6 +51,8 @@
 
 **这轮给这一项补了一个抓手，也把「为什么不能按时间点回放」钉成了事实。** store 里每条 revision 都不带自己的时间戳：`memories.created_at` 是**这条记忆的创建时间**，对所有 revision 相同且不可改——给 revision 2 传一个不同的 `created_at` 会被 `created_at_mismatch` 拒绝（`packages/core/src/storage/store.ts:309`）；`updated_at` 会被交付刷新（`resolve_versions` 的 schema 注释直接写着 replay ageing 读 `created_at`、永远不读 `updated_at`）。实测：给同一个 store 里的 `mem-deploy-port` 存 revision 2，两行的 `created_at` 与 `updated_at` 都是 `2026-11-17T12:00:00.000Z`。所以过去的状态只能用 **revision 号**命名，不能用时刻。`eval/memory/audit.mjs --pin <memory_id>@<revision>`（可重复）在只读审计里把指定记忆切到那个 revision、其余保持当前 head，并报出这份 store 有多少记忆真的有历史（`with_history` / `max_revisions`）。实测同一 store：`--pin mem-deploy-port@1` 得到 20 条 head、该记忆为 revision 1（634 正文字符，总量 12503），不 pin 时同一记忆是 revision 2（757 字符，总量 12626）；pin 到不存在的 revision 以退出码 2 拒绝，不静默降级。这仍只是「把历史状态命名出来」的一半：真正把回放跑成评估（在那份状态上重跑样本并与当前配对）没做，因为热点成员与 `activity_seq` 两张表不留历史。
 
+**决定（2026-11-20）：不做全量版本化历史，保持现状。** 理由是它服务的四类需求都已被更便宜的东西覆盖：复现某次交付看 `injection_receipts`（里面有 memory_id、revision 与 committed_at）、判断「当时库里有没有」看不可改的记忆创建时间、跨代码版本比较看「同一份冻结内容」而不是时间戳、事后查看当时正文看保留下来的全部 revision。唯一真正需要它的是「事先什么都没记、事后凭空重建任意时刻」——为此要改存储 schema，并给热点成员、活动序号、过期事件各自版本化，且仍然缺当时的检索代码版本。替代方案（冻结快照 dump/restore、交付清单里补记活动序号与候选池）同样**暂不做**，等真实使用数据出现后再评估。重开的触发条件写在这里，免得以后重新讨论：出现一次无法用交付清单与 revision 解释的真实召回事故，或需要长期对比生产内容变化对质量的影响。
+
 ### 混淆矩阵
 
 上面两个指标回答的是「有没有做到」，混淆矩阵回答的是「分母是谁」。离线 harness 只把样本分成两类，因为数据集本身只有这两类标注：**应该交付**（`expected_memory_ids` 或 `expected_source_refs` 非空，或要求交付 stale 标记）与**应该安静**（没有期望，但写了 `forbidden_memory_ids` 或 `expected_status`）。只写 `forbidden_memory_ids` 的空期望样本不算「未被测试」：它带着可被违反的约束。真正的空样本（既无期望也无禁止项、无期望状态）单独报告为 `unlabelled`，不计入任一侧，否则「没标注」会被当成「通过」。
