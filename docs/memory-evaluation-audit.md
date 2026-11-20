@@ -89,6 +89,8 @@
 
 按阶段逐步付费。先用规则对结构化 trace、已审标签和能核验的事实评分。对使用和过期语义仍不明的样本才调用独立 judge。配置单日调用、Token 和 USD 上限，限制并发、证据窗口及单条超时，耗尽后记录 `budget_skipped`。复用条件包括输入、证据、回答和评分器版本，成本报表同时给出跳过数、成功数和单位已判样本成本。真实样本外发遵守项目授权，无法发送时使用本地机械评分或人工复核。
 
+**已落地的第一层（只观测，不参与回答）**：`packages/pi-extension/src/decision-log.ts` 的 decision log 本来就在生产里按需开启（`VESTIGIO_DECISION_LOG`，默认关闭、写失败不抛）。这一轮给它补了能串起一次 turn 的字段——`memory_ids`（实际交付的记忆）、`matched_ids`（预算与去重前的候选）、`query_hash`（sha256 前 12 位）与 `query_chars`，仍然只有标识、计数和耗时，没有正文、没有原始问句。读取侧是 `eval/memory/shadow.mjs`：它按 session 与 `input_id` 把 input / tool_search / tool_resolve / tool_read 记录拼成一条 trace，输出不需要标签就能算的比率（交付后是否调用工具、是否读了正文、没有交付时是否会主动检索、gather 零命中率、resolver 状态分布、被注入最多的记忆、input handler 时延），并用 `--sample` / `--max-turns` 做确定性抽样与容量限制。抽样与评估都在日志之后发生，生产 hook 不等待、不知道、也无法被它拖慢，因此它满足第 12 节第 10、11 项；代价是它不能计算 Recall——那仍然需要标签，见 `eval/memory/trace.mjs` 与 `run.mjs`。
+
 ## 6. 交付顺序与回归门槛
 
 1. **离线评估首批交付。** 设立版本化 schema 和标注规范，从现有 fixture 中选可确认的正负场景与旧值冲突样本做小型校准集。复用现有 harness 增加一个报告入口，先产出可见候选 Recall@K、可测的 Candidate / Injection FP、核验快照上的 Coverage 和已有成本字段。缺乏答案证据的样本保留 Stale Misuse 和 Effective Hit Rate 未知。使用固定数据、快照及配置跑出首份基线，再按分层计划扩展到 100–200 条人工复核样本。首版已交付并扩展到 95 条样本（补入历史层、同名冲突、过期标记、历史补位场景，候选批第 3 批里 35 条可确证的隐式召回与近义否定样本，手写的一批检索面覆盖、跨项目、多主题组合与近义否定样本，以及从候选批人工复核后并入的 16 条检索面近义否定样本），见第 7 节的实测结果。
@@ -129,6 +131,8 @@
 
 其十四，那项「代价不对称」现在有了一半数字。`trigger.mjs` 让场景声明 `contaminated_by: <memory-id>`，回合结束后把「用户问题 + Agent 回答 + 当时就在上下文里的那条记忆」交给裁判，只问两件事：`carried`（回答是否重述或采纳了这条记忆的内容）与 `harmed`（采纳是否让回答变得不正确或误导；只是多提一句无关信息算 `unclear`，不算 `yes`）。裁判看不到标签，`--no-judge` 可关。两批实测：near-miss 形态（`quiet-docker-nginx`，问「容器里怎么装 nginx」，而热点层因为「容器」是 `mem-docker-image` 的整词关键词而把它注入）8 回合 carried 3、harmed yes 0、unclear 2；冲突形态（`conflict-deploy-port`，问「部署脚本默认端口是多少」，注入计划会同时给出 `mem-deploy-port` 与两条互相矛盾的 `mem-port-rule-a`/`mem-port-rule-b`）3 回合 carried 3、harmed yes 0，但三次回答都拒绝给出端口，理由是「两条同主体记忆并列且没有可比较的时间/提交证据，不能替你选一个」。两条读法：其一，无关的近邻误交付不会自动变成错误答案，模型多数直接忽略，采纳时也只是多一段无关内容，所以「每 19 个该安静的问题泄漏 1 条」（其十三）不能被等同于「错误率 +5%」；其二，真正贵的是同主体冲突值，但代价不是答错而是**答不出来**——即使 `mem-deploy-port` 就在上下文里，两条冲突记录也会让 Agent 选择澄清而不是给值，这正是第 10 节诊断矩阵里「多条记忆冲突 → 版本和事实关系不足 → Conflict Resolution」那一行，现在有了可复现的观测面。诚实边界：`fact` 判据是子串命中，所以 `conflict-deploy-port` 三回合都记 `hit`/`used=true`（18080 出现在回答里），只有裁判才指出结论是「未知」；冲突形态的 n=3、near-miss 的 n=8 都只是方法加基线，还不能当比率用。
 
+其十五，真实 session 的观测面也已经接上，而且不需要新的生产通道：`packages/pi-extension/src/decision-log.ts` 的 decision log 原本就是「按需开启的诊断日志」，这轮只给记录补了 `memory_ids`、`matched_ids`、`query_hash`、`query_chars`（仍然只有标识、计数、耗时，没有正文和问句），`eval/memory/shadow.mjs` 再按 session 与 `input_id` 把 input / tool_search / tool_resolve / tool_read 拼成一条 trace 并输出不需要标签的比率。端到端验证用的是 `trigger.mjs --decision-log <path>` 产出的真实三回合日志：一条冷问题走成 `no_match → tool_search(not_found, cards=0) → tool_resolve(resolved, mem-conn-pool) → tool_read`，一条「容器里怎么装 nginx」被热点层注入了 `mem-docker-image`（一次真实的误交付），一条 hello world 保持安静；`shadow.mjs` 报出 3 turns / 1 injected、交付后调用工具 100%、读了正文 100%、未交付时主动检索 50%、gather 零命中 50%、`top_injected mem-docker-image×1`、input handler p50 5.77 ms。这里有一个新的可观测代价：误交付并不是「白给一段文本」——那一回合 Agent 因此多调用了一次 `memory_read`（把无关记忆的正文也读进了上下文），所以误交付的成本可以用「多一次 read + 其 token」直接计量，而不用只靠裁判判「答案是否变坏」。诚实边界：样本只有 3 回合，比率只是管线验证；`shadow.mjs` 无标签，因此它不报 Recall（那仍归 `run.mjs`/`trace.mjs`）；抽样与容量限制都在日志之后执行，生产侧不知道也不可能被它拖慢。
+
 | 1 固定 Dataset 重复运行 | 已满足 | 95 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
 | 2 区分四类 Miss | 已满足 | Trigger Miss 由 `trigger.mjs` 的 `failures.trigger_miss` 给出，Retrieval Miss 由同处的 `retrieval_miss`（调了工具但没有任何 `memory://` 交付）与离线 `miss` 给出，Usage Miss 由 `usage.mjs` / `trigger.mjs` 的 `usage_miss` 给出，Resolution Miss 由 `resolution.mjs` 的 7 条解析器用例按分支固定（裁判脚本化，不依赖模型状态） |
 | 3 Recall@1/3/5 | 已满足 | 当前均 0.925，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
@@ -138,7 +142,7 @@
 | 7 一次完整查询的 Trace | 已满足 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联由 `eval/memory/trace.mjs` 完成：它对每个真实回合重建热点层计划（`replay.mjs`）、合并 Agent 行为与裁判判定，输出一条覆盖 trigger → hotspot → delivery → usage → cost 的 JSON Trace（`out/trace.json`） |
 | 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`；`compare.mjs --baseline=<git-ref>` 直接用 `git show <ref>:eval/memory/baseline.json` 取旧版本的基线，不必再切 worktree（实测 `--baseline=bd4a4ae` 输出 `added in candidate: 34`、无回归） |
 | 9 P50/P95 与有效召回成本 | 已满足 | 离线 harness 不调用模型、不做索引，因此计时与 token 挂在真实链路上：`trigger.mjs` 报 P50/P95 与总成本并新增 `cost_per_hit_usd`，`usage.mjs` 报每次判定成本。24 回合实测：总 $0.024278、$0.001619 / 命中、p50 16.1 s、p95 39.2 s。生产路径上的完整成本仍要等 shadow 埋点 |
-| 10 Shadow 不改变生产行为 | 已满足 | 无 shadow 组件接入生产；harness 只读生产代码，写独立 store |
+| 10 Shadow 不改变生产行为 | 已满足 | 观测通道是既有的 `VESTIGIO_DECISION_LOG`（默认关闭、写失败不抛、只记标识与计数），评估在日志之后由 `eval/memory/shadow.mjs` 离线完成：不阻塞 hook、不回写 store、不调用模型 |
 | 11 评估失败不影响记忆读写 | 已满足 | 工具未接入生产路径，失败只体现为自身退出码 |
 | 12 结果可追溯 | 已满足 | 离线报告写 `commit` / `catalog_version` / `dataset_sha256`，真实链路报告再写 `model` 与 `resolver_model`，`usage.mjs` 写裁判模型与成本 |
 

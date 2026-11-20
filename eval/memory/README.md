@@ -709,6 +709,54 @@ harness runs sharing one gateway at the same time — latency belongs to a solo 
 — and 8 of these 12 turns produced a full answer, so `clean` means "did not
 search", not "was fast".
 
+## Shadow view of a real session
+
+The sections above score cases someone wrote down. A real run knows something
+the labelled set cannot: what the agent did with the block it was handed. The
+extension already writes that to `VESTIGIO_DECISION_LOG`
+(`packages/pi-extension/src/decision-log.ts`) whenever the path is set, and the
+log is diagnostics-only by construction — ids, counts, statuses and timings,
+never query text or memory bodies, and a failing write stops after five attempts
+instead of touching the turn. `shadow.mjs` reads that file and joins each turn's
+plan, tool calls and results into one trace:
+
+```
+node ./shadow.mjs --log ~/.vestigio/decisions.jsonl --sample 0.1
+```
+
+`--sample` keeps a deterministic subset (sha256 of `session:input_id`), and
+`--max-turns` caps the number of turns reported, so both the sampling rate and
+the report size are knobs on the reader — production neither knows nor waits.
+
+What it reports needs no label: whether a turn with a delivered block then called
+a tool, whether it read a body, whether a turn with nothing delivered searched
+anyway, the share of gather calls that returned nothing, resolver statuses and
+degradation, the most-injected memories, and the `input` handler's p50/p95.
+
+Measured on three real turns produced by `trigger.mjs --decision-log <path>`:
+
+```
+3 turns (3 sessions, sample 1): 1 injected
+  after injection: tools 100.0%, body read 100.0%
+  nothing injected: unprompted search 50.0%; reasons {"no_match":2}
+  gather calls 2 (search 1, resolve 1 / degraded 0), zero-hit 50.0%
+  injected most: mem-docker-image×1
+  input handler p50 5.77ms p95 6.37ms
+```
+
+The cold turn's trace shows the whole chain in a production artifact:
+`no_match → tool_search(not_found, cards=0) → tool_resolve(resolved, mem-conn-pool)
+→ tool_read(=mem-conn-pool)`. The injected turn is the false positive described in
+"What a wrong or irrelevant delivery costs the answer" (容器里怎么装 nginx), and
+it shows a cost that counting a leak cannot: because the block was delivered, the
+agent spent an extra `memory_read` pulling the irrelevant body into context. So a
+false positive can be priced as one extra read plus its tokens, independently of
+whether the judge thinks the answer got worse.
+
+Limits: `shadow.mjs` has no labels, so it reports no recall — that stays with
+`run.mjs` and `trace.mjs`; the three turns above validate the pipeline, not a
+rate; and a decision log only exists when the operator opts in.
+
 ## Compare two runs
 
 ```sh
@@ -759,3 +807,8 @@ node ./compare.mjs --baseline=HEAD~1 out/report.json
 - Multi-turn dedup and concurrency: each inject case gets a fresh
   `InjectionLedger` and each run a fresh store, with fixed seeded activity, so
   recency stays constant.
+
+Three of those belong to the other two harnesses rather than to this one: agent
+turns and Trigger Miss are `trigger.mjs`'s job (including `usage_miss`,
+`stale_misuse` and per-turn latency and cost), and a real session's own trace is
+`shadow.mjs`'s — see "Trigger evaluation" and "Shadow view of a real session".

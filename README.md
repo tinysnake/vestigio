@@ -57,8 +57,10 @@ node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/r
 cases, no network). Model-backed evals in the same directory: `usage.mjs` (was
 the injected memory used?), `rescue.mjs` (does query expansion recover a lexical
 miss?), `trace.mjs` (one joined record per turn: trigger, hotspot, delivery,
-usage, cost), and
-`trigger.mjs` (does the agent look things up at all?).
+usage, cost), `trigger.mjs` (does the agent look things up at all, and does it use
+what it was given?), `strategies.mjs` (what would a gather fallback buy?), and
+`shadow.mjs` (a real session's decision log, joined into one trace per turn —
+ids and hashes only, no query text).
 
 ## Contracts
 

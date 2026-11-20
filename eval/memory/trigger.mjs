@@ -29,6 +29,9 @@ const MODEL = argument("--model") ?? "magpie/auto/deepseek-v4.1-flash";
 const REPEATS = Number(argument("--repeats") ?? "2");
 const ONLY = argument("--only");
 const DRY = process.argv.includes("--dry");
+// Kept outside the scratch dir so a real turn's decision log can be read by
+// shadow.mjs after the run.
+const DECISION_LOG = argument("--decision-log");
 // The contamination judge costs one model call per graded turn, so it can be
 // turned off the same way the resolver model can.
 const JUDGE_HARM = !process.argv.includes("--no-judge");
@@ -129,7 +132,7 @@ function runTurn(question) {
 			VESTIGIO_STORE: storePath,
 			VESTIGIO_PROJECT_ID: PROJECT,
 			VESTIGIO_OBELISK_HOME: join(scratch, "obelisk"),
-			VESTIGIO_DECISION_LOG: join(scratch, "decisions.jsonl"),
+			VESTIGIO_DECISION_LOG: DECISION_LOG ?? join(scratch, "decisions.jsonl"),
 			// Without these the resolver degrades to the zero-LLM search, so a
 			// turn that calls memory_resolve measures nothing but the matcher.
 			...(RESOLVER_MODEL === null
