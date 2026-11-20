@@ -232,6 +232,10 @@ function runTurn(question, storeFile) {
 		},
 	});
 	const tools = [];
+	// The arguments matter as much as the call: 「查了但没查到」 is unactionable
+	// until the words the query used are visible. Only memory tools, and only the
+	// first 240 characters, so a report stays readable.
+	const memoryArgs = [];
 	let text = "";
 	let cost = 0;
 	// Everything the model was shown that is not its own answer: the injected
@@ -260,7 +264,13 @@ function runTurn(question, storeFile) {
 			cost += message.usage?.cost?.total ?? 0;
 			if (!Array.isArray(message.content)) continue;
 			for (const part of message.content) {
-				if (part.type === "toolCall" && typeof part.name === "string") tools.push(part.name);
+				if (part.type === "toolCall" && typeof part.name === "string") {
+					tools.push(part.name);
+					if (MEMORY_TOOLS.has(part.name)) {
+						const args = JSON.stringify(part.arguments ?? {});
+						memoryArgs.push(`${part.name} ${args.length > 240 ? `${args.slice(0, 240)}…` : args}`);
+					}
+				}
 				if (part.type === "text" && typeof part.text === "string") text = part.text;
 			}
 		}
@@ -271,6 +281,7 @@ function runTurn(question, storeFile) {
 		env: {},
 		tools,
 		memoryCalls,
+		memoryArgs,
 		text,
 		cost,
 		surfaced: context.includes("memory://"),
@@ -411,6 +422,9 @@ for (const scenario of SCENARIOS) {
 			id: scenario.id,
 			expect: scenario.expect,
 			status,
+			// What the turn actually asked the memory, so a retrieval miss can be
+			// read instead of guessed at.
+			memory_args: turn.memoryArgs ?? [],
 			stale_misuse: staleMisuse,
 			decision,
 			failure,
@@ -424,7 +438,8 @@ for (const scenario of SCENARIOS) {
 			wall_ms: turn.wall_ms ?? 0,
 			answer_chars: (turn.text ?? "").length,
 		});
-		process.stderr.write(`  ${scenario.id} #${index + 1} ${status}\n`);
+		const asked = (turn.memoryArgs ?? []).length === 0 ? "" : `  ← ${turn.memoryArgs.join(" | ")}`;
+		process.stderr.write(`  ${scenario.id} #${index + 1} ${status}${asked}\n`);
 	}
 }
 
