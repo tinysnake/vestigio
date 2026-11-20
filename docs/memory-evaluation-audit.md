@@ -112,10 +112,10 @@
 | 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |
 | 7 一次完整查询的 Trace | 部分 | 离线报告覆盖单次查询的分层状态、候选、注入、引用；跨回合串联（触发 → 注入 → 使用）缺 |
 | 8 比较两个 Git Commit | 已满足 | 报告写入 `commit`、`catalog_version`、`dataset_sha256`；`compare.mjs --baseline=<git-ref>` 直接用 `git show <ref>:eval/memory/baseline.json` 取旧版本的基线，不必再切 worktree（实测 `--baseline=bd4a4ae` 输出 `added in candidate: 34`、无回归） |
-| 9 P50/P95 与有效召回成本 | 未做 | 离线 harness 不调用模型、不做索引，计时与 token 都无意义，成本应挂在真实链路上测 |
+| 9 P50/P95 与有效召回成本 | 部分 | 离线 harness 不调用模型、不做索引，计时与 token 都无意义；真实链路上的 `trigger.mjs` 报 P50/P95、总成本，并新增 `cost_per_hit_usd`（总成本 ÷ 命中回合数），`usage.mjs` 报每次判定成本。仍需的「一次有效召回的完整成本」要等 shadow/生产埋点 |
 | 10 Shadow 不改变生产行为 | 已满足 | 无 shadow 组件接入生产；harness 只读生产代码，写独立 store |
 | 11 评估失败不影响记忆读写 | 已满足 | 工具未接入生产路径，失败只体现为自身退出码 |
-| 12 结果可追溯 | 部分 | 数据集指纹、catalog 版本、commit 都有；`model_id` 因不调模型而不适用 |
+| 12 结果可追溯 | 已满足 | 离线报告写 `commit` / `catalog_version` / `dataset_sha256`，真实链路报告再写 `model` 与 `resolver_model`，`usage.mjs` 写裁判模型与成本 |
 
 第二个实验问的是「自然语言入口该不该走 OR 检索」。把 6 条卡片查询改写成自然问句（保存为 `eval/memory/experiments/nl-cases.jsonl`，`run.mjs --cases` 可直接跑）后：
 

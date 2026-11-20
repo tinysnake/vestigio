@@ -244,6 +244,7 @@ const report = {
 	model: MODEL,
 	repeats: REPEATS,
 	summary: {
+		model: MODEL,
 		resolver_model: RESOLVER_MODEL === null ? null : RESOLVER_MODEL.model_id,
 		turns: rows.length,
 		should_recall_rate: rate(
@@ -262,6 +263,11 @@ const report = {
 			rows.filter((row) => row.status === "usage_miss").length,
 			rows.filter((row) => row.expect === "query" && row.used !== null).length,
 		),
+		cost_per_hit_usd: (() => {
+			const hits = rows.filter((row) => row.status === "hit").length;
+			const total = rows.reduce((sum, row) => sum + row.cost_usd, 0);
+			return hits === 0 ? null : Number((total / hits).toFixed(6));
+		})(),
 		failures: {
 			trigger_miss: rows.filter((row) => row.failure === "trigger_miss").length,
 			retrieval_miss: rows.filter((row) => row.failure === "retrieval_miss").length,
@@ -283,6 +289,9 @@ console.log(
 );
 console.log(
 	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss}`,
+);
+console.log(
+	`cost per hit: ${summary.cost_per_hit_usd === null ? "-" : `$${summary.cost_per_hit_usd.toFixed(6)}`}  (${summary.turns} turns, $${Number(summary.cost_usd).toFixed(6)} total)`,
 );
 console.log(`p50 ${summary.p50_ms}ms p95 ${summary.p95_ms}ms`);
 console.log(`report ${outPath}`);
