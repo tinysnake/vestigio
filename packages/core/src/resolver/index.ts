@@ -6,12 +6,23 @@
  */
 
 export { MAX_LAYER_REQUERIES, resolveMemory } from "./resolver.js";
+export { searchWithRecovery } from "./recovery.js";
+export type {
+  SearchRecovery,
+  SearchRecoveryInput,
+  SearchRecoveryResult,
+  SearchRecoveryStatus,
+} from "./recovery.js";
 export { persistPendingResolve } from "./persist-pending.js";
 export type { PersistPendingResolveInput } from "./persist-pending.js";
 export {
+  buildKeywords,
+  buildTitle,
   deliveryDedupKey,
   evidenceVersionKey,
+  formationKeywords,
   hasRawHistoryEvidence,
+  MEMORY_KEYWORDS_MAX,
   persistResolvedMemory,
   readEvidenceVersion,
   replaySavedRequest,

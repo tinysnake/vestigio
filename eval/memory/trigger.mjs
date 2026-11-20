@@ -10,11 +10,11 @@
  * is a Trigger Miss, and no amount of offline recall work can see it.
  *
  * Usage (from eval/memory):
- *   node --import ../pi/hook.mjs ./trigger.mjs [--repeats N] [--model <id>] [--only <id>] [--dry]
+ *   node --import ../pi/hook.mjs ./trigger.mjs [--repeats N] [--model <id>] [--only <id> [--question <text>] [--fact <text>]] [--dry]
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,12 +25,17 @@ import { ask } from "./judge.mjs";
 import { navEntry } from "./replay.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const EXTENSION = join(ROOT, "packages/pi-extension/src/extension.ts");
+const EXTENSION = resolve(argument("--extension") ?? join(ROOT, "packages/pi-extension/src/extension.ts"));
 const MODEL = argument("--model") ?? "magpie/auto/deepseek-v4.1-flash";
 const REPEATS = Number(argument("--repeats") ?? "2");
 // Comma-separated ids let a subset run together, which is how a signal that
 // depends on what ran earlier in the same store stays reproducible.
 const ONLY = argument("--only");
+const QUESTION = argument("--question");
+const FACT = argument("--fact");
+if ((QUESTION !== null || FACT !== null) && (ONLY === null || ONLY.includes(","))) {
+	throw new Error("--question and --fact require one scenario selected with --only");
+}
 const ONLY_IDS = ONLY === null ? null : new Set(ONLY.split(",").map((id) => id.trim()));
 const DRY = process.argv.includes("--dry");
 /**
@@ -92,8 +97,8 @@ const SCENARIOS = [
 	// Cold: the hotspot layer injects nothing for these (checked with
 	// planInjection), so only a deliberate search can answer them.
 	{ id: "cold-conn-limit", expect: "query", fact: "20", question: "我们数据库连接那儿最多允许多少个" },
-	{ id: "cold-log-retention", expect: "query", fact: "14", question: "那些访问记录一般留多久" },
-	{ id: "cold-image-tag", expect: "query", fact: "哈希", question: "打包成容器的时候名字怎么起" },
+	{ id: "cold-log-retention", expect: "query", fact: "14", question: "咱们应用打出来的日志会留多久？" },
+	{ id: "cold-image-tag", expect: "query", fact: "哈希", question: "这个项目用 Docker 打包时，冒号后面的版本标记按什么取值？" },
 	{ id: "cold-secret-rotation", expect: "query", fact: "90", question: "凭证多久换一次" },
 	{ id: "quiet-readme-heading", expect: "no_query", question: "把 README 里的一级标题改成中文，只改标题这一行" },
 	{ id: "quiet-explain-index", expect: "no_query", question: "用三句话解释一下数据库索引为什么能加速查询" },
@@ -206,6 +211,8 @@ function runTurn(question, storeFile) {
 	];
 	if (DRY) return { args, env: {}, tools: [], text: "", cost: 0, wall_ms: 0 };
 	const started = Date.now();
+	const decisionPath = DECISION_LOG ?? join(scratch, "decisions.jsonl");
+	const decisionOffset = existsSync(decisionPath) ? readFileSync(decisionPath).length : 0;
 	const turnCwd = mkdtempSync(join(tmpdir(), "vestigio-trigger-turn-"));
 	writeFileSync(join(turnCwd, "README.md"), CWD_FIXTURE);
 	const stdout = execFileSync("pi", args, {
@@ -218,7 +225,7 @@ function runTurn(question, storeFile) {
 			VESTIGIO_STORE: storeFile,
 			VESTIGIO_PROJECT_ID: PROJECT,
 			VESTIGIO_OBELISK_HOME: join(scratch, "obelisk"),
-			VESTIGIO_DECISION_LOG: DECISION_LOG ?? join(scratch, "decisions.jsonl"),
+			VESTIGIO_DECISION_LOG: decisionPath,
 			// Without these the resolver degrades to the zero-LLM search, so a
 			// turn that calls memory_resolve measures nothing but the matcher.
 			...(RESOLVER_MODEL === null
@@ -276,6 +283,10 @@ function runTurn(question, storeFile) {
 		}
 	}
 	const memoryCalls = [...new Set(tools.filter((name) => MEMORY_TOOLS.has(name)))];
+	const turnDecisions = existsSync(decisionPath)
+		? readFileSync(decisionPath).subarray(decisionOffset).toString().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+		: [];
+	const retrieval = turnDecisions.filter((row) => row.kind === "tool_search" || row.kind === "tool_resolve");
 	return {
 		args,
 		env: {},
@@ -284,6 +295,7 @@ function runTurn(question, storeFile) {
 		memoryArgs,
 		text,
 		cost,
+		retrieval,
 		surfaced: context.includes("memory://"),
 		wall_ms: Date.now() - started,
 	};
@@ -310,8 +322,13 @@ function resolveModelPort() {
 }
 
 const rows = [];
-for (const scenario of SCENARIOS) {
-	if (ONLY_IDS !== null && !ONLY_IDS.has(scenario.id)) continue;
+for (const fixture of SCENARIOS) {
+	if (ONLY_IDS !== null && !ONLY_IDS.has(fixture.id)) continue;
+	const scenario = {
+		...fixture,
+		question: QUESTION ?? fixture.question,
+		fact: FACT ?? fixture.fact,
+	};
 	for (let index = 0; index < REPEATS; index += 1) {
 		storePath = join(scratch, `store-${scenario.id}-${index}.sqlite`);
 		seedScenarioStore(storePath, scenario.omit ?? []);
@@ -418,6 +435,9 @@ for (const scenario of SCENARIOS) {
 						: turn.surfaced !== true
 							? "retrieval_miss"
 							: "usage_miss";
+		const retrieval = turn.retrieval ?? [];
+		const unpriced = retrieval.filter((record) => record.model_calls > 0 && record.model_cost_usd === null).length;
+		const retrievalCost = retrieval.reduce((sum, record) => sum + (record.model_cost_usd ?? 0), 0);
 		rows.push({
 			id: scenario.id,
 			expect: scenario.expect,
@@ -434,7 +454,9 @@ for (const scenario of SCENARIOS) {
 			active_retrieval: active,
 			used,
 			answer: (turn.text ?? "").slice(0, 600),
-			cost_usd: Number((turn.cost ?? 0).toFixed(6)),
+			retrieval,
+			unpriced_retrievals: unpriced,
+			cost_usd: Number(((turn.cost ?? 0) + retrievalCost).toFixed(6)),
 			wall_ms: turn.wall_ms ?? 0,
 			answer_chars: (turn.text ?? "").length,
 		});
@@ -515,6 +537,7 @@ const report = {
 			rows.filter((row) => row.status === "usage_miss").length,
 			rows.filter((row) => row.expect === "query" && row.used !== null).length,
 		),
+		unpriced_retrievals: rows.reduce((sum, row) => sum + row.unpriced_retrievals, 0),
 		cost_per_hit_usd: (() => {
 			const hits = rows.filter((row) => row.status === "hit").length;
 			const total = rows.reduce((sum, row) => sum + row.cost_usd, 0);

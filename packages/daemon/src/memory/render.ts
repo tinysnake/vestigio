@@ -12,7 +12,7 @@
 
 import type { Freshness, FreshnessBrief, RetrievalResult, StaleEventSummary } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
-import type { ResolveOutcome } from "@vestigio/core/resolver";
+import type { ResolveOutcome, SearchRecovery } from "@vestigio/core/resolver";
 
 export type ResolvePublication = {
   published: boolean;
@@ -74,6 +74,7 @@ export function renderSearch(
   projectId: string,
   outcome: LayeredSearchOutcome,
   historyNote: string | null,
+  recovery?: SearchRecovery,
 ): string {
   const result: RetrievalResult = outcome.result;
   const lines: string[] = [];
@@ -81,6 +82,15 @@ export function renderSearch(
     `memory_search(${JSON.stringify(query)}) -> ${result.status} | ${result.cards.length} card(s) | project=${projectId}`,
   );
   if (result.cards.length === 0) lines.push("(no matching memory)");
+  if (recovery?.status === "recovered") {
+    lines.push("recovery: returned cards checked against the original question");
+  } else if (recovery?.status === "not_found") {
+    lines.push("recovery: no relevant card found after reformulating and checking partial matches. Try memory_resolve for broader evidence.");
+  } else if (recovery?.status === "unavailable") {
+    lines.push("recovery: could not complete. Try a short, specific keyword query.");
+  } else if (recovery?.status === "skipped" && result.cards.length === 0 && outcome.history.length === 0) {
+    lines.push("recovery: skipped. Try the first page of a specific query.");
+  }
   result.cards.forEach((card, index) => {
     lines.push(
       `${index + 1}. [${card.state} r${card.revision}] ${card.uri} score=${card.score} hit=${card.hit_count} access=${card.access_count}`,

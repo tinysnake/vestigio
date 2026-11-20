@@ -5,13 +5,13 @@ import type { Kind } from "@vestigio/client";
 import { splitMemoryUri } from "@vestigio/core";
 import { requestTitle } from "@vestigio/core/requests";
 import { type VestigioConfig } from "./config.js";
-import { DecisionLog } from "./decision-log.js";
+import { DecisionLog, hashQuery } from "./decision-log.js";
 import { PiDaemon, sessionOf } from "./daemon-client.js";
 import { loadLedger, persistLedgerDelta } from "./ledger-store.js";
 import { classifySaveDirective, requestedScope, resolveRequestEvidence } from "./request-consent.js";
 import { evidenceFromEntries, sessionEntryText, sourceRefForEntry } from "./session-source.js";
 import { searchParameters, readParameters, resolveParameters, markStaleParameters, writeParameters, statusParameters } from "./tool-parameters.js";
-import type { InjectionLedgerDelta } from "@vestigio/core/hotspots";
+import type { CommitResult, InjectionPlan } from "@vestigio/core/hotspots";
 
 type Result = { text: string | null; result: unknown; children?: { result: unknown }[] };
 type Context = ReturnType<typeof capture>;
@@ -80,15 +80,27 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 				capacity: config.pool_capacity, timeout_ms: config.timeout_ms,
 			}) as Result;
 			const result = response.result as { action: "transform" | "continue"; text?: string; reason?: string;
-				commit?: { delta: InjectionLedgerDelta | null }; plan?: { elapsed_ms: number } };
+				commit?: CommitResult; plan?: InjectionPlan };
 			const delta = result.commit?.delta;
 			if (delta) {
 				persistLedgerDelta(pi, delta);
 				for (const memoryId of delta.memory_ids) seen.add(memoryId);
 			}
-			log.write({ ...base, status: result.action === "transform" ? "injected" : "not_injected",
-				reason: result.reason ?? null, ...(result.plan ? { elapsed_ms: result.plan.elapsed_ms } : {}) });
-			return result.action === "transform" && result.text !== undefined ? { action: "transform", text: result.text } : { action: "continue" };
+			const text = result.action === "transform" ? result.text : undefined;
+			const plan = result.plan;
+			const delivered = text === undefined ? [] : plan?.injected ?? [];
+			log.write({ ...base, status: text === undefined ? "not_injected" : "injected", reason: result.reason ?? null,
+				query_hash: hashQuery(event.text), query_chars: Array.from(event.text).length,
+				injected: delivered.length, memory_ids: delivered.map((match) => match.memory_id),
+				stale_ids: delivered.filter((match) => match.freshness.is_stale).map((match) => match.memory_id),
+				...(plan === undefined ? {} : {
+					matched: plan.matched.length, matched_ids: plan.matched.map((match) => match.memory_id), elapsed_ms: plan.elapsed_ms,
+				}),
+				...(text === undefined || plan === undefined ? {} : {
+					block_bytes: plan.budget.used_bytes, estimated_tokens: plan.budget.estimated_tokens,
+				}),
+			});
+			return text === undefined ? { action: "continue" } : { action: "transform", text };
 		} catch (error) {
 			log.write({ ...base, status: "not_injected", reason: "store_error", error: String(error) });
 			report(error);
@@ -133,18 +145,45 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			try {
 				const context = capture(ctx, config);
 				const payload = makeInput(params, context);
+				const inputId = currentInput?.id;
 				const result = await daemon.run(ctx, kind, `tool:${toolCallId}`, {
-					project_id: context.project_id, session_id: context.session_id, input_id: currentInput?.id, ...payload,
+					project_id: context.project_id, session_id: context.session_id, input_id: inputId, ...payload,
 				}, signal) as Result;
 				const uri = typeof payload.uri === "string" ? splitMemoryUri(payload.uri) : null;
 				if (uri?.memoryId) seen.add(uri.memoryId);
+				if (payload.op === "memory.read") {
+					const detail = result.result as { status: string };
+					log.write({ ts: new Date().toISOString(), kind: "tool_read", status: detail.status,
+						session_id: context.session_id, branch_ref: context.branch_ref, input_id: inputId ?? null, project_id: context.project_id,
+						memory_ids: detail.status === "resolved" && uri !== null ? [uri.memoryId] : [],
+					});
+				}
+				if (payload.op === "memory.search" || payload.op === "memory.resolve") {
+					const search = payload.op === "memory.search";
+					const query = (search ? payload.query : payload.question) as string;
+					const detail = result.result as {
+						status: string;
+						cards: { memory_id: string }[];
+						recovery?: { status: string; model_calls: number; cost_usd: number | null; elapsed_ms: number };
+						measured?: { model_calls?: number; cost_usd?: number | null };
+					};
+					log.write({ ts: new Date().toISOString(), kind: search ? "tool_search" : "tool_resolve", status: detail.status,
+						session_id: context.session_id, branch_ref: context.branch_ref, input_id: inputId ?? null, project_id: context.project_id,
+						memory_ids: detail.cards.map((card) => card.memory_id), query_hash: hashQuery(query), query_chars: Array.from(query).length,
+						...(detail.recovery === undefined ? {} : { recovery: detail.recovery }),
+						model_calls: detail.recovery?.model_calls ?? detail.measured?.model_calls ?? 0,
+						model_cost_usd: detail.recovery?.cost_usd ?? detail.measured?.cost_usd ?? null,
+					});
+				}
 				return { content: [{ type: "text", text: result.text ?? JSON.stringify(result.result) }], details: result.result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `${name}: ${error instanceof Error ? error.message : String(error)}` }], details: { status: "unavailable" } };
 			}
 		} });
 	}
-	tool("memory_search", "Search stored memories and optional session history.", searchParameters, "search", (params) => ({ op: "memory.search", ...params }));
+	tool("memory_search", "Look up project-specific conventions, settings, policies, or past decisions. Use it when the user asks how this project does something, including colloquial questions about our defaults or policies. Search with a few specific terms. If literal search is empty, a configured model checks rewritten and ranked partial matches against the current question.", searchParameters, "search", (params) => ({
+		op: "memory.search", ...params, question: currentInput?.text.trim().slice(0, 8192) || params.query,
+	}));
 	tool("memory_read", "Read a memory and its freshness evidence.", readParameters, "search", (params) => ({ op: "memory.read", ...params }));
 	tool("memory_resolve", "Resolve a question against layered memory and session evidence.", resolveParameters, "search", (params, context) => ({ op: "memory.resolve", context_handle: context.branch_ref, ...params }));
 	tool("memory_request_status", "Read the status of a durable save request.", statusParameters, "search", (params) => ({ op: "request.status", ...params }));

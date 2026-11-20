@@ -16,6 +16,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InjectionLedger, planInjection, recordProjectInput } from "@vestigio/core/hotspots";
 import { layeredSearch } from "@vestigio/core/retrieval";
+import { searchWithRecovery } from "@vestigio/core/resolver";
+import { createModelClient } from "../../packages/daemon/src/memory/runtime.ts";
 import { openStore } from "@vestigio/core/storage";
 import { AT, CATALOG_VERSION, scriptedHistoryPort, seedStore } from "./catalog.mjs";
 
@@ -33,6 +35,9 @@ const casesPath = resolve(argument("--cases") ?? "cases.jsonl");
 const outPath = resolve(argument("--out") ?? "out/report.json");
 const storeArgument = argument("--store");
 const keep = process.argv.includes("--keep");
+const useRecovery = process.argv.includes("--search-recovery");
+const recoveryModel = useRecovery ? createModelClient() : null;
+if (useRecovery && recoveryModel === null) throw new Error("--search-recovery needs VESTIGIO_MODEL_BASE_URL");
 // `--no-seed` scores a case set against a store the product filled instead of
 // building the lab catalogue in it. Without it, `--store` would overwrite the
 // question being asked, because every expected id would be planted first.
@@ -85,20 +90,23 @@ async function runSurface(item) {
 	}
 	if (item.surface === "search") {
 		const includeHistory = item.include_history === true;
-		const outcome = await layeredSearch({
+		const search = {
 			store,
 			query: item.text,
 			scope: { kind: "project", project_id: item.project_id },
 			limit: 10,
 			include_history: includeHistory,
 			history: includeHistory ? scriptedHistoryPort(item.history_scenario ?? "none") : undefined,
-		});
+		};
+		const outcome = recoveryModel === null
+			? await layeredSearch(search)
+			: await searchWithRecovery({ ...search, question: item.text, getModel: () => recoveryModel });
 		return {
 			ids: outcome.result.cards.map((card) => card.memory_id),
 			candidates: [],
 			refs: outcome.history.map((excerpt) => refKey(excerpt.source_ref)),
 			status: outcome.result.status,
-			reason: null,
+			reason: outcome.recovery?.status ?? null,
 			stale: outcome.result.cards
 				.filter((card) => card.freshness?.is_stale === true)
 				.map((card) => card.memory_id),

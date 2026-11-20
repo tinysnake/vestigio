@@ -44,6 +44,9 @@ export type DecisionRecord = {
 	/** 12 hex characters of sha256(query): identity without the words. */
 	readonly query_hash?: string;
 	readonly query_chars?: number;
+	readonly recovery?: { status: string; model_calls: number; cost_usd: number | null; elapsed_ms: number };
+	readonly model_calls?: number;
+	readonly model_cost_usd?: number | null;
 };
 
 /** A short, stable digest of a query. Never throws, so a log line never fails. */

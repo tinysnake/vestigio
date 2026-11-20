@@ -163,6 +163,8 @@ function clip(text: string, max: number): string {
   return points.length <= max ? text : `${points.slice(0, Math.max(1, max - 1)).join("")}…`;
 }
 
+export const MEMORY_KEYWORDS_MAX = 8;
+
 export function buildTitle(question: string): string {
   const cleaned = question.replace(/\s+/gu, " ").trim();
   return `关于「${clip(cleaned, 48)}」的记忆`;
@@ -178,9 +180,25 @@ export function buildKeywords(question: string): string[] {
     if (seen.has(clipped)) continue;
     seen.add(clipped);
     keywords.push(clipped);
-    if (keywords.length >= 8) break;
+    if (keywords.length >= MEMORY_KEYWORDS_MAX) break;
   }
   return keywords.length > 0 ? keywords : [clip(question.trim(), 24) || "memory"];
+}
+
+export function formationKeywords(
+  question: string,
+  existing: readonly string[],
+  aliases: readonly string[],
+): string[] {
+  const merged = [...new Set(existing)];
+  const seen = new Set(merged);
+  for (const keyword of [...aliases, ...buildKeywords(question)]) {
+    if (merged.length >= MEMORY_KEYWORDS_MAX) break;
+    if (seen.has(keyword)) continue;
+    seen.add(keyword);
+    merged.push(keyword);
+  }
+  return merged;
 }
 
 function scopeLabel(scope: Scope): string | null {
@@ -360,7 +378,7 @@ function findHeadBySource(
   store: MemoryStore,
   scope: Scope,
   evidence: readonly SourceRef[],
-): { memory_id: MemoryId; revision: Revision; created_at: string } | null {
+): Memory | null {
   const keys = new Set(evidence.map(sessionIdentity));
   if (keys.size === 0) return null;
   let best: { head: Memory; overlap: number } | null = null;
@@ -645,17 +663,20 @@ export async function persistResolvedMemory(input: PersistResolveInput): Promise
   let targetId: MemoryId = memoryId;
   let revision: Revision = 1;
   let createdAt = at;
+  let previousKeywords: readonly string[] = [];
   const sameSource = findHeadBySource(input.store, input.scope, input.evidence);
   if (sameSource !== null) {
     targetId = sameSource.memory_id;
     revision = sameSource.revision + 1;
     createdAt = sameSource.created_at;
+    previousKeywords = sameSource.keywords;
   } else {
     for (const head of input.store.listHeads(input.scope)) {
       if (subjectsCollide(subjectKey(head.title), subject)) {
         targetId = head.memory_id;
         revision = head.revision + 1;
         createdAt = head.created_at;
+        previousKeywords = head.keywords;
         break;
       }
     }
@@ -667,7 +688,7 @@ export async function persistResolvedMemory(input: PersistResolveInput): Promise
     uri,
     scope: input.scope,
     title,
-    keywords: buildKeywords(input.question),
+    keywords: formationKeywords(input.question, previousKeywords, extraction.aliases),
     revision,
     state: "medium_ready",
     medium: {
