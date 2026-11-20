@@ -102,9 +102,11 @@
 | --- | --- | --- |
 其八，触发器 harness 还抓到一个「覆盖」类问题：冷场景里有一条问「把服务打包成容器时镜像名字怎么起」的回合，`memory_search` 与 `memory_resolve` 都被调用了，却一条记忆都没返回，而答案所在的 `mem-docker-image` 就在库里。原因不是排序而是用词：那条记忆的关键词只写了「镜像标签」和 `image-tag`，正文讲的也是标签规则，从未出现「容器」「打包」，因此在词法检索层里它和用户的问法没有任何交集，裁判模型也无从改写。给这条记忆补上「容器」这个用户真会说的词（`CATALOG_VERSION` 5）后，同一条场景两次运行都转为命中（`--only cold-image-tag --repeats 2`：`miss(retrieval_miss)` → `hit hit`），而 52 条离线基线不变，因为没有离线样本这样提问。这条差距正好落在第 4.8 节的 Memory Coverage 上：词法检索能查到什么，取决于记忆是用什么词写的，这是「记忆生成」的问题，而不是匹配器或排序的问题；把两条信号（离线基线 + 真实回合的 `retrieval_miss`）放在一起，就能把「库里没有」「库里有但找不到」「找到了但没用上」分开定位。
 
+其九，离线侧新增了解析器观测面 `eval/memory/resolution.mjs`（7 条用例，裁判脚本化，不联网、不花钱、结果固定）。它逐条钉住 walk 的分支：第一轮就接受即 `resolved` 并停止；判证据不足且不给 `next_queries` 时只花一次裁判调用、`missing` 记 `evidence_insufficient`；给了改写词会重新 gather 并在第二轮 `resolved`；完全空 gather 且配置了模型时仍会花一次裁判调用；未配置模型时零调用、`missing` 记 `model_not_configured`；裁判输出无法解析会重试一次，之后 `missing` 以 `model_malformed_output` 开头。它暴露并用一次生产改动补掉了一个可诊断性缺口：空 gather 也会调用裁判，因此记录下来的 `missing` 原本只是裁判对空集合的结论（`evidence_insufficient`），「库里有这条记忆但从没匹配上」和「库里根本没有」在这一列同形。现在 `packages/core/src/resolver/resolver.ts` 的 `stopAssembly` 在整轮没有拿到任何卡片与历史摘录时额外追加 `no_candidates_gathered`，并且保留 `reason` 在首位，所以 `missing[0]` 的既有语义（`degraded_reason` 用的就是它）不变，而第 4.8 节 Memory Coverage 需要的区分变得可读；`packages/core/test/resolver/resolver.test.ts` 用正反两例钉住它（「nothing is found」必须带标记，「候选被裁判拒绝」不得带标记）。红绿验证：把 `judged.retryable && !retryUsed` 改成 `&& false` 停掉重试后，`res-malformed-judge` 立即变成 `judge_calls=1` 的 FAIL 并让脚本退出码为 1，改回后 7/7 通过。诚实边界也一并写进 README：裁判是脚本化的，因此改写用例只能证明「裁判给出的词会被重新检索并能救回」，把 `MAX_LAYER_GATHERS` 或 `MAX_LAYER_REQUERIES` 改成 0/1 并不会让它变红。
+
 | 1 固定 Dataset 重复运行 | 已满足 | 52 条样本 + 固定 catalog + 临时 store，两次运行除 `generated_at` 外字节一致 |
-| 2 区分四类 Miss | 部分 | Retrieval Miss 由 `miss` 直接给出；Trigger / Resolution / Usage Miss 需要真实 Agent 回合，离线 harness 不具备 |
-| 3 Recall@1/3/5 | 已满足 | 当前均 1.000，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
+| 2 区分四类 Miss | 已满足 | Trigger Miss 由 `trigger.mjs` 的 `failures.trigger_miss` 给出，Retrieval Miss 由同处的 `retrieval_miss`（调了工具但没有任何 `memory://` 交付）与离线 `miss` 给出，Usage Miss 由 `usage.mjs` / `trigger.mjs` 的 `usage_miss` 给出，Resolution Miss 由 `resolution.mjs` 的 7 条解析器用例按分支固定（裁判脚本化，不依赖模型状态） |
+| 3 Recall@1/3/5 | 已满足 | 当前均 0.943，分母为带期望 ID 且未标 `rank_ignored` 的样本 |
 | 4 Candidate / Injection FP 分层 | 已满足 | 两个比率共用分母，另有 `budget_rescued` 计数据 |
 | 5 Memory Gap 与 Retrieval Miss 分离 | 已满足 | `history-rescue-gray-release` 期望 ID 为空、以 `expected_source_refs` 命中，说明记忆库没有而原始历史有 |
 | 6 过期记忆的错误使用 | 部分 | 过期标记可测（`inject-stale-flagged`）；是否误用仍需 Agent 回答 |

@@ -666,6 +666,11 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
 
   function stopAssembly(reason: string, current: Bundle): Assembly {
     const hasCandidates = current.cards.length > 0 || current.excerpts.length > 0;
+    // A walk that never had a candidate is a different failure from one whose
+    // candidates the judge rejected: the first says the index could not reach
+    // the memory, the second says the model would not accept what it read.
+    // `reason` alone reports the second for both, so record the first as well.
+    const nothingGathered = !hasCandidates;
     const conflicts = current.missing
       .filter((entry) => entry.startsWith("conflict:"))
       .map((entry) => entry.slice("conflict:".length));
@@ -676,7 +681,11 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       answer: null,
       cards: status === "not_found" ? [] : current.cards,
       evidence: status === "not_found" ? [] : current.sources,
-      missing: reason.length === 0 ? [...current.missing] : [reason, ...current.missing],
+      missing: [
+        ...(reason.length === 0 ? [] : [reason]),
+        ...(nothingGathered ? ["no_candidates_gathered"] : []),
+        ...current.missing,
+      ],
       conflicts,
       next_action: status === "not_found" ? null : current.next_action,
       continuation_id: hasCandidates ? continuationFor(current, lastLayerOf(current))?.id ?? null : null,

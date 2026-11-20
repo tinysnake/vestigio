@@ -261,6 +261,18 @@ describe("memory.resolve: descent and sufficiency", () => {
     expect(outcome.result.cards).toEqual([]);
     expect(outcome.result.answer).toBeNull();
     expect(outcome.result.missing).toContain("evidence_insufficient");
+    expect(outcome.result.missing).toContain("no_candidates_gathered");
+  });
+
+  it("does not call an empty store a candidate the judge rejected", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const model = makeModel([{ text: judgeJson({ descend: false }) }]);
+
+    const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
+
+    expect(outcome.result.missing).toContain("evidence_insufficient");
+    expect(outcome.result.missing).not.toContain("no_candidates_gathered");
   });
 
   it("keeps the caller's question when the model expands the query", async () => {

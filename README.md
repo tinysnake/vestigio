@@ -53,8 +53,10 @@ cd eval/memory
 node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/report.json
 ```
 
-Model-backed evals in the same directory: `usage.mjs` (was the injected memory
-used?), `rescue.mjs` (does query expansion recover a lexical miss?), and
+`resolution.mjs` pins the resolver's own branches with a scripted judge (seven
+cases, no network). Model-backed evals in the same directory: `usage.mjs` (was
+the injected memory used?), `rescue.mjs` (does query expansion recover a lexical
+miss?), and
 `trigger.mjs` (does the agent look things up at all?).
 
 ## Contracts

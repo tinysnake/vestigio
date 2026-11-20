@@ -270,6 +270,47 @@ how often it did.
 
 A zero denominator yields `null`, never NaN.
 
+## Resolution surface
+
+`run.mjs` measures what retrieval delivers; `resolution.mjs` measures what the
+resolver makes of it. It scripts the judge, so every case pins one branch of the
+walk instead of a model's mood — no network, no cost, same answer every time.
+
+```sh
+node --import ../pi/hook.mjs ./resolution.mjs   # 7 cases, writes out/resolution.json
+```
+
+| case | asserts |
+| --- | --- |
+| `res-accept-first-gather` | an accepting judge resolves on the first gather and stops there |
+| `res-refuse-without-followup` | evidence judged insufficient with no `next_queries` stops after one call, `missing` = `evidence_insufficient` |
+| `res-requery-recovers` | a refusal that names a rewrite term re-gathers, and the second judge call resolves |
+| `res-empty-gather-not-found` | every layer empty with a model present still spends one judge call, and `missing` carries both the verdict and `no_candidates_gathered` |
+| `res-zero-llm-no-candidates` | no model configured: zero calls, `missing` = `model_not_configured` |
+| `res-zero-llm-with-candidates` | same degradation with a candidate hit: status stays `partial` |
+| `res-malformed-judge` | an unparseable judge reply is retried once, then `missing` starts with `model_malformed_output` |
+
+What it found, and what it fixed: an empty gather is not free — with a model
+configured the resolver calls the judge anyway, and the entry it recorded
+(`evidence_insufficient`) was the judge's verdict about a set that had nothing in
+it. A question whose memory exists but never matched therefore read exactly like
+a question whose memory does not exist. `stopAssembly` in
+`packages/core/src/resolver/resolver.ts` now appends `no_candidates_gathered`
+when a whole walk produced neither a card nor a history excerpt, keeping `reason`
+first so `missing[0]` (what the extension reports as `degraded_reason`) is
+unchanged and the agent sees `missing: evidence_insufficient;
+no_candidates_gathered` — which is the difference between "the index never
+reached this memory" and "the model would not accept what it read".
+
+Honest limit: because the judge is scripted, a case pins the resolver's own
+behaviour, not the model's. The re-query case is the clearest example — mutating
+`MAX_LAYER_GATHERS` or `MAX_LAYER_REQUERIES` in
+`packages/core/src/resolver/resolver.ts` did not change its outcome, so what it
+proves is "a judge-named term is re-searched and can resolve", not that either
+constant is load-bearing. The malformed case does go red when the retry is
+disabled (`judged.retryable && !retryUsed` → `&& false` gives
+`FAIL res-malformed-judge judge_calls=1`).
+
 ## Trigger evaluation
 
 Everything above runs offline and cannot see the failure the proposal calls a
