@@ -46,12 +46,16 @@ Baseline harness (writes `eval/baseline/out/`):
 node eval/baseline/run.mjs --question "记得之前定过记忆层用哪个 SQLite 驱动吗"
 ```
 
-Memory eval (runs 12 labeled cases, then diffs against the committed baseline):
+Memory eval (runs 18 labeled cases, then diffs against the committed baseline):
 
 ```sh
 cd eval/memory
 node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/report.json
 ```
+
+Model-backed evals in the same directory: `usage.mjs` (was the injected memory
+used?), `rescue.mjs` (does query expansion recover a lexical miss?), and
+`trigger.mjs` (does the agent look things up at all?).
 
 ## Contracts
 
