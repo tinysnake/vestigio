@@ -38,12 +38,18 @@ const dry = process.argv.includes("--dry");
 const ask = (text) => askModel({ text, model, system: SYSTEM });
 
 function prompt(item) {
-	const memories = item.injected.map((memory) => `- ${memory.memory_id}: ${memory.nav_text}`).join("\n");
+	const memories = item.injected
+		.map((memory) =>
+			memory.body_text === undefined
+				? `- ${memory.memory_id}: ${memory.nav_text}`
+				: `- ${memory.memory_id}: ${memory.nav_text}\n  body: ${memory.body_text}`,
+		)
+		.join("\n");
 	return [
 		"判断下面的回答是否使用了注入的记忆。",
 		"",
 		`用户问题：${item.query}`,
-		"注入的记忆（只有导航摘要，没有正文）：",
+		"注入的记忆（导航摘要，部分条目附正文）：",
 		memories,
 		"",
 		`Agent 回答：${item.answer}`,
@@ -54,6 +60,8 @@ function prompt(item) {
 		"used = 回答复述或采纳了记忆里的具体内容；partial = 只泛泛提到记忆，没有具体内容；",
 		"ignored = 回答了，但没有依赖记忆内容；misused = 回答了，并且依赖了记忆，但结论与记忆相反或把已过期的内容当作当前事实。",
 		"判 misused 时，回答必须显示出对记忆内容的依赖（引用、转述或按它下结论），凭空说出相反结论仍属于 ignored。",
+		"把记忆里被取代的旧值明确标注为「改动前 / 早期约定」并同时给出当前值的回答属于 used，不属于 misused；misused 只用于把过期值当作当前事实，或结论与记忆相反。",
+		"回答在记忆内容之外补充自己的边界说明、风险提示或「记忆里没写」之类的限度声明，只要复述或采纳了记忆的具体内容，仍算 used。",
 	].join("\n");
 }
 

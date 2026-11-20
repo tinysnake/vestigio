@@ -1,26 +1,26 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-20T01:49:57.009Z",
-  "commit": "454315e",
+  "generated_at": "2026-11-20T01:55:11.477Z",
+  "commit": "a0ce0bb",
   "catalog_version": 4,
-  "dataset_sha256": "ad1013cf528f5c96ef7a41e892bb8f79e0fcdd1e33e937f23be8d83d2ae45ae7",
+  "dataset_sha256": "9a0049f5c6c4c1b544c73c83b0f9f5a3cc1a41a8473342c30bdf08fa993c42ef",
   "seed": {
     "store": "temporary",
     "memories": 20
   },
   "summary": {
-    "cases": 18,
-    "hit": 11,
-    "clean": 7,
-    "miss": 0,
+    "cases": 52,
+    "hit": 32,
+    "clean": 15,
+    "miss": 5,
     "false_positive": 0,
     "error": 0
   },
   "metrics": {
-    "recall_at_1": 1,
-    "recall_at_3": 1,
-    "recall_at_5": 1,
-    "inject_hit_rate": 1,
+    "recall_at_1": 0.9428571428571428,
+    "recall_at_3": 0.9428571428571428,
+    "recall_at_5": 0.9428571428571428,
+    "inject_hit_rate": 0.896551724137931,
     "false_positive_rate": 0,
     "candidate_false_positive_rate": 0,
     "injection_false_positive_rate": 0,
@@ -572,6 +572,1121 @@
       "expected_stale_present": true,
       "category": "stale",
       "note": "待处理的过期事件必须随注入一起到达 Agent，否则过期判断无从谈起",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-deploy-port-部署脚本默认走哪个端口来",
+      "surface": "inject",
+      "text": "部署脚本默认走哪个端口来着？我要改配置",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-deploy-port"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-deploy-port"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-deploy-port"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "隐式问句指向部署端口约定",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-migration-这个项目的数据库迁移想回",
+      "surface": "inject",
+      "text": "这个项目的数据库迁移想回滚一步，具体该怎么做？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-migration"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-migration"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-migration"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "迁移回滚步骤需历史约定",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-cache-我准备动缓存键的写法，改",
+      "surface": "inject",
+      "text": "我准备动缓存键的写法，改之前是不是得先看看之前定的失效逻辑？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-cache"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-cache"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-cache"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "缓存失效约定支撑改动",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-port-rule-a-咱们项目到底用哪一版端口",
+      "surface": "inject",
+      "text": "咱们项目到底用哪一版端口约定？我记得有两版说法，现在该按哪个来？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-port-rule-a"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-port-rule-a",
+        "mem-port-rule-b"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-port-rule-a",
+        "mem-port-rule-b"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "端口约定冲突需先澄清",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-stale-ttl-我们服务端的会话空闲多久",
+      "surface": "inject",
+      "text": "我们服务端的会话空闲多久会自动断开？之前调过一次吗？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-stale-ttl"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-stale-ttl"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-stale-ttl"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [
+        "mem-stale-ttl"
+      ],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "会话保活结论已过期",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-port-rule-b-这个项目里端口的约定是什",
+      "surface": "inject",
+      "text": "这个项目里端口的约定是什么来着？我记得好像有两条同名的记录，该以哪条为准？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-port-rule-b"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-port-rule-b",
+        "mem-port-rule-a"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "同名端口约定需澄清",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-build-cache-我要改构建脚本了，构建产",
+      "surface": "inject",
+      "text": "我要改构建脚本了，构建产物缓存在哪、什么条件下才会命中？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-build-cache"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-build-cache"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-build-cache"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "构建缓存命中条件",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-auth-token-访问令牌过期了会自动刷新",
+      "surface": "inject",
+      "text": "访问令牌过期了会自动刷新吗？刷新流程是怎么走的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-auth-token"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-auth-token"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-auth-token"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "令牌刷新流程隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-log-retention-咱们服务里的日志一般保留",
+      "surface": "inject",
+      "text": "咱们服务里的日志一般保留多久？清理任务是什么时候跑的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-log-retention"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-log-retention"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-log-retention"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "日志保留周期隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-feature-flag-灰度开关上线之后按什么顺",
+      "surface": "inject",
+      "text": "灰度开关上线之后按什么顺序关？默认值是开还是关来着",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-feature-flag"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-feature-flag",
+        "mem-secret-rotation"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-feature-flag",
+        "mem-secret-rotation"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "灰度开关顺序隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-api-version-咱们接口的版本兼容策略当",
+      "surface": "inject",
+      "text": "咱们接口的版本兼容策略当初是怎么定的？老版本大概还能用多久？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-api-version"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-api-version"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-api-version"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "接口版本策略隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-conn-pool-我们这个服务的数据库连接",
+      "surface": "inject",
+      "text": "我们这个服务的数据库连接池大小和超时是怎么配的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-conn-pool"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-conn-pool"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-conn-pool"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "连接池参数隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-docker-image-我们推送镜像到仓库时，t",
+      "surface": "inject",
+      "text": "我们推送镜像到仓库时，tag 到底该怎么取名字？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-docker-image"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-docker-image"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-docker-image"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "镜像标签规则隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-monorepo-新加的包该放-packa",
+      "surface": "inject",
+      "text": "新加的包该放 packages 还是 apps？这个仓库的包边界是怎么划的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-monorepo"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-monorepo"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-monorepo"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "目录边界约定隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-i18n-这个项目里的界面文案和翻",
+      "surface": "inject",
+      "text": "这个项目里的界面文案和翻译文件放在哪？改完文案之后一般怎么校验有没有漏翻？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-i18n"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-i18n"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-i18n"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "文案翻译位置隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-secret-rotation-我们项目的密钥多久轮换一",
+      "surface": "inject",
+      "text": "我们项目的密钥多久轮换一次？灰度上线是按什么顺序推的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-secret-rotation"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-secret-rotation",
+        "mem-feature-flag"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-secret-rotation",
+        "mem-feature-flag"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "密钥轮换顺序隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-timeout-default-这个项目的默认超时是多少",
+      "surface": "inject",
+      "text": "这个项目的默认超时是多少？如果调用处想改成别的值，应该在哪儿覆盖？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-timeout-default"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-timeout-default"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-timeout-default"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "implicit-recall",
+      "note": "默认超时覆盖隐式召回",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-port-deploy",
+      "surface": "inject",
+      "text": "我要把服务端口从 8080 改成 18080 对外提供服务，部署脚本里的默认值是不是也得一起改？",
+      "status": "miss",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": false,
+      "memory_found": true,
+      "missing_expected_ids": [
+        "mem-port-rule-b"
+      ],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-deploy-port",
+        "mem-feature-flag"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-deploy-port",
+        "mem-feature-flag"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "部署与端口约定组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-migrate-pool",
+      "surface": "inject",
+      "text": "数据库迁移回滚之前，我想先确认线上连接池上限是多少，回滚时会不会把连接打满？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-migration",
+        "mem-conn-pool"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-migration",
+        "mem-conn-pool"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-migration",
+        "mem-conn-pool"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "迁移与连接池组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-secret-token",
+      "surface": "inject",
+      "text": "密钥轮换灰度期间，访问令牌会自动刷新还是会失效？顺序上先推密钥还是先刷令牌？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-secret-rotation",
+        "mem-auth-token"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-secret-rotation",
+        "mem-auth-token",
+        "mem-feature-flag"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-secret-rotation",
+        "mem-auth-token",
+        "mem-feature-flag"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "密钥与令牌组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-flag-apiver",
+      "surface": "inject",
+      "text": "灰度开关打开新接口版本之后，旧版本的弃用窗口是按开关回滚还是按接口版本走？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-feature-flag",
+        "mem-api-version"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-api-version",
+        "mem-feature-flag"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-api-version",
+        "mem-feature-flag"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "开关与版本组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-monorepo-i18n",
+      "surface": "inject",
+      "text": "新加一个包放在 packages 下，locales 里的文案怎么跟包边界一起走？",
+      "status": "miss",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "memory_found": false,
+      "missing_expected_ids": [
+        "mem-monorepo",
+        "mem-i18n"
+      ],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-monorepo",
+        "mem-i18n"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "目录与文案组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-pool-timeout",
+      "surface": "inject",
+      "text": "连接池空闲超时 30 秒和全局默认超时 5 秒之间，调用方覆盖优先级是怎样的？",
+      "status": "hit",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": true,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-conn-pool",
+        "mem-timeout-default"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-conn-pool",
+        "mem-timeout-default",
+        "mem-stale-ttl"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-conn-pool",
+        "mem-timeout-default",
+        "mem-stale-ttl"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [
+        "mem-stale-ttl"
+      ],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "连接池与超时组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-comp-log-stale",
+      "surface": "inject",
+      "text": "日志保留 180 天但会话 15 分钟就断，排查凌晨三点清理任务前后的问题该看哪条记录？",
+      "status": "miss",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": false,
+      "memory_found": true,
+      "missing_expected_ids": [
+        "mem-stale-ttl"
+      ],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-log-retention",
+        "mem-stale-ttl"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [
+        "mem-log-retention"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-log-retention"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "日志与保活组合命中",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-scomp-deploy-port-rule",
+      "surface": "search",
+      "text": "部署脚本 默认端口 端口约定",
+      "status": "miss",
+      "retrieval_status": "not_found",
+      "injection_reason": null,
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": false,
+      "memory_found": false,
+      "missing_expected_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b"
+      ],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-deploy-port",
+        "mem-port-rule-b"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "搜索命中部署与端口约定",
+      "error": null
+    },
+    {
+      "case_id": "hand-b3-scomp-pool-timeout",
+      "surface": "search",
+      "text": "连接池 超时",
+      "status": "miss",
+      "retrieval_status": "partial",
+      "injection_reason": null,
+      "rank": 1,
+      "rank_ignored": false,
+      "expected_present": false,
+      "memory_found": true,
+      "missing_expected_ids": [
+        "mem-timeout-default"
+      ],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [
+        "mem-conn-pool",
+        "mem-timeout-default"
+      ],
+      "has_forbidden": false,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-conn-pool"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "composition",
+      "note": "搜索命中连接池与超时",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-deploy-port-帮我把-deploy.s",
+      "surface": "inject",
+      "text": "帮我把 deploy.sh 的日志级别调成 debug，别动别的",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享部署词但问日志级别",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-cache-这个接口的-Cache-",
+      "surface": "inject",
+      "text": "这个接口的 Cache-Control 头该写 max-age 还是 no-store？",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享缓存词但问响应头",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-stale-ttl-Redis-连接池的空闲",
+      "surface": "inject",
+      "text": "Redis 连接池的空闲连接多久回收？",
+      "status": "clean",
+      "retrieval_status": "injected",
+      "injection_reason": null,
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [
+        "mem-conn-pool"
+      ],
+      "candidate_leak": false,
+      "surfaced_ids": [
+        "mem-conn-pool"
+      ],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享空闲词但问连接回收",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-log-retention-日志级别在哪配，debu",
+      "surface": "inject",
+      "text": "日志级别在哪配，debug 输出太多了想调一下",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享日志词但问级别配置",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-feature-flag-前端埋点上报的开关默认要",
+      "surface": "search",
+      "text": "前端埋点上报的开关默认要不要打开",
+      "status": "clean",
+      "retrieval_status": "not_found",
+      "injection_reason": null,
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享开关词但问埋点",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-api-version-package.json",
+      "surface": "inject",
+      "text": "package.json 里的依赖版本号要不要全部锁死",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享版本词但问依赖锁",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-docker-image-本地那些不用的-dock",
+      "surface": "inject",
+      "text": "本地那些不用的 docker 镜像怎么删掉省点磁盘？",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享镜像词但问清理",
+      "error": null
+    },
+    {
+      "case_id": "cand-mem-secret-rotation-先别管密钥的事，帮我把-",
+      "surface": "inject",
+      "text": "先别管密钥的事，帮我把 p-memory-eval 的 CI lint 报错修一下",
+      "status": "clean",
+      "retrieval_status": "not_injected",
+      "injection_reason": "no_match",
+      "rank": null,
+      "rank_ignored": false,
+      "expected_present": true,
+      "memory_found": false,
+      "missing_expected_ids": [],
+      "forbidden_present": false,
+      "expected_only": false,
+      "extra_ids": [],
+      "expected_ids": [],
+      "has_forbidden": true,
+      "candidate_ids": [],
+      "candidate_leak": false,
+      "surfaced_ids": [],
+      "surfaced_refs": [],
+      "surfaced_stale": [],
+      "expected_stale_present": true,
+      "category": "negative",
+      "note": "共享密钥词但问别的事",
       "error": null
     }
   ]

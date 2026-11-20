@@ -44,10 +44,10 @@ baseline diff is never noise.
 
 ## Dataset
 
-`cases.jsonl` has one case per line. `catalog.mjs` holds the fixed 8-memory,
-2-project catalog, `seedStore` (which also records one pending stale event on
-`mem-stale-ttl`), and `HISTORY_SCENARIOS` + `scriptedHistoryPort` for the
-history surface. Changing the catalog means bumping `CATALOG_VERSION`
+`cases.jsonl` has one case per line, 52 of them at `CATALOG_VERSION` 4.
+`catalog.mjs` holds the fixed 20-memory, 2-project catalog, `seedStore` (which
+also records one pending stale event on `mem-stale-ttl`), and
+`HISTORY_SCENARIOS` + `scriptedHistoryPort` for the history surface. Changing the catalog means bumping `CATALOG_VERSION`
 and regenerating a baseline.
 
 Case fields:
@@ -198,9 +198,10 @@ assumed.
 
 Two things to keep in mind before trusting a number:
 
-- The judge sees only what the agent saw — nav summaries, never the body. So
-  `used` means the answer restated nav-level content, not that it recovered the
-  full decision.
+- The judge sees only what the agent saw. `usage-cases.jsonl` rows carry nav
+  summaries, and a row may add `body_text` for a memory the agent actually read
+  (the bridge below does). Without it `used` means the answer restated
+  nav-level content, not that it recovered the full decision.
 - Verdict stability is about one in twelve on a 12-case run. Agreement on the
   committed labels is 0.833 and 0.750 across two runs, so this is a trend
   instrument, not a gate. `usage-cases.jsonl` is labelled by hand precisely so
@@ -208,6 +209,35 @@ Two things to keep in mind before trusting a number:
 
 `usage-stale-ttl-*` rows are the Stale Misuse side of the proposal: same memory,
 `is_stale` true, answers that heed it, ignore it, or treat it as current.
+
+### Judging real answers
+
+Hand-written answers cannot show whether the judge agrees with reality, so
+`usage-from-trigger.mjs` turns a trigger run's real answers into judge rows. It
+reconstructs the memory each recall turn had in context (the hotspot plan for
+warm turns, a fact-to-memory table for cold ones), attaches the body the agent
+could have read, and labels each row by the objective check the trigger harness
+already makes: does the answer carry the memory's fact.
+
+```sh
+node --import ../pi/hook.mjs ./trigger.mjs          # produces out/trigger.json
+node --import ../pi/hook.mjs ./usage-from-trigger.mjs
+node --import ../pi/hook.mjs ./usage.mjs --cases out/usage-from-trigger.jsonl
+```
+
+Two prompt rules came out of the first run at 0.688 agreement, where every
+disagreement was `expected=used judge=misused`: an answer that names a superseded
+value as 改动前 / 早期约定 while stating the current one is `used`, and an answer
+that adds caveats the memory did not contain is still `used` if it restated the
+memory. With those rules the same 16 real rows reach 0.938 ($0.006, p50 2.4 s)
+and the hand set stays at 0.833, so the rules fixed a judge habit rather than the
+test.
+
+The one remaining disagreement is a definitional edge worth keeping visible: the
+stale session-timeout answer reports the pending change (15 minutes) as the
+current value, and the judge calls that misuse of a stale memory. Whether
+"taking a pending change as current" is use or misuse is a product decision, not
+a prompt bug.
 
 `experiments/nl-cases.jsonl` is the same dataset with the six card queries phrased
 as natural questions. It exists to show why the matcher is conjunctive: under the
@@ -290,10 +320,12 @@ Degraded, the cold turns search the question verbatim, get zero cards and answer
 that nothing was found; with the model, the resolver rewrites the question and
 three of four cold turns answer from the memory. The price is latency, not
 tokens: p50 roughly doubles and p95 grows fourfold when the resolver descends.
-Over-trigger is unstable: the heading-rename and ENOENT questions each triggered
-a search in one run of a pair and not the other, so treat the number as noise
-until there are more turns. The `cold-conn-limit` scenario is likewise the only
-one that has been seen both answering and giving up in the same configuration.
+Over-trigger splits by scenario, not by chance. The generic ENOENT question
+called `memory_search` once in four of the last four samples of it: the agent
+appears to ask whether this project has seen the error before, which the "quiet"
+label calls unnecessary. The heading-rename question triggered in some runs and
+not others and stays noise. `cold-conn-limit` is likewise the only cold scenario
+that has been observed both answering and giving up in the same configuration.
 Non-deterministic by construction: same model, same prompts, different calls.
 p50 was 9–10 s per turn with a 29–40 s outlier, and the answer text is not
 judged here — correctness still needs `usage.mjs` or a human.
@@ -330,7 +362,7 @@ pool leak debugging, an i18n upgrade) — a lexical matcher cannot separate
 those, and two of them run in the other project's scope where the injected
 memory is the right one anyway.
 
-That leaves the baseline at zero false positives on 18 cases, which is a small
+That left the baseline at zero false positives on the 18 cases of the time, which is a small
 set: treat it as a floor to defend, not as proof of precision.
 
 The floor itself is still 1, and the baseline records what moving it costs.
@@ -376,6 +408,16 @@ resolver's expansion is what makes a natural-language question work, and it
 only works when the model names a phrase that shares whole words with the
 memory. The measurement is a proxy for that one step — it does not run the
 judge, the descent, or the archived/history layers.
+
+### Archived memories
+
+`mem-archived` is reachable on the search surface even without
+`include_archived`: once Active comes back empty the Archived layer runs as
+`fall_through` and can return a card (`status=partial`). Injection never
+surfaces an archived memory. A query that overlaps an archived nav text only
+through non-adjacent bigram fragments — the fragment `旧版格式` against
+`旧版配置格式` — matches nothing, which is the overlap rule, not an archive
+policy.
 
 ## Compare two runs
 

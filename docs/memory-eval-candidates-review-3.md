@@ -244,3 +244,14 @@ composition rows the worker flagged below moved from `agree` to `recall-gap`:
 regenerated with that scorer; the prose below is the worker's original reading.
 Point (c) is therefore resolved as measurement, not as a labelling question: the
 nine composition rows now assert that every needed memory surfaces.
+
+**The archived `recall-gap` question, measured.** Probed directly against the
+seeded store: `inject` never surfaces `mem-archived` for any of the three texts,
+and neither does `layeredSearch` with `include_archived: true` for the fragment
+`旧版格式` — its bigrams `旧版/版格/格式` overlap `旧版配置格式` only through
+non-adjacent fragments, which the overlap rule collapses to one signal. With the
+memory's own keyword (`旧配置`) `layeredSearch` reaches it even when
+`include_archived` is false, because the archived layer runs as
+`fall_through` once Active is empty (`status=partial`, one card, bm25 score
+negative as always for SQLite FTS5). So the three rows document a matcher
+limitation, not an unreachable archive; the labels are fine.
