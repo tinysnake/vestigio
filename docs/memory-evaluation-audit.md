@@ -186,6 +186,12 @@
 
 仍然没有答案的三件事：真实历史 store 的时间点回放（见第 3 节「回放在本 harness 里是怎么成立的」）、生产链路上按 Trigger/Resolution/Usage 三类归因的长期统计（`trigger.mjs` 只在有限场景上做，`shadow.mjs` 无标签只能给近似量）、以及 100–200 条标注样本的规模（当前 99 条）。
 
-### 一个尚未解释的观测
+### 一个已经查清的观测：过期标记在真实链路里是短暂的
 
-14 回合那次运行里，`recall-stale-timeout` 交付的 `mem-stale-ttl` 记录为 `stale_ids: []`（shadow 因此报 `stale delivered 0`），而单独只跑这一条场景时同一字段是 `["mem-stale-ttl"]`（`stale delivered 1 (read 100%)`）。同一份种子、同一份代码，差别只在同一次运行里前面还跑过别的回合。店内的候选解释是 resolver 的修复路径 `packages/core/src/resolver/repair.ts:261`（`acknowledge_event_ids: incorporated`，配合 `packages/core/src/storage/store.ts:889` 的 `acknowledged_at` 更新）会在吸收后续证据时把待处理事件标记为已处理，但目前那次运行的日志里没有任何回合读取过 `mem-stale-ttl`，所以这一条**尚未证实**。在解释清楚之前：`stale_delivered_turns` 只应当读成「这次运行里还剩下多少条过期交付」，不要读成「有多少条过期记忆被交付过」；离线 stale 样本之所以稳定通过，是因为每条样本都用独立的临时 store。已列入待查项。
+14 回合那次运行里，`recall-stale-timeout` 交付的 `mem-stale-ttl` 记录为 `stale_ids: []`（shadow 因此报 `stale delivered 0`），而单独只跑这一条场景时同一字段是 `["mem-stale-ttl"]`（`stale delivered 1 (read 100%)`）。当时记为待查项，现在查清了，结论与最初列出的候选原因接近但不是它。
+
+**机制。** `packages/pi-extension/src/extension.ts:101-105` 在每次回合结束的 `agent_end` 里调用 `repairStaleMemoriesInBackground`（实现见 `packages/pi-extension/src/background-repair.ts`，单条修复走 `packages/pi-extension/src/read-repair.ts` 的 `repairStaleMemoryNow`，预算 `REPAIR_DEADLINE_MS`）。这个 pass 面向 **store 里所有带待处理事件的记忆**，与本次会话读过什么无关：它用模型把待处理事件吸收进一条新 revision，并在 `packages/core/src/resolver/repair.ts:261` 以 `acknowledge_event_ids: incorporated` 落库，`packages/core/src/storage/store.ts:889` 负责把 `acknowledged_at` / `acknowledged_revision` 写掉。于是「过期」只是一个中间状态：它存在到本会话结束为止，之后那条记忆的正文已经变成新值。
+
+**复现与证据（都是实测，不是推断）。** 单独造一个 store、只跑一个真实回合问「这个项目的部署脚本默认端口是多少？之前定过吗」——这个回合从来没有读过 `mem-stale-ttl`——回合 stdout 里出现 `entry_appended` 事件 `customType: "vestigio.background-repair"`，内容 `{"candidates":1,"attempted":2,"repaired":1,…,"entries":[{"memory_id":"mem-stale-ttl","status":"repaired","revision":2,"elapsed_ms":46475}]}`；store 里 `stale_events` 的那行 `acknowledged_at` 被写掉、`acknowledged_revision` 为 2，`memories` 里 `mem-stale-ttl` 多出 revision 2，正文变成「会话空闲超时的现行取值是 15 分钟……此前的 30 分钟已被取代」，`summary_jobs` 里对应一条 revision 2 的 `done` 记录。对照实验排除了「planning 自身会清标记」：在同一进程里依次做 `seedStore` → `recordProjectInput` → 对部署端口问题 `planInjection`，`readFreshness` 与 `stale_events` 全程保持 `pending`；只有真实回合（也就是只有 `agent_end` pass）会清掉它。
+
+**对测量的三点后果。** 其一，`stale_delivered_turns` 在真实 session 里通常为 0，且第一次出现的 0 往往不是「没有过期记忆」，而是「本次会话结束前已经被修复」；要观测过期交付必须像 `trigger.mjs` 那样用**单回合**（`--only recall-stale-timeout`）或在回合开始前重新标记，不能拿多回合运行的数字当过期发生率。其二，离线 `inject-stale-flagged` 仍然有效，但它证明的是「标记会随交付到达 plan」——harness 不跑 `agent_end`，所以它永远看不到修复这一步；这条样本的语义要按这个范围读。其三，这条链路同时说明 Stale Misuse 的暴露窗口很窄：标记之后第一个会话结束时记忆就被改写成现行值（本次实测正文里带上了来源与「已被取代」的表述），所以「把过期值当现行值」主要发生在这个窗口之内，而不是长期风险。第 6 项验收因此仍然记为「部分」：可测，且风险窗口已量化，但样本量与真实会话覆盖都还不足。

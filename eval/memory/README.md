@@ -808,7 +808,9 @@ evidence a real run offers without a label:
   count turns where a stale memory reached the agent and whether that turn then
   called `memory_read` — the read is what opens the pending event that carries
   the corrected value. It proves the alert was *openable*, not that it was
-  heeded: heeding needs the answer text, which only `trigger.mjs` sees.
+  heeded: heeding needs the answer text, which only `trigger.mjs` sees. Read the
+  count as "stale deliveries left in this run": the `agent_end` background repair
+  pass spends them, see below.
 - **gathered and got nothing.** A turn that called `memory_search` or
   `memory_resolve` and received no memory is an inferred retrieval miss. It is
   reported as a rate over gather turns, never as recall: without a label the log
@@ -836,6 +838,25 @@ The stale signal on a turn that does deliver an outdated memory
   gather turns that got nothing: 0.0% of 1; stale delivered 1 (read 100.0%)
   injected most: mem-stale-ttl×1
 ```
+
+**Why a stale delivery is rare in a real session.** The same scenario inside a
+multi-turn run reports `stale delivered 0`: after the first turn of any session,
+`packages/pi-extension/src/extension.ts:101-105` runs
+`repairStaleMemoriesInBackground` in the `agent_end` pass, and that pass repairs
+**every** memory in the store that has a pending event, whether or not this
+session ever read it. The repair composes a new revision that absorbs the event
+and records it as acknowledged (`packages/core/src/resolver/repair.ts:261`,
+`packages/core/src/storage/store.ts:889`), so by the next turn the body already
+states the current value. Measured on a freshly seeded store: one real turn about
+the deploy port — which never reads `mem-stale-ttl` — appends
+`vestigio.background-repair {candidates: 1, attempted: 2, repaired: 1, entries:
+[{memory_id: "mem-stale-ttl", status: "repaired", revision: 2, elapsed_ms: 46475}]}`
+and the stored body becomes 「会话空闲超时的现行取值是 15 分钟……此前的 30 分钟已被取代」.
+Planning alone does not do this (seed → `recordProjectInput` → `planInjection`
+leaves the event pending), so the offline stale case stays deterministic — it
+just proves the marker reaches the plan, not that a session will still see it.
+To observe a stale delivery, run the one scenario alone (`--only
+recall-stale-timeout`) or mark the memory stale after the session's first turn.
 
 The cold turn's trace shows the whole chain in a production artifact:
 `no_match → tool_search(not_found, cards=0) → tool_resolve(resolved, mem-conn-pool)
