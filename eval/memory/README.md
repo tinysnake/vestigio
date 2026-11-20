@@ -44,10 +44,14 @@ baseline diff is never noise.
 
 ## Dataset
 
-`cases.jsonl` has one case per line, 79 of them at `CATALOG_VERSION` 6.
-Coverage by category: `implicit-recall` 33, `negative` 22, `composition`
+`cases.jsonl` has one case per line, 95 of them at `CATALOG_VERSION` 6. The
+sixteen `search-near-miss-*` rows were promoted from `candidates.batch-3.jsonl`
+after a hand check: each shares vocabulary with a memory and asks about
+something else, and each currently comes back `not_found`, so they exist to give
+a fallback strategy a real denominator rather than to test today's query.
+Coverage by category: `negative` 38, `implicit-recall` 33, `composition`
 11, `cross-project` 4, `stale` 3, `explicit-recall` 2, `conflict` 2,
-`source-gap` 2; by surface: `inject` 51, `search` 28.
+`source-gap` 2; by surface: `inject` 51, `search` 44.
 `catalog.mjs` holds the fixed 20-memory, 2-project catalog, `seedStore` (which
 also records one pending stale event on `mem-stale-ttl`), and
 `HISTORY_SCENARIOS` + `scriptedHistoryPort` for the history surface. Changing the catalog means bumping `CATALOG_VERSION`
@@ -151,12 +155,12 @@ the two classes the labels actually define:
 | | delivered / quiet | missed | leaked |
 | --- | --- | --- | --- |
 | should deliver (56) | 49 | 7 | 0 |
-| should stay quiet (23) | 22 | 0 | 1 |
+| should stay quiet (39) | 38 | 0 | 1 |
 
 A case with no expectation, no forbidden id and no `expected_status` is counted
 apart as `unlabelled` and left out of both sides, so an unlabelled row cannot be
 read as a pass. Note that `false_positive_rate` divides by every scored case
-(1/79 = 0.013) while the matrix divides by the 23 quiet cases (1/23 = 0.043): the
+(1/95 = 0.011) while the matrix divides by the 39 quiet cases (1/39 = 0.026): the
 same leak, diluted differently, so say which denominator you mean.
 
 ## Candidate batches
@@ -555,45 +559,51 @@ Every labelled row (297 positive, 117 negative):
 | and_then_hotspot_2 | 266/297 | 52 (49 rows) | 17/117 | 116 | 414 |
 | and_then_hotspot_3 | 248/297 | 20 (19 rows) | 11/117 | 116 | 414 |
 
-Hand-confirmed rows only (`--source cases.jsonl`, 54 positive, 22 negative):
+Hand-confirmed rows only (`--source cases.jsonl`, 54 positive, 38 negative):
 
 | strategy | all expected | noise beside a hit | negative leaks | fallback fired | search calls |
 | --- | --- | --- | --- | --- | --- |
-| and | 21/54 | 0 (0 rows) | 0/22 | 0 | 76 |
-| or | 54/54 | 396 (51 rows) | 18/22 | 0 | 76 |
-| split | 28/54 | 9 (6 rows) | 2/22 | 0 | 126 |
-| and_then_split | 27/54 | 8 (5 rows) | 2/22 | 21 | 126 |
-| and_then_or | 53/54 | 265 (31 rows) | 17/22 | 21 | 76 |
-| and_then_hotspot | 50/54 | 8 (8 rows) | 3/22 | 21 | 76 |
-| and_then_hotspot_2 | 47/54 | 8 (8 rows) | 2/22 | 21 | 76 |
-| and_then_hotspot_3 | 46/54 | 3 (3 rows) | 0/22 | 21 | 76 |
+| and | 21/54 | 0 (0 rows) | 0/38 | 0 | 92 |
+| or | 54/54 | 396 (51 rows) | 32/38 | 0 | 92 |
+| split | 28/54 | 9 (6 rows) | 3/38 | 0 | 176 |
+| and_then_split | 27/54 | 8 (5 rows) | 3/38 | 37 | 176 |
+| and_then_or | 53/54 | 265 (31 rows) | 31/38 | 37 | 92 |
+| and_then_hotspot | 50/54 | 8 (8 rows) | 6/38 | 37 | 92 |
+| and_then_hotspot_2 | 47/54 | 8 (8 rows) | 5/38 | 37 | 92 |
+| and_then_hotspot_3 | 46/54 | 3 (3 rows) | 2/38 | 37 | 92 |
 
-Three things this says, and one thing it does not:
+Four things this says, and one thing it does not:
 
-1. `or` is not a retrieval strategy. It answers 95 of 117 negative rows with a
+1. `or` is not a retrieval strategy. It answers 32 of 38 negative rows with a
    memory, because "any token" makes near-miss questions look like hits — a
    memory that shares 日志 with a question about log levels now gets delivered.
-2. A fallback fires on 116 of 117 negative rows, and that is structural rather
+2. A fallback fires on 37 of 38 negative rows, and that is structural rather
    than a tuning problem: negatives are negative precisely because they share no
    whole token with a memory, so the conjunction is empty on all of them and any
    fallback gets to decide. Falling back means deciding *without* the evidence
    the AND query relies on.
-3. The two populations disagree, and that is the actual finding: on the curated
-   rows `and_then_hotspot_3` recovers more than twice the hits with zero leaks (0/22),
-   while on all rows the same strategy leaks 11/117. Triage of those 11 shows 7
-   are already-known cross-project label bugs in machine-drafted rows
-   (`cand-mem-other-port-*`, `cand-mem-migration-在-p-shop`, the duplicated
-   `p-memory-eval-other` row) and 4 are real near-misses
-   (连接池泄漏一般怎么排查, `hand-b3-neg-pool-keepalive`, `hand-b3-neg-apiver-header`)
-   that live only in `candidates.batch-3.jsonl` and were never promoted into the
-   baseline. So the gap is label quality, not strategy quality.
-4. No fallback is landing. The number to beat is `and`'s 0/117 leaks, and 22
-   hand-checked negatives cannot distinguish 0/22 from 11/117. The measurement
-   says what to do next — promote and hand-check more negatives — rather than
-   which strategy to ship, and it leaves the already-working alternative in
-   place: the model-driven rewrite measured in "Query expansion" recovers 50 of
-   52 literal misses for $0.0103, and it spends that money only on turns that
-   came back empty.
+3. The best fallback is a real offer, not a strawman: `and_then_hotspot_3`
+   recovers 25 of the 33 literal misses (21/54 → 46/54) while leaking 2 of 38
+   negatives (5.3%) and adding 3 noise ids. That is the trade the proposal's
+   「检索策略不足」 row is actually about, stated as a rate: one question in
+   nineteen that should have stayed quiet gets a memory, in exchange for more
+   than doubling what the agent can find by itself.
+4. It still does not land, and the reason is now a specific missing number
+   rather than a preference: the decision needs the cost asymmetry — what a
+   wrong delivered memory costs the agent versus what a missed one costs — and
+   nothing here measures that. What the set does say is that 22 hand-checked
+   negatives could not separate 0/22 from 11/117 while 38 can show the rate is
+   about one in twenty, so the label set was the deciding instrument and it
+   still needs the harm side. In the meantime the shipped path is the one that
+   spends on a second attempt instead of on a looser first one: the model-driven
+   rewrite in "Query expansion" recovers 50 of 52 literal misses for $0.0103,
+   only on turns that came back empty, and the empty-result hint tells the agent
+   to retry with 1-3 words before it gives up.
+
+The first two rows of the hand-confirmed table are also worth reading as a
+precision statement: `and` finds 21 of 54, so a third of this dataset cannot be
+answered by the lexical layer at all — that is the denominator the resolver is
+filling, and why its expansion was measured separately rather than assumed.
 
 ### Archived memories
 
