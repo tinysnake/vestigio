@@ -72,6 +72,28 @@ clean / 7 miss / 4 false_positive), and against an empty store the same 99 cases
 become 2 hit / 42 clean / 55 miss / 0 false_positive — the honest reading of an
 empty store, and the reason the audit reports coverage next to the score.
 
+### Read coverage without expected ids
+
+`coverage-store.mjs` asks a product-filled store each durable coverage question
+and records whether any card came back. It needs no `expected_memory_ids`,
+because it measures reachability at the question level:
+
+```sh
+node ./coverage-store.mjs --store ~/.vestigio/store.sqlite --project /abs/project --out out/coverage-store.json
+```
+
+The CLI opens a store read-write, so the script copies the store and its
+`-wal`/`-shm` siblings to a temp directory and queries the copy. A mistyped
+path fails with `no store at ...` instead of creating an empty database. Rows
+that do carry `expected_memory_ids` report how often the expected memory came
+back; a question that returns any unrelated card still counts as covered.
+
+Both harness stores return 0 of 30 durable rows. That is expected there (4
+functional memories, or 1 product-written memory) and proves only the path. The
+first run against a real store is the number that matters; the same run also
+exposes the question-side tokenizer gap, `部署 端口` returning a card where
+`部署端口` returns none.
+
 Scoring is not read-only: `recordProjectInput` appends to `project_activity`, so
 copy the store before pointing `run.mjs` at a real one. `audit.mjs` never writes.
 `--no-seed` needs `--store`: with a temporary store the flag would change nothing

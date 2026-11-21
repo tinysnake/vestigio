@@ -100,6 +100,7 @@ store，所以现在能给出的只有分母和「仅历史/缺失」的切分�
 
 ## 6. 等有 store 之后怎么算
 
+0. 先用 `node ./coverage-store.mjs --store <real store> --project <abs path> --out out/coverage-store.json` 拿读数覆盖率。它先复制 store（含 `-wal`/`-shm`）到临时目录，再把每条 durable 问题的原文交给 `vestigio search`，记录是否返回任何卡片，并按状态计数；CLI 会以读写方式打开 store 并跑迁移，复制是避免碰到原库的唯一办法。这一层不需要 `expected_memory_ids`：它回答「库能不能对这个问题给出任何东西」。当前对两份 harness store 都是 30 条 durable 题、0 条返回卡片，说明命令能跑通，生产数字仍待真 store。
 1. 用 `node ./audit.mjs --store <real store> --cases coverage.jsonl` 得到「预期记忆
    id 在 store 里是否存在」的那一半；当前 `coverage.jsonl` 没有 `expected_memory_ids`
    字段，因为本机没有 store，凭空的 id 只会制造假数据。等 store 存在后再按题意补。

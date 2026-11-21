@@ -3,8 +3,8 @@
  * PR-05 harness: the real pi `input` path against a local mock provider.
  *
  * It never talks to a real model and never reaches the operator's Obelisk
- * index. Every session directory, store and history home lives under
- * `/tmp/vestigio-pi`, and the extension is loaded explicitly with `-e` while
+ * index. Each run creates its own session, store, and history directories.
+ * The extension is loaded explicitly with `-e` while
  * `--no-extensions` disables discovery, so the operator's own extensions are
  * not involved.
  *
@@ -15,9 +15,10 @@
  * not on the extension's own logs.
  */
 
-import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,7 @@ import { VestigioClient } from "../../packages/client/src/index.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
-const TMP = "/tmp/vestigio-pi";
+const TMP = mkdtempSync(join(tmpdir(), "vestigio-pi-"));
 const CWD = join(TMP, "cwd");
 const PROJECT = join(TMP, "project");
 const PERF_PROJECT = join(TMP, "perf-project");
@@ -38,10 +39,10 @@ const SEED_STORE = join(TMP, "seed.sqlite");
 const OBELISK_HOME = join(TMP, "obelisk-home");
 const EXT = join(ROOT, "packages/pi-extension/src/extension.ts");
 const THROWER = join(HERE, "extensions/throw-on-input.ts");
-const AGENT_DIR = join(HERE, "agent");
-const PI = process.env.PI_BIN ?? "pi";
-const REAL_OBELISK = "/Users/snake/.obelisk/obelisk.sqlite";
-const PORT = Number(process.env.MOCK_PORT ?? 8799);
+const CLI = join(ROOT, "packages/cli/bin/vestigio");
+const AGENT_DIR = join(TMP, "agent");
+const PI = process.env.PI_BIN ?? join(ROOT, "packages/pi-extension/node_modules/.bin/pi");
+const REAL_OBELISK = join(homedir(), ".obelisk/obelisk.sqlite");
 
 const OPEN_TAG = "<vestigio_memory_note>";
 const CLOSE_TAG = "</vestigio_memory_note>";
@@ -126,8 +127,17 @@ function startMock() {
 		setResponder(fn) {
 			responder = fn ?? (() => ({ content: "OK" }));
 		},
+		get port() {
+			return server.address().port;
+		},
 		async listen() {
-			await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+			await new Promise((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(0, "127.0.0.1", () => {
+					server.off("error", reject);
+					resolve();
+				});
+			});
 		},
 		async close() {
 			await new Promise((resolve) => server.close(resolve));
@@ -253,7 +263,7 @@ function spawnPi({ name, project = PROJECT, extraExtensions = [], continueSessio
 		PI_OFFLINE: "1",
 		PI_SKIP_VERSION_CHECK: "1",
 		VESTIGIO_STORE: runStore,
-		VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${PORT}/v1`,
+		VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${mock.port}/v1`,
 		VESTIGIO_MODEL_ID: "mock-1",
 		VESTIGIO_MODEL_API_KEY: "mock",
 		VESTIGIO_PROJECT_ID: project,
@@ -430,6 +440,47 @@ async function scenarioSearchRecovery() {
 			await client.close();
 			mock.setResponder(null);
 		}
+	}
+}
+
+async function scenarioCompound() {
+	// Two questions in one turn, sent as one query. The pool holds `部署 端口`, not
+	// `日志保留期`, and the conjunction matches nothing, so the page is empty and
+	// recovery runs without selecting either clause. This measures the loss; it
+	// asserts today's behaviour, so run it with `--only compound` and flip the
+	// checks when a fix lands.
+	let toolAsked = false;
+	const modelInputs = [];
+	let toolResult;
+	mock.setResponder((body) => {
+		if (body?.stream === false) {
+			const system = body.messages?.find((message) => message.role === "system")?.content ?? "";
+			if (!system.includes("next_queries") && !system.includes("relevant_ids")) return { content: "{}" };
+			modelInputs.push(body.messages?.find((message) => message.role === "user")?.content ?? "");
+			return { content: JSON.stringify(system.includes("relevant_ids") ? { relevant_ids: [] } : { next_queries: [] }) };
+		}
+		if (!toolAsked) {
+			toolAsked = true;
+			return { content: null, tool_calls: [{ index: 0, id: "search-compound", type: "function", function: { name: "memory_search", arguments: JSON.stringify({ query: "部署 端口 日志保留期" }) } }] };
+		}
+		toolResult = body?.messages.findLast((message) => message.role === "tool")?.content;
+		return { content: "OK" };
+	});
+	const { client } = spawnPi({ name: "compound" });
+	try {
+		await client.prompt("部署端口要改吗，另外日志保留期是多少", "compound");
+		const result = JSON.stringify(toolResult) ?? "";
+		const heldAlone = JSON.parse(
+			execFileSync(CLI, ["search", "--db", runStore, "--project", PROJECT, "--query", "部署 端口", "--json"], { encoding: "utf8" }),
+		);
+		const heldUris = (heldAlone.result?.cards ?? []).map((card) => card.uri ?? card.memory_uri);
+		check("compound: the held clause alone finds its card", heldUris.some((uri) => uri?.includes("mem-deploy-port")), heldUris.join(" "));
+		check("compound: the clause the pool holds is lost in the combined query", result.includes("-> not_found | 0 card(s)") && !result.includes("memory://vestigio/mem-deploy-port"), result.slice(0, 240));
+		check("compound: recovery runs and still returns nothing", result.includes("no relevant card found"));
+		check("compound: two recovery model calls for one turn", modelInputs.length === 2, `${modelInputs.length} call(s)`);
+	} finally {
+		await client.close();
+		mock.setResponder(null);
 	}
 }
 
@@ -650,14 +701,19 @@ const mock = startMock();
 
 async function main() {
 	const dumpIndex = process.argv.indexOf("--dump");
-	rmSync(TMP, { recursive: true, force: true });
 	mkdirSync(CWD, { recursive: true });
 	mkdirSync(OBELISK_HOME, { recursive: true });
+	cpSync(join(HERE, "agent"), AGENT_DIR, { recursive: true });
 
 	const realBefore = existsSync(REAL_OBELISK) ? statSync(REAL_OBELISK).mtimeMs : null;
 
 	await mock.listen();
 	try {
+		console.log(`Pi scratch: ${TMP} (provider 127.0.0.1:${mock.port})`);
+		const modelsPath = join(AGENT_DIR, "models.json");
+		const models = JSON.parse(readFileSync(modelsPath, "utf8"));
+		models.providers.mock.baseUrl = `http://127.0.0.1:${mock.port}/v1`;
+		writeFileSync(modelsPath, JSON.stringify(models));
 		// Seed the isolated store with the workspace hook.
 		const { spawnSync } = await import("node:child_process");
 		const seeded = spawnSync(
@@ -686,7 +742,9 @@ async function main() {
 		const onlyIndex = process.argv.indexOf("--only");
 		const only = onlyIndex === -1 ? null : process.argv[onlyIndex + 1];
 		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "request", "search_recovery", "perf"];
-		if (only !== null && !scenarios.includes(only)) throw new Error(`unknown scenario: ${only}`);
+		// `compound` is a measurement of a known limitation, not a regression test; run it explicitly.
+		const measurements = ["compound"];
+		if (only !== null && !scenarios.includes(only) && !measurements.includes(only)) throw new Error(`unknown scenario: ${only}`);
 		const maybe = async (name, fn) => {
 			if (only === null || only === name) await fn();
 		};
@@ -706,16 +764,20 @@ async function main() {
 		};
 		await maybe("stale", () => {
 			useFreshStore("stale");
-			return scenarioStale({ mock, spawnPi, check, storePath: runStore, port: PORT, chatRequests, systemText, lastUserText });
+			return scenarioStale({ mock, spawnPi, check, storePath: runStore, port: mock.port, chatRequests, systemText, lastUserText });
 		});
 		await maybe("request", () => {
 			useFreshStore("request");
-			return scenarioRequest({ mock, spawnPi, check, storePath: runStore, port: PORT });
+			return scenarioRequest({ mock, spawnPi, check, storePath: runStore, port: mock.port });
 		});
 		await maybe("search_recovery", () => {
 			useFreshStore("search-recovery");
 			return scenarioSearchRecovery();
 		});
+		if (only === "compound") {
+			useFreshStore("compound");
+			await scenarioCompound();
+		}
 		if (only === null || only === "perf") useFreshStore("perf");
 
 		const perfEnabled = only === null || only === "perf";

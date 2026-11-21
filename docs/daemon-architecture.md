@@ -1,6 +1,6 @@
 # Vestigio daemon 架构提案
 
-目标是让 Vestigio 按需启动并独立常驻。pi、CLI 和 MCP 都是客户端。服务端持有模型调用、任务调度、记忆写入和结果交付。本文是设计提案，尚未实现服务或迁移用户数据。
+目标是让 Vestigio 按需启动并独立常驻。pi、CLI 和 MCP 都是客户端。服务端持有模型调用、任务调度、记忆写入和结果交付。本文记录已实现的设计；进程、懒启动、调度、交付和停机的行为由 `packages/daemon/test/` 与 `scripts/daemon-smoke.mjs` 验证。
 
 ## 设计依据
 
@@ -208,7 +208,7 @@ daemon 独立读取自己的模型配置和凭证，并复用现有 model-client
 
 运行验证还须覆盖任务接受、记忆发布事务提交以及通知发送/清理前后的崩溃，断言无重复记忆、无过期覆盖、无终态简短记录丢失，并验证发送后清理前崩溃允许重复通知。故意让 agent 超过旧 detector/repair 时限，确认仍然运行并最终发送结果。默认 stop 后任务可恢复，显式 cancel 则有 cancelled 结果。额外验证 SIGSTOP 超过旧 lease 时限后仍无第二个维护执行者、第二个 daemon 在打开执行池前退出、任务执行不依赖 MCP handle TTL，以及导航生成中断后 medium_ready 正文仍然可检索。
 
-以上为未来实现的验收门槛，尚未执行。现有真实 pi 验证入口仍须保留，用于验证客户端提交与结果注入；daemon 生命周期另加直接启动真实服务进程的集成验证。
+上述门槛已有自动化覆盖的部分：第 1 条由 `packages/daemon/test/jobs.test.ts` 的重启、取消和交付回收用例覆盖；第 2 条由 `packages/daemon/test/process.test.ts` 的单实例与崩溃接管用例覆盖，`scripts/daemon-smoke.mjs` 走一遍 CLI、daemon、stop 的真实路径；第 3、4 条由 `packages/daemon/test/memory/` 与 `eval/pi/run.mjs` 的真实 pi 场景覆盖；第 5 条由 `packages/cli/test/daemon.test.ts` 的 relay 与写失败用例覆盖。第 6 条的通知与详细结果清理逻辑由 job 用例用假时钟覆盖，不是进程崩溃后再读。尚无自动化或手工证据的部分：session 很久后重开、SIGSTOP 超过旧 lease 时限后仍无第二个维护者、第二个 daemon 在打开执行池前退出、任务执行不依赖 MCP handle TTL，以及记忆发布事务提交和通知发送/清理前后的真实崩溃。`scripts/daemon-smoke.mjs` 只走 CLI 建库、首次 `get` 触发懒启动、状态文件与 `stop`；README 里的 pi 启动与配置路径不在它的覆盖内。现有真实 pi 验证入口继续保留，用于验证客户端提交与结果注入；daemon 生命周期另有直接启动真实服务进程的集成验证。
 
 ## 原则对具体决策的影响
 

@@ -4,17 +4,19 @@
  *
  * Usage: node ./compare.mjs <baseline.json> <candidate.json>
  *
- * A regression is a case that used to pass (hit or clean) and no longer does;
- * the exit code is 1 when there is at least one, so CI can gate on this alone.
+ * Exit 1 for a regression or new errors and 2 for incompatible or incomplete reports.
+ * Pass --exploratory to inspect reports from different inputs.
  */
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const [baselinePath, candidatePath] = process.argv.slice(2);
-if (baselinePath === undefined || candidatePath === undefined) {
-	console.error("usage: compare.mjs <baseline.json> <candidate.json>");
-	console.error("       compare.mjs --baseline=<git-ref> <candidate.json>");
+const args = process.argv.slice(2);
+const exploratory = args[0] === "--exploratory";
+if (exploratory) args.shift();
+const [baselinePath, candidatePath] = args;
+if (args.length !== 2) {
+	console.error("usage: compare.mjs [--exploratory] <baseline.json|--baseline=<git-ref>> <candidate.json>");
 	process.exit(2);
 }
 
@@ -38,11 +40,29 @@ function loadBaseline(spec) {
 }
 
 const GOOD = new Set(["hit", "clean"]);
+const KNOWN = new Set(["hit", "clean", "miss", "false_positive", "error"]);
+function reportProblems(report, label) {
+	const problems = [];
+	const list = Array.isArray(report.cases) ? report.cases : [];
+	if (list.length === 0) problems.push(`${label}: no cases`);
+	for (const [index, item] of list.entries()) {
+		if (typeof item?.case_id !== "string" || item.case_id === "") problems.push(`${label}[${index}]: missing case_id`);
+		if (!KNOWN.has(item?.status)) problems.push(`${label}[${index}]: unknown status ${String(item?.status)}`);
+		if (!Array.isArray(item?.surfaced_ids)) problems.push(`${label}[${index}]: missing surfaced_ids`);
+	}
+	return problems;
+}
 const byId = (report) => new Map(report.cases.map((item) => [item.case_id, item]));
 const baselineReport = loadBaseline(baselinePath);
 const candidateReport = JSON.parse(readFileSync(candidatePath, "utf8"));
+const problems = [...reportProblems(baselineReport, "baseline"), ...reportProblems(candidateReport, "candidate")];
+if (problems.length > 0) {
+	for (const problem of problems) console.error(problem);
+	process.exit(2);
+}
 const before = byId(baselineReport);
 const after = byId(candidateReport);
+const errorCount = (report) => report.cases.filter((item) => item.status === "error").length;
 
 const format = (value) =>
 	value === null || value === undefined ? "-" : typeof value === "number" ? value.toFixed(3) : String(value);
@@ -53,7 +73,9 @@ const delta = (from, to) =>
 // case ids line up, so say so before printing numbers.
 const keyOf = (report) =>
 	`${report.dataset_sha256 ?? "?"}/${report.catalog_version ?? "?"}`;
-const sameInputs = keyOf(baselineReport) === keyOf(candidateReport);
+const sameInputs = ["dataset_sha256", "catalog_version"].every((key) =>
+	baselineReport[key] != null && baselineReport[key] !== "" && baselineReport[key] === candidateReport[key]);
+const uniqueIds = before.size === baselineReport.cases.length && after.size === candidateReport.cases.length;
 if (!sameInputs) {
 	console.log(`datasets differ: ${keyOf(baselineReport)} vs ${keyOf(candidateReport)} — metric deltas are not comparable`);
 }
@@ -100,4 +122,10 @@ for (const [title, lines] of Object.entries(groups)) {
 	for (const line of lines) console.log(`  ${line}`);
 }
 console.log(Object.entries(groups).map(([title, lines]) => `${title}: ${lines.length}`).join(", "));
-process.exitCode = groups.regressions.length > 0 ? 1 : 0;
+const sameCases = groups["missing from candidate"].length === 0 && groups["added in candidate"].length === 0;
+const newErrors = errorCount(candidateReport) > errorCount(baselineReport);
+if (!uniqueIds) console.error("duplicate case ids make the reports ambiguous");
+if (newErrors) console.error(`candidate has ${errorCount(candidateReport)} errored cases, baseline ${errorCount(baselineReport)}`);
+process.exitCode = !uniqueIds || (!exploratory && (!sameInputs || !sameCases))
+	? 2
+	: groups.regressions.length > 0 || newErrors ? 1 : 0;

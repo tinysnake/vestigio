@@ -8,7 +8,7 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test eval/memory/compare.test.mjs",
     "typecheck": "pnpm -r typecheck"
   }
 }

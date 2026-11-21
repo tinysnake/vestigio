@@ -1,0 +1,47 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Walk the documented daemon path against a temp store
+        run: node scripts/daemon-smoke.mjs
+      - name: Compare the offline memory report with its baseline
+        working-directory: eval/memory
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          node --import ../pi/hook.mjs ./run.mjs
+          if [ -n "$BASE_REF" ]; then
+            git fetch --depth=1 origin "$BASE_REF"
+            git show "FETCH_HEAD:eval/memory/baseline.json" > /tmp/baseline.json
+            node ./compare.mjs /tmp/baseline.json out/report.json
+          else
+            node ./compare.mjs baseline.json out/report.json
+          fi
+      - name: Run core Pi scenarios with the loopback provider
+        working-directory: eval/pi
+        run: |
+          for scenario in new_session stale request search_recovery; do
+            node --import ./hook.mjs ./run.mjs --only "$scenario" || exit $?
+          done

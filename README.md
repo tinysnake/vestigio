@@ -5,19 +5,24 @@ Low-cost layered memory system for coding agents. v1 plugs into
 queries memory when it needs to; the system keeps verifiable historical sources
 and bounds the cost of organizing and reading them.
 
-This checkout currently contains **PR-01**: the frozen core contracts and the
-repo scaffold that every later stage is verified against. There is no storage
-engine or pi extension yet.
+This checkout holds the whole v1 path: the frozen core contracts and SQLite
+store, the retrieval and staleness logic, the background daemon, the CLI, and
+the pi extension that injects a reminder and exposes the memory tools.
 
 ## Layout
 
 ```
-packages/core/src/contracts/   type shapes, boundary parsers, identity helpers
-packages/core/test/            contract tests
+packages/core/                 store, layered search, hotspots, stale events, resolver
+packages/daemon/               job scheduler, memory handlers, process lifecycle
+packages/client/               daemon client: lazy start, health, jobs, events
+packages/cli/                  vestigio search/read/resolve/jobs + daemon adapters
+packages/pi-extension/         pi tools, injection, lifecycle hooks
 eval/fixtures/                 synthetic retrieval corpus (JSONL)
 eval/baseline/                 no-memory vs Obelisk resource ledger
 eval/memory/                   offline recall/injection eval with baseline diff
 eval/requests/                 actual-model free-choice eval for operator-approved saves
+eval/pi/                       real pi lifecycle harness with a loopback provider
+scripts/daemon-smoke.mjs       CLI to daemon to stop, against a temporary store
 docs/contracts.md              the frozen shapes, rules and compatibility range
 docs/*.md                      requirements, plan and research notes
 ```
@@ -31,13 +36,39 @@ SQLite at runtime comes from the Node built-in `node:sqlite` (PR-02); there is
 no third-party SQLite driver. `packages/core` has **zero runtime
 dependencies**.
 
+## Quick start
+
+```sh
+pnpm install
+pnpm test && pnpm typecheck
+node scripts/daemon-smoke.mjs     # CLI creates a store, daemon starts, stop works
+```
+
+Load the extension into pi with `-e`, or add the same path to the `extensions`
+list in `~/.pi/agent/settings.json`. `VESTIGIO_STORE` is the only required
+variable; without it the extension stays inert. Memory retrieval and saving do
+not need a model, and staleness detection and cold-search recovery stay off
+until `VESTIGIO_MODEL_BASE_URL` and `VESTIGIO_MODEL_ID` are set.
+
+```sh
+VESTIGIO_STORE=$HOME/.vestigio/store.sqlite \
+VESTIGIO_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
+VESTIGIO_MODEL_ID=auto/deepseek-v4.1-flash \
+pi -e packages/pi-extension/src/extension.ts
+```
+
+The first memory tool call starts the daemon. Its state, job database and log
+live beside the store, in `<store>.daemon/` (`daemon.log`, `endpoint.json`,
+`jobs.sqlite`). Stop it with `packages/cli/bin/vestigio stop --db <store>`.
+There is no idle timeout: closing pi does not stop the daemon.
+
 ## Commands
 
 ```sh
 pnpm install
 pnpm -C packages/core test        # vitest
 pnpm -C packages/core typecheck   # tsc --noEmit
-pnpm test                         # workspace-wide
+pnpm test                         # workspace-wide, includes the compare gate
 ```
 
 Baseline harness (writes `eval/baseline/out/`):
@@ -52,6 +83,22 @@ Memory eval (runs 99 labeled cases, then diffs against the committed baseline):
 cd eval/memory
 node --import ../pi/hook.mjs ./run.mjs && node ./compare.mjs baseline.json out/report.json
 ```
+
+`compare.mjs` exits 1 on a regression and 2 when the reports are not comparable
+(different dataset or catalog, a missing or added case id, duplicate ids). Pass
+`--exploratory` to print the diff without enforcing those input checks.
+
+Write coverage of a store the product filled, using the durable rows in
+`coverage.jsonl`:
+
+```sh
+cd eval/memory
+node ./coverage-store.mjs --store ~/.vestigio/store.sqlite --project "$PWD/.." --out out/coverage-store.json
+```
+
+It copies the store to a temp directory first, because the CLI opens stores
+read-write and runs migrations. Your live file is never touched; a mistyped
+path fails instead of creating a new empty store.
 
 `resolution.mjs` pins the resolver's own branches with a scripted judge (seven
 cases, no network). Model-backed evals in the same directory: `usage.mjs` (was
