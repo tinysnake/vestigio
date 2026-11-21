@@ -1,5 +1,7 @@
 name: Debug daemon lock test
-on: workflow_dispatch
+on:
+  push:
+    branches: [debug/daemon-lock-ci]
 jobs:
   lock:
     runs-on: ubuntu-latest
