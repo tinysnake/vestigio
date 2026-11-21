@@ -128,9 +128,15 @@ describe("resolveEnv", () => {
 });
 
 describe("configToEnv", () => {
-	it("maps the store to both variable names and skips a null api key", () => {
+	it("maps the store to the one variable every reader accepts, and skips a null api key", () => {
 		const env = configToEnv({ store: "/tmp/s.sqlite", model: { api_key: null, id: "m" }, logging: { decision_log: null } });
-		expect(env).toEqual({ VESTIGIO_STORE: "/tmp/s.sqlite", VESTIGIO_DB: "/tmp/s.sqlite", VESTIGIO_MODEL_ID: "m" });
+		expect(env).toEqual({ VESTIGIO_STORE: "/tmp/s.sqlite", VESTIGIO_MODEL_ID: "m" });
+	});
+
+	it("lets a caller override the file's store", () => {
+		const home = tempHome({ store: "/tmp/from-file.sqlite" });
+		const env = resolveEnv({ VESTIGIO_STORE: "/tmp/from-env.sqlite" }, { home });
+		expect(env.VESTIGIO_STORE).toBe("/tmp/from-env.sqlite");
 	});
 
 	it("exposes the values a fresh file should carry", () => {

@@ -18,7 +18,8 @@ function option(name: string): string | undefined {
   return value;
 }
 
-const store = option("--db") ?? option("--store") ?? process.env["VESTIGIO_DB"];
+const store =
+	option("--db") ?? option("--store") ?? process.env["VESTIGIO_DB"] ?? process.env["VESTIGIO_STORE"];
 
 const server = createMcpServer({
   clientFor: (path) => new VestigioClient(path),

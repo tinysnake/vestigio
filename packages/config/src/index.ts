@@ -174,9 +174,9 @@ export function saveActivity(enabled: boolean, env: VestigioEnv = process.env, o
 export function configToEnv(file: ConfigFile): Record<string, string> {
 	const out: Record<string, string> = {};
 	if (file.store !== undefined) {
+		// One name, not two: every reader accepts `VESTIGIO_STORE`, and writing
+		// `VESTIGIO_DB` from the file would outrank a caller's own `VESTIGIO_STORE`.
 		out["VESTIGIO_STORE"] = file.store;
-		// The MCP adapter has always had its own name for the same value.
-		out["VESTIGIO_DB"] = file.store;
 	}
 	const model = file.model;
 	if (model !== undefined) {
