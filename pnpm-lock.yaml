@@ -136,7 +136,7 @@ importers:
         specifier: workspace:*
         version: link:../source-obelisk
       typebox:
-        specifier: ^1.4.7
+        specifier: '*'
         version: 1.4.7
     devDependencies:
       '@earendil-works/pi-coding-agent':

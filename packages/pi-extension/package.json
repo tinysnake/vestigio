@@ -24,8 +24,11 @@
     "@vestigio/config": "workspace:*",
     "@vestigio/core": "workspace:*",
     "@vestigio/model-client": "workspace:*",
-    "@vestigio/source-obelisk": "workspace:*",
-    "typebox": "^1.4.7"
+    "@vestigio/source-obelisk": "workspace:*"
+  },
+  "peerDependencies": {
+    "typebox": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",

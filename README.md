@@ -54,10 +54,18 @@ detection and cold-search recovery stay off until `VESTIGIO_MODEL_BASE_URL` and
 `VESTIGIO_MODEL_ID` are set.
 
 ```sh
+node scripts/deploy.mjs --model-base-url http://127.0.0.1:11434/v1 \
+  --model-id auto/deepseek-v4.1-flash
+```
+
+For a one-off run without installing anything, point `-e` at the package and
+set the same values in the environment:
+
+```sh
 VESTIGIO_STORE=$HOME/.vestigio/store.sqlite \
 VESTIGIO_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
 VESTIGIO_MODEL_ID=auto/deepseek-v4.1-flash \
-pi -e packages/pi-extension/src/extension.ts
+pi -e packages/pi-extension
 ```
 
 The first memory tool call starts the daemon. Its state, job database and log
