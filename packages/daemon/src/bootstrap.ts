@@ -13,6 +13,9 @@ export async function startDaemon(requested: string, createHandler: (store: stri
 	const lock = tryLock(paths.lock);
 	appendFileSync("/tmp/vestigio-lock-trace.log", `daemon ${process.pid} lock ${lock ? "acquired" : "busy"} ${paths.lock}\n`);
 	if (!lock) return;
+	// The connection behind this lock is the exclusion. It must stay reachable for the
+	// daemon's lifetime; a local that V8 collects is closed and lets a second daemon
+	// adopt the same store.
 
 	const handler = await createHandler(paths.store);
 	const store = new JobStore(paths.jobs);
@@ -30,6 +33,7 @@ export async function startDaemon(requested: string, createHandler: (store: stri
 		service.stop();
 		server.close();
 		rmSync(paths.endpoint, { force: true });
+		lock.close();
 		process.exit(0);
 	}
 	const server = httpServer(service, endpoint, stop);
