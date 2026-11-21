@@ -20,7 +20,7 @@ const CLI = join(ROOT, "packages/cli/bin/vestigio");
 const dir = mkdtempSync(join(tmpdir(), "vestigio-smoke-"));
 const store = join(dir, "store.sqlite");
 const project = join(dir, "project");
-const run = (...args) => spawnSync(CLI, args, { encoding: "utf8" });
+const run = (...args) => spawnSync(CLI, args, { encoding: "utf8", env: { ...process.env, VESTIGIO_CONFIG: "" } });
 
 try {
 	const search = run("search", "--db", store, "--project", project, "--query", "部署 端口");

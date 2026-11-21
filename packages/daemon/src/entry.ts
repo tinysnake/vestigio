@@ -1,4 +1,7 @@
+import { applyConfigToEnv } from "@vestigio/config";
 import { startDaemon } from "./bootstrap.js";
+
+applyConfigToEnv();
 
 const store = process.argv[2];
 if (!store) throw new Error("Expected the memory store path");

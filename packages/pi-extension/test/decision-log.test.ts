@@ -38,6 +38,18 @@ describe("DecisionLog", () => {
 		}
 	});
 
+	it("creates a missing parent directory", () => {
+		const dir = mkdtempSync(join(tmpdir(), "vestigio-log-"));
+		try {
+			const path = join(dir, "nested", "decisions.jsonl");
+			const log = new DecisionLog(path);
+			log.write({ ts: "t", kind: "input", status: "not_injected" });
+			expect(readFileSync(path, "utf8").trim()).toContain('"not_injected"');
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps the ids a turn delivered without the memory bodies", () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-log-"));
 		try {

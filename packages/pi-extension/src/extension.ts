@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readConfig } from "./config.js";
+import { resolveEnv } from "@vestigio/config";
 import { connectPi } from "./daemon-adapter.js";
 
 export const STALE_MAINTENANCE_INSTRUCTIONS = [
@@ -15,7 +16,7 @@ export const STALE_MAINTENANCE_INSTRUCTIONS = [
 ].join("\n");
 
 export default function vestigio(pi: ExtensionAPI): void {
-	const config = readConfig();
+	const config = readConfig(resolveEnv());
 	if (!config.enabled) return;
 
 	if (config.store_path === null) return;

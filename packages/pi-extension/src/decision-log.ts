@@ -13,7 +13,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type DecisionRecord = {
 	readonly ts: string;
@@ -64,6 +65,13 @@ export class DecisionLog {
 
 	constructor(path: string | null) {
 		this.path = path;
+		if (path !== null) {
+			try {
+				mkdirSync(dirname(path), { recursive: true });
+			} catch {
+				// The write guard below reports the failure; constructing a log stays safe.
+			}
+		}
 	}
 
 	get enabled(): boolean {

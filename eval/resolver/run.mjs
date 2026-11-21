@@ -197,6 +197,7 @@ function main() {
   const root = mkdtempSync(join(tmpdir(), "vestigio-resolver-eval-"));
   const childEnv = {
     ...process.env,
+    VESTIGIO_CONFIG: "",
     VESTIGIO_MODEL_BASE_URL: gateway.baseUrl,
     VESTIGIO_MODEL_ID: gateway.model,
     VESTIGIO_MODEL_API_KEY: gateway.apiKey,

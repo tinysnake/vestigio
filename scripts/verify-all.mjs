@@ -70,7 +70,7 @@ for (const [index, item] of selected.entries()) {
 	const started = performance.now();
 	const result = spawnSync(item.command, item.commandArgs, {
 		cwd: item.cwd,
-		env: process.env,
+		env: { ...process.env, VESTIGIO_CONFIG: "" },
 		encoding: "utf8",
 		maxBuffer: 64 * 1024 * 1024,
 		stdio: ["ignore", "pipe", "pipe"],

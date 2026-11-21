@@ -1,4 +1,5 @@
 import { VestigioClient } from "@vestigio/client";
+import { applyConfigToEnv } from "@vestigio/config";
 import { createMcpServer, serveStdio, stdoutWriter } from "./mcp.js";
 
 /**
@@ -6,6 +7,8 @@ import { createMcpServer, serveStdio, stdoutWriter } from "./mcp.js";
  * override it with its own `store` argument. Nothing here reads stdin while a
  * request is in flight, and nothing is remembered between requests.
  */
+applyConfigToEnv();
+
 function option(name: string): string | undefined {
   const argv = process.argv.slice(2);
   const index = argv.indexOf(name);

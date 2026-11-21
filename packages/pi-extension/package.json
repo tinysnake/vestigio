@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@vestigio/client": "workspace:*",
+    "@vestigio/config": "workspace:*",
     "@vestigio/core": "workspace:*",
     "@vestigio/model-client": "workspace:*",
     "@vestigio/source-obelisk": "workspace:*",

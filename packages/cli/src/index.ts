@@ -103,7 +103,8 @@ Daemon jobs (compatibility adapters; the daemon owns scheduling and delivery):
 
 --project must be a normalised absolute path: it is used verbatim as the store
 scope and as Obelisk's project_path, so a typo is a different project, not a
-convenience.`;
+convenience. When --db is omitted, VESTIGIO_DB or VESTIGIO_STORE names the
+store; both are filled from ~/.vestigio/config.json.`;
 
 export type CliIo = {
   out(text: string): void;
@@ -250,6 +251,15 @@ function requireFlag(parsed: ParsedArgs, name: string): string {
   return value;
 }
 
+/** `--db` wins, then the variables the config file fills in. */
+function databasePath(parsed: ParsedArgs): string {
+  const flag = stringFlag(parsed, "db");
+  if (flag !== undefined && flag.length > 0) return flag;
+  const fallback = process.env["VESTIGIO_DB"] ?? process.env["VESTIGIO_STORE"];
+  if (fallback !== undefined && fallback.trim().length > 0) return fallback.trim();
+  throw new UsageError("--db is required unless VESTIGIO_DB or VESTIGIO_STORE names the store");
+}
+
 function integerFlag(parsed: ParsedArgs, name: string, min: number, max: number): number | undefined {
   const raw = stringFlag(parsed, name);
   if (raw === undefined) {
@@ -327,7 +337,7 @@ type CommandContext = {
 };
 
 function openDatabase(context: CommandContext): MemoryStore {
-  const dbPath = requireFlag(context.parsed, "db");
+  const dbPath = databasePath(context.parsed);
   const open = context.deps.open ?? openStore;
   return open({ path: dbPath });
 }
@@ -357,7 +367,7 @@ function historyIndexPath(home: string): string {
 
 async function runSearch(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "search");
-  const dbPath = requireFlag(context.parsed, "db");
+  const dbPath = databasePath(context.parsed);
   const query = requireFlag(context.parsed, "query");
   const scope = requireScope(context.parsed);
   const wantsHistory =
@@ -460,7 +470,7 @@ async function runJobs(context: CommandContext): Promise<number> {
 }
 
 function daemonClient(context: CommandContext): DaemonClient {
-  const storePath = requireFlag(context.parsed, "db");
+  const storePath = databasePath(context.parsed);
   const create = context.deps.createClient ?? ((path: string) => new VestigioClient(path));
   return create(storePath);
 }

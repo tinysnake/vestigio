@@ -323,6 +323,7 @@ async function runCase(testCase, options, model, repeat) {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: {
 				...process.env,
+				VESTIGIO_CONFIG: "",
 				PI_CODING_AGENT_DIR: AGENT_HOME,
 				PI_CODING_AGENT_SESSION_DIR: join(runDir, "sessions"),
 				PI_SKIP_VERSION_CHECK: "1",

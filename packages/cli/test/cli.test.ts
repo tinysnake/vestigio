@@ -96,6 +96,20 @@ describe("cli usage", () => {
     expect(result.err).toContain("unknown command");
   });
 
+  it("falls back to VESTIGIO_DB when --db is absent", async () => {
+    const path = tempDbPath();
+    const previous = process.env["VESTIGIO_DB"];
+    process.env["VESTIGIO_DB"] = path;
+    try {
+      const result = await run(["search", "--project", PROJECT_A, "--query", "端口", "--json"]);
+      expect(result.code).toBe(0);
+      expect(result.err).not.toContain("--db is required");
+    } finally {
+      if (previous === undefined) delete process.env["VESTIGIO_DB"];
+      else process.env["VESTIGIO_DB"] = previous;
+    }
+  });
+
   it("requires --db, --query and a scope", async () => {
     expect((await run(["search"])).err).toContain("--db is required");
     const path = seedStore(() => {});

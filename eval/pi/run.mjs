@@ -258,6 +258,7 @@ function spawnPi({ name, project = PROJECT, extraExtensions = [], continueSessio
 	if (continueSession) args.push("--continue");
 	const childEnv = {
 		...process.env,
+		VESTIGIO_CONFIG: "",
 		PI_CODING_AGENT_DIR: AGENT_DIR,
 		PI_CODING_AGENT_SESSION_DIR: sessionDir,
 		PI_OFFLINE: "1",

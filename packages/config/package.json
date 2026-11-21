@@ -1,0 +1,25 @@
+{
+  "name": "@vestigio/config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Operator config file loader shared by the CLI, daemon, MCP adapter and pi extension.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vestigio/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

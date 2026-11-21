@@ -1302,6 +1302,7 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 
 	const env = {
 		...process.env,
+		VESTIGIO_CONFIG: "",
 		PI_CODING_AGENT_DIR: AGENT_HOME,
 		PI_CODING_AGENT_SESSION_DIR: sessionDir,
 		PI_SKIP_VERSION_CHECK: "1",

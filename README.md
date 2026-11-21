@@ -45,10 +45,11 @@ node scripts/daemon-smoke.mjs     # CLI creates a store, daemon starts, stop wor
 ```
 
 Load the extension into pi with `-e`, or add the same path to the `extensions`
-list in `~/.pi/agent/settings.json`. `VESTIGIO_STORE` is the only required
-variable; without it the extension stays inert. Memory retrieval and saving do
-not need a model, and staleness detection and cold-search recovery stay off
-until `VESTIGIO_MODEL_BASE_URL` and `VESTIGIO_MODEL_ID` are set.
+list in `~/.pi/agent/settings.json`. `VESTIGIO_STORE`, or `store` in the
+config file, is the only required setting; without it the extension stays
+inert. Memory retrieval and saving do not need a model, and staleness
+detection and cold-search recovery stay off until `VESTIGIO_MODEL_BASE_URL` and
+`VESTIGIO_MODEL_ID` are set.
 
 ```sh
 VESTIGIO_STORE=$HOME/.vestigio/store.sqlite \
@@ -61,6 +62,34 @@ The first memory tool call starts the daemon. Its state, job database and log
 live beside the store, in `<store>.daemon/` (`daemon.log`, `endpoint.json`,
 `jobs.sqlite`). Stop it with `packages/cli/bin/vestigio stop --db <store>`.
 There is no idle timeout: closing pi does not stop the daemon.
+
+## Configuration file
+
+Every entry point reads the same file, `~/.vestigio/config.json`. It fills the
+`VESTIGIO_*` settings below. A command-line flag, then an environment
+variable, then the file, then the built-in default decides each value.
+
+```json
+{
+  "version": 1,
+  "store": "~/.vestigio/store.sqlite",
+  "model": {
+    "base_url": "http://127.0.0.1:11434/v1",
+    "id": "auto/deepseek-v4.1-flash",
+    "api_key": null,
+    "thinking": "low"
+  },
+  "retrieval": { "budget_bytes": 4096, "max_memories": 3, "min_score": 1, "pool_capacity": 32, "timeout_ms": 1000 },
+  "history": { "obelisk_home": null, "obelisk_cli": null },
+  "logging": { "decision_log": null }
+}
+```
+
+`VESTIGIO_CONFIG` points at a different file, and an empty value disables the
+file. A relative path in the file resolves against the file's directory.
+Unknown keys and wrong types are errors. A process reads the file when it
+starts, so a running daemon keeps the values it started with; `vestigio stop
+--db <store>` and the next tool call pick up an edit.
 
 ## Commands
 

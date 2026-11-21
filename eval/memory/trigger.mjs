@@ -222,6 +222,7 @@ function runTurn(question, storeFile) {
 		maxBuffer: 32 * 1024 * 1024,
 		env: {
 			...process.env,
+			VESTIGIO_CONFIG: "",
 			PI_SKIP_VERSION_CHECK: "1",
 			VESTIGIO_STORE: storeFile,
 			VESTIGIO_PROJECT_ID: PROJECT,
