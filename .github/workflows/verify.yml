@@ -39,6 +39,10 @@ jobs:
           else
             node ./compare.mjs baseline.json out/report.json
           fi
+      - name: Show lock trace
+        if: failure()
+        run: cat /tmp/vestigio-lock-trace.log || true
+
       - name: Run core Pi scenarios with the loopback provider
         working-directory: eval/pi
         run: |
