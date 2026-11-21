@@ -1,0 +1,21 @@
+name: Debug daemon lock test
+on: workflow_dispatch
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run only the daemon process test
+        run: pnpm --filter @vestigio/daemon exec vitest run test/process.test.ts --reporter=verbose
+      - name: Show lock trace
+        if: always()
+        run: cat /tmp/vestigio-lock-trace.log || true
