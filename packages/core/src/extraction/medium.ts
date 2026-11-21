@@ -8,7 +8,7 @@
 
 import { nonWhitespaceCodePointCount } from "../contracts/index.js";
 import type { ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
-import { MEDIUM_REWRITE_SYSTEM_NOTE, MEDIUM_SUMMARY_SYSTEM_PROMPT, buildMediumUserMessage, describeMediumFailure, validateMediumBody } from "./prompt.js";
+import { MEDIUM_REWRITE_SYSTEM_NOTE, MEDIUM_SUMMARY_SYSTEM_PROMPT, buildMediumUserMessage, describeMediumFailure, validateMediumAliases, validateMediumBody } from "./prompt.js";
 import type { MediumCall, MediumExtractInput, MediumExtraction } from "./types.js";
 
 const ZERO_USAGE: ModelUsage = { tokens_in: 0, tokens_out: 0, cost_usd: null };
@@ -26,7 +26,7 @@ function httpStatusOf(reason: string): number | null {
   return match?.[1] === undefined ? null : Number.parseInt(match[1], 10);
 }
 
-function readBodyObject(text: string): string | null {
+function readSummaryObject(text: string): { body: string; aliases: unknown } | null {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/u);
   const substance = fenced?.[1] ?? trimmed;
@@ -38,11 +38,22 @@ function readBodyObject(text: string): string | null {
   try {
     const parsed = JSON.parse(substance.slice(start, end + 1)) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-    const body = (parsed as Record<string, unknown>)["body"];
-    return typeof body === "string" && body.trim().length > 0 ? body : null;
+    const record = parsed as Record<string, unknown>;
+    const body = record["body"];
+    if (typeof body !== "string" || body.trim().length === 0) return null;
+    return { body, aliases: record["aliases"] };
   } catch {
     return null;
   }
+}
+
+function aliasGrounding(input: MediumExtractInput["evidence"]): string[] {
+  const ids = new Set(input.alias_grounding_ids ?? []);
+  const grounding = [input.question];
+  for (const item of input.evidence) {
+    if (ids.has(item.id)) grounding.push(item.text);
+  }
+  return grounding;
 }
 
 function callOf(
@@ -63,6 +74,7 @@ function callOf(
 
 export async function extractMediumSummary(input: MediumExtractInput): Promise<MediumExtraction> {
   const started = performance.now();
+  const evidence = input.evidence;
   const request: ModelRequest = {
     ...(input.model_id === undefined ? {} : { model: input.model_id }),
     messages: [
@@ -73,7 +85,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
             ? MEDIUM_SUMMARY_SYSTEM_PROMPT
             : `${MEDIUM_SUMMARY_SYSTEM_PROMPT}\n\n${MEDIUM_REWRITE_SYSTEM_NOTE}`,
       },
-      { role: "user", content: buildMediumUserMessage(input.evidence, input.correction, input.guidance) },
+      { role: "user", content: buildMediumUserMessage(evidence, input.correction, input.guidance) },
     ],
     max_output_tokens: input.max_output_tokens,
     expect_json: true,
@@ -92,6 +104,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body: null,
       body_char_count: null,
       cited_ids: [],
+      aliases: [],
       reason: `model_threw:${error instanceof Error ? error.message : String(error)}`,
       failure: { kind: "model_threw", message: error instanceof Error ? error.message : String(error) },
       usage: ZERO_USAGE,
@@ -107,6 +120,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body: null,
       body_char_count: null,
       cited_ids: [],
+      aliases: [],
       reason: `model_${result.status}:${result.reason}`,
       failure: { kind: "model", status: result.status, http_status: httpStatusOf(result.reason) },
       usage: ZERO_USAGE,
@@ -116,13 +130,14 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
 
   const usage = result.value.usage;
   const model = result.value.model;
-  const body = readBodyObject(result.value.text);
-  if (body === null) {
+  const summary = readSummaryObject(result.value.text);
+  if (summary === null) {
     return {
       status: "invalid",
       body: null,
       body_char_count: null,
       cited_ids: [],
+      aliases: [],
       reason: "model_malformed_output:no_body",
       failure: { kind: "malformed_output" },
       usage,
@@ -130,6 +145,8 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
     };
   }
 
+  const body = summary.body;
+  const aliases = validateMediumAliases(summary.aliases, aliasGrounding(evidence));
   const validation = validateMediumBody(body, input.allowed_ids);
   if (!validation.ok) {
     if (validation.failure.kind === "too_short") {
@@ -138,6 +155,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
         body,
         body_char_count: nonWhitespaceCodePointCount(body),
         cited_ids: [],
+        aliases,
         reason: describeMediumFailure(validation.failure),
         failure: { kind: "body", failure: validation.failure },
         usage,
@@ -149,6 +167,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
       body: null,
       body_char_count: null,
       cited_ids: [],
+      aliases: [],
       reason: describeMediumFailure(validation.failure),
       failure: { kind: "body", failure: validation.failure },
       usage,
@@ -161,6 +180,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
     body: validation.body,
     body_char_count: validation.body_char_count,
     cited_ids: validation.cited_ids,
+    aliases,
     reason: null,
     failure: null,
     usage,

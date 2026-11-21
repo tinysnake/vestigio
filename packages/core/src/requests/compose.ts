@@ -34,7 +34,7 @@ import { enqueueSummaryJob } from "../jobs/index.js";
 import { subjectKey, subjectsCollide } from "../retrieval/index.js";
 import { MAX_FRESHNESS_PENDING, type MemoryStore } from "../storage/store.js";
 import type { ModelPort } from "../resolver/types.js";
-import { buildKeywords, buildTitle } from "../resolver/persist.js";
+import { buildTitle, formationKeywords } from "../resolver/persist.js";
 import type { MemoryRequest, MemoryRequestEvidence } from "./queue.js";
 
 /** The prompt and JSON envelope need room beyond the body itself. */
@@ -279,7 +279,10 @@ export async function composeMemoryRequest(input: ComposeMemoryRequestInput): Pr
     const extraction = await extractMediumSummary({
       model: input.model as ModelPort,
       model_id: input.model_id,
-      evidence: { question, project: input.project, evidence },
+      evidence: {
+        question, project: input.project, evidence,
+        alias_grounding_ids: request.evidence.map((entry) => entry.source.message_id),
+      },
       allowed_ids: allowedIds,
       max_output_tokens: input.max_output_tokens ?? REQUEST_MAX_OUTPUT_TOKENS,
       signal: input.signal,
@@ -340,7 +343,7 @@ export async function composeMemoryRequest(input: ComposeMemoryRequestInput): Pr
       uri,
       scope: request.scope,
       title: request.title,
-      keywords: buildKeywords(request.intent),
+      keywords: formationKeywords(request.intent, [], extraction.aliases),
       revision: 1,
       state: "medium_ready",
       medium: {
@@ -384,7 +387,7 @@ export async function composeMemoryRequest(input: ComposeMemoryRequestInput): Pr
     uri: target.uri,
     scope: target.scope,
     title: target.title,
-    keywords: target.keywords,
+    keywords: formationKeywords(request.intent, target.keywords, extraction.aliases),
     revision: target.revision + 1,
     state: "medium_ready",
     medium: {

@@ -35,6 +35,12 @@ export type MediumEvidenceInput = {
   /** The caller's project path, for the prompt only. */
   project: string | null;
   evidence: readonly MediumEvidence[];
+  /**
+   * Evidence ids whose text is the user's own wording, so an alias may be
+   * copied from it verbatim. Always-and-only the current question is not listed
+   * here; the caller's question is grounding by definition.
+   */
+  alias_grounding_ids?: readonly string[] | undefined;
 };
 
 export type MediumCall = {
@@ -84,6 +90,12 @@ export type MediumExtraction = {
   body: string | null;
   body_char_count: number | null;
   cited_ids: string[];
+  /**
+   * Verbatim terms from the current question or an id listed in
+   * `alias_grounding_ids`; empty when the model returned none, they were
+   * ungrounded, or the body itself was rejected.
+   */
+  aliases: string[];
   reason: string | null;
   /** Structured cause of a non-`ok` result; `null` when `status` is `ok`. */
   failure: MediumFailure | null;

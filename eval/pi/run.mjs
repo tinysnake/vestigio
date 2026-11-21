@@ -384,10 +384,52 @@ async function scenarioNewSession() {
 		check("new_session: exactly one block across the session", total === 1, `${total} block(s)`);
 
 		const records = decisionRecords(decisions).filter((record) => record.kind === "input");
-		check("new_session: decision log records the dedup", records.some((record) => record.reason === "all_deduped"));
+		check("new_session: decision log records the delivered card and budget", records.some((record) =>
+			record.status === "injected" && record.memory_ids?.includes("mem-deploy-port") && record.estimated_tokens > 0,
+		));
+		check("new_session: decision log records the dedup", records.some((record) => record.reason === "all_deduped" && record.memory_ids?.length === 0));
 		report("new_session decisions", records.map((record) => `  ${record.status} reason=${record.reason} injected=${record.injected ?? 0}`));
 	} finally {
 		check("new_session: pi exits cleanly", (await client.close()) === 0);
+	}
+}
+
+async function scenarioSearchRecovery() {
+	const cases = [
+		{ name: "image-tag", question: "打包成容器的时候名字怎么起", query: "容器 镜像 命名 container image name", rewrites: [], hits: ["mem-docker-image"], calls: 2, hint: "checked against the original question" },
+		{ name: "image-layer", question: "帮我把 docker 镜像中间层合并一下", query: "docker 镜像 中间层 合并", rewrites: [], hits: [], calls: 2, hint: "no relevant card found" },
+		{ name: "literal", question: "之前镜像标签怎么定的", query: "镜像标签", hits: ["mem-docker-image"], calls: 0 },
+	];
+	for (const { name, question, query, rewrites, hits, calls, hint } of cases) {
+		let toolAsked = false;
+		const modelInputs = [];
+		let toolResult;
+		mock.setResponder((body) => {
+			if (body?.stream === false) {
+				const system = body.messages?.find((message) => message.role === "system")?.content ?? "";
+				const user = body.messages?.find((message) => message.role === "user")?.content ?? "";
+				if (!system.includes("next_queries") && !system.includes("relevant_ids")) return { content: "{}" };
+				modelInputs.push(user);
+				return { content: JSON.stringify(system.includes("relevant_ids") ? { relevant_ids: hits } : { next_queries: rewrites }) };
+			}
+			if (!toolAsked) {
+				toolAsked = true;
+				return { content: null, tool_calls: [{ index: 0, id: `search-${name}`, type: "function", function: { name: "memory_search", arguments: JSON.stringify({ query }) } }] };
+			}
+			toolResult = body?.messages.findLast((message) => message.role === "tool")?.content;
+			return { content: "OK" };
+		});
+		const { client } = spawnPi({ name: `search-${name}` });
+		try {
+			await client.prompt(question, `search-recovery-${name}`);
+			const result = JSON.stringify(toolResult) ?? "";
+			check(`search_recovery ${name}: delivered expected cards`, result.includes(hits.length > 0 ? "-> partial | 1 card(s)" : "-> not_found | 0 card(s)") && result.includes("memory://vestigio/mem-docker-image") === (hits.length > 0), result.slice(0, 280));
+			check(`search_recovery ${name}: bounded model calls with original question`, modelInputs.length === calls && modelInputs.every((input) => input.includes(question)), `${modelInputs.length}/${calls}`);
+			check(`search_recovery ${name}: tool text describes recovery`, hint === undefined ? !result.includes("recovery:") : result.includes(hint));
+		} finally {
+			await client.close();
+			mock.setResponder(null);
+		}
 	}
 }
 
@@ -643,7 +685,7 @@ async function main() {
 
 		const onlyIndex = process.argv.indexOf("--only");
 		const only = onlyIndex === -1 ? null : process.argv[onlyIndex + 1];
-		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "request", "perf"];
+		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "request", "search_recovery", "perf"];
 		if (only !== null && !scenarios.includes(only)) throw new Error(`unknown scenario: ${only}`);
 		const maybe = async (name, fn) => {
 			if (only === null || only === name) await fn();
@@ -669,6 +711,10 @@ async function main() {
 		await maybe("request", () => {
 			useFreshStore("request");
 			return scenarioRequest({ mock, spawnPi, check, storePath: runStore, port: PORT });
+		});
+		await maybe("search_recovery", () => {
+			useFreshStore("search-recovery");
+			return scenarioSearchRecovery();
 		});
 		if (only === null || only === "perf") useFreshStore("perf");
 

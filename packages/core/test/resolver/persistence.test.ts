@@ -104,6 +104,29 @@ describe("resolved history is written as one medium summary", () => {
     expect(version?.["stage"]).toBe("returned");
   });
 
+  it("stores a grounded question alias so a later search by that wording finds the memory", async () => {
+    const store = newStore();
+    const hit = oneHistoryHit();
+    const base = judgeScript(hit.source_ref.message_id);
+    const model = makeScriptedModel((kind, index) =>
+      kind === "summary"
+        ? { text: JSON.stringify({ body: bodyOfLength(600, "e1"), aliases: ["容器", "镜像"] }) }
+        : base(kind, index),
+    );
+
+    const outcome = await resolveWithHistory(store, hit, model, {
+      question: "打包成容器的时候名字怎么起",
+    });
+    const uri = outcome.result.memory_uri;
+    if (uri === null) throw new Error("expected a saved memory");
+    const stored = store.readMemory(uri);
+    expect(stored).not.toBeNull();
+    expect(stored?.medium.body).not.toContain("容器");
+    expect(stored?.keywords).toContain("容器");
+    expect(stored?.keywords).not.toContain("镜像");
+    expect(store.searchActive("容器").map((entry) => entry.memory_id)).toContain(stored?.memory_id);
+  });
+
   it("reuses the same revision and makes no summary call on a repeat request", async () => {
     const store = newStore();
     const hit = oneHistoryHit();

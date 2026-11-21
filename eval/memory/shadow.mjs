@@ -103,6 +103,7 @@ function buildTurns(records) {
 				status: record.status ?? "unknown",
 				memory_ids: record.memory_ids ?? [],
 				detail: record.detail ?? null,
+				recovery: record.recovery ?? null,
 			});
 		} else if (record.kind === "tool_read") {
 			turn.tools.push({
@@ -130,8 +131,9 @@ const records = readRecords(LOG);
 const turns = buildTurns(records).filter((turn) => sampled(`${turn.session_id}:${turn.input_id}`));
 const limited = MAX_TURNS === null ? turns : turns.slice(-MAX_TURNS);
 
-const injected = limited.filter((turn) => turn.injected_ids.length > 0);
-const notInjected = limited.filter((turn) => turn.injected_ids.length === 0);
+const wasInjected = (turn) => turn.status === "injected" || turn.injected_ids.length > 0;
+const injected = limited.filter(wasInjected);
+const notInjected = limited.filter((turn) => !wasInjected(turn));
 const withTool = (turn) => turn.tools.length > 0;
 const readBody = (turn) => turn.tools.some((tool) => tool.kind === "tool_read");
 const searched = (turn) => turn.tools.some((tool) => tool.kind === "tool_search" || tool.kind === "tool_resolve");
@@ -142,7 +144,7 @@ const searches = limited.flatMap((turn) => turn.tools.filter((tool) => tool.kind
 // rate over gather turns rather than as recall.
 const gathered = limited.filter(searched);
 const gatherEmpty = gathered.filter(
-	(turn) => turn.injected_ids.length === 0 && turn.tools.every((tool) => tool.memory_ids.length === 0),
+	(turn) => !wasInjected(turn) && turn.tools.every((tool) => tool.memory_ids.length === 0),
 );
 const staleDelivered = injected.filter((turn) => turn.stale_ids.length > 0);
 const injectedTokens = injected
@@ -153,6 +155,8 @@ const injectedBytes = injected
 	.filter((value) => typeof value === "number");
 const resolves = searches.filter((tool) => tool.kind === "tool_resolve");
 const zeroHit = searches.filter((tool) => tool.memory_ids.length === 0);
+const recoveries = searches.flatMap((tool) => tool.recovery === null ? [] : [tool.recovery]);
+const attemptedRecoveries = recoveries.filter((recovery) => recovery.model_calls > 0);
 
 const reasons = {};
 for (const turn of notInjected) {
@@ -208,6 +212,10 @@ const summary = {
 	gather_turns: gathered.length,
 	gather_empty_rate: rate(gatherEmpty.length, gathered.length),
 	search_statuses: statuses(searches.filter((tool) => tool.kind === "tool_search")),
+	search_recovery_statuses: statuses(recoveries),
+	search_recovery_model_calls: attemptedRecoveries.reduce((sum, recovery) => sum + recovery.model_calls, 0),
+	search_recovery_unpriced: attemptedRecoveries.filter((recovery) => recovery.cost_usd === null).length,
+	search_recovery_elapsed_p95_ms: percentile(attemptedRecoveries.map((recovery) => recovery.elapsed_ms), 95),
 	resolve_statuses: statuses(resolves),
 	top_injected: topInjected,
 	input_elapsed_p50_ms: percentile(

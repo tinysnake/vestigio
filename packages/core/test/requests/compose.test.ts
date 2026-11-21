@@ -73,6 +73,52 @@ describe("composeMemoryRequest", () => {
     expect(listSummaryJobs(store.database())).toHaveLength(1);
   });
 
+  it("stores a grounded operator alias so the memory is found by the user's own wording", async () => {
+    const store = newStore();
+    const req = request(store, {
+      intent: "镜像标签规则",
+      excerpt: "打包成容器的时候名字怎么起",
+    });
+    const model = makeScriptedModel((kind) =>
+      kind === "summary"
+        ? { text: JSON.stringify({ body: bodyOfLength(600, "m-20"), aliases: ["容器", "仓库"] }) }
+        : { text: "{}" },
+    );
+    const outcome = await composeMemoryRequest(input(store, req, model));
+    expect(outcome.status).toBe("saved");
+    expect(outcome.memory?.medium.body).not.toContain("容器");
+    expect(outcome.memory?.keywords).toContain("容器");
+    expect(outcome.memory?.keywords).not.toContain("仓库");
+    expect(store.searchActive("容器").map((hit) => hit.memory_id)).toContain(outcome.memory!.memory_id);
+  });
+
+  it("keeps existing keywords and adds a grounded alias when merging", async () => {
+    const store = newStore();
+    const memory = seedMemory(store, {
+      scope: { kind: "project", project_id: PROJECT_A },
+      title: "镜像标签约定",
+      keywords: ["镜像", "标签"],
+      body: bodyWith("镜像标签沿用版本号。 [来源:m-20]"),
+      sources: [makeSourceRef({ message_id: "m-20", project_id: PROJECT_A })],
+      nav_text: "镜像标签的约定。",
+    });
+    const req = request(store, {
+      intent: "容器命名规则",
+      source_ids: ["m-20", "m-21"],
+      excerpt: "打包成容器的时候名字怎么起",
+    });
+    const model = makeScriptedModel((kind) =>
+      kind === "summary"
+        ? { text: JSON.stringify({ body: bodyOfLength(600, "m-20"), aliases: ["容器"] }) }
+        : { text: "{}" },
+    );
+    const outcome = await composeMemoryRequest(input(store, req, model));
+    expect(outcome.status).toBe("merged");
+    expect(outcome.memory?.memory_id).toBe(memory.memory_id);
+    expect(outcome.memory?.keywords).toEqual(expect.arrayContaining(["镜像", "标签", "容器"]));
+    expect(store.searchActive("容器").map((hit) => hit.memory_id)).toEqual([memory.memory_id]);
+  });
+
   it("merges a request into an overlapping topic in one revision", async () => {
     const store = newStore();
     const memory = seedMemory(store, {

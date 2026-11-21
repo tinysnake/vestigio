@@ -111,7 +111,7 @@ const MAX_REQUERY_VARIANTS = 8;
  * and ANDs the fewest tokens, while a longer one is closer to a sentence and a
  * conjunctive index rarely matches it whole.
  */
-function expandPhrasings(queries: readonly string[]): string[] {
+export function expandPhrasings(queries: readonly string[]): string[] {
   const expanded: string[] = [];
   const seen = new Set<string>();
   for (const query of queries) {

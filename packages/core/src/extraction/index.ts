@@ -9,9 +9,13 @@
 
 export { extractMediumSummary } from "./medium.js";
 export {
+  ALIAS_MAX,
+  ALIAS_MAX_CHARS,
+  ALIAS_MIN_CHARS,
   MEDIUM_SUMMARY_SYSTEM_PROMPT,
   buildMediumUserMessage,
   describeMediumFailure,
+  validateMediumAliases,
   validateMediumBody,
 } from "./prompt.js";
 export type { MediumBodyFailure, MediumBodyValidation } from "./prompt.js";

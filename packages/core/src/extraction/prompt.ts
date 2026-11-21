@@ -22,6 +22,10 @@ import type { MediumBodyFailure, MediumEvidenceInput } from "./types.js";
 
 export type { MediumBodyFailure };
 
+export const ALIAS_MAX = 4;
+export const ALIAS_MIN_CHARS = 2;
+export const ALIAS_MAX_CHARS = 24;
+
 export const MEDIUM_SUMMARY_SYSTEM_PROMPT = [
   "You write one 中期摘要 (medium summary) of an earlier debugging/engineering discussion.",
   "The user will read it later as memory of that discussion, and it must also answer the current question when the evidence supports that.",
@@ -30,10 +34,12 @@ export const MEDIUM_SUMMARY_SYSTEM_PROMPT = [
   `Staying inside that band matters: above ${MEDIUM_BODY_MAX} points the body is rejected until it is rewritten, so an overrun wastes the call.`,
   "Never pad, repeat yourself, or add filler to reach the floor. If the evidence cannot honestly fill it, answer with what the evidence supports and the validator will report the body as insufficient.",
   "Write in Chinese. Say what was discussed, what was tried, what the conclusion was, and which facts are still uncertain.",
+  "Name the concrete subject and the attribute the memory records, using the evidence's own words. A generic verb or a restatement of the question is not enough: say what the thing is and which property of it the memory settles.",
   "Cite evidence inline for every factual paragraph or bullet, using exactly this form: [来源:<id>] with an id copied from the evidence list. At least one citation is required and no other id may appear.",
   "Do not invent facts, do not use outside knowledge, and do not claim any action was taken (no 已完成/已修改/已部署/已保存/已提交 style claims) unless the evidence shows it.",
+  `Also return up to ${ALIAS_MAX} aliases: short terms (${ALIAS_MIN_CHARS}-${ALIAS_MAX_CHARS} code points) the user actually used for the same subject or attribute. Copy each alias character-for-character from the current question or from an evidence line whose id is listed under alias groundings; never paraphrase, translate, abbreviate or invent one. Return [] when the grounded text has none.`,
   "Reply with exactly one JSON object and nothing else:",
-  '{"body": "..."}',
+  '{"body": "...", "aliases": ["..."]}',
 ].join("\n");
 
 /**
@@ -70,6 +76,12 @@ export function buildMediumUserMessage(input: MediumEvidenceInput, correction?: 
       lines.push(`  text: ${item.text}`);
     }
   }
+  const grounding = input.alias_grounding_ids ?? [];
+  lines.push(
+    grounding.length === 0
+      ? "alias groundings: the current question only"
+      : `alias groundings: the current question and evidence ids ${grounding.join(", ")}`,
+  );
   lines.push(`remember: ${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace characters, cite [来源:<id>], JSON only.`);
   if (guidance !== undefined) {
     lines.push("", "this rewrite:", guidance);
@@ -96,6 +108,39 @@ const CITATION = /[[【]来源\s*[:：]\s*([^\]】\s]+)[\]】]/gu;
  */
 const ACTION_CLAIM =
   /(?:本助手|助手|系统|vestigio|Vestigio|我(?:们)?)(?:\s*)(?:已经?|已)?\s*(?:保存|写入|记录|修改|删除|部署|提交|推送|安装|运行|执行|回滚|合并|创建|新建|更新)(?:了|过)/u;
+
+function normalizeGrounding(text: string): string {
+  return text.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * Keep only aliases the summarizer copied from text the caller marked as the
+ * user's own words. An alias that is not a contiguous, normalized substring of
+ * that text is dropped rather than rejected: a body is still worth saving when
+ * the alias field is wrong or noisy. Duplicates and aliases outside the length
+ * limits are dropped, and the result is capped at `ALIAS_MAX`.
+ */
+export function validateMediumAliases(raw: unknown, grounding: readonly string[]): string[] {
+  if (!Array.isArray(raw)) return [];
+  const grounded = grounding.map(normalizeGrounding).filter((text) => text.length > 0);
+  const aliases: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (typeof value !== "string") continue;
+    if (aliases.length >= ALIAS_MAX) break;
+    const alias = value.replace(/\s+/gu, " ").trim();
+    const measured = [...alias].length;
+    if (measured < ALIAS_MIN_CHARS || measured > ALIAS_MAX_CHARS) continue;
+    if (!/[\p{L}\p{N}]/u.test(alias)) continue;
+    if (/[[【]来源\s*[:：]/u.test(alias)) continue;
+    const normalized = normalizeGrounding(alias);
+    if (normalized.length === 0 || seen.has(normalized)) continue;
+    if (!grounded.some((text) => text.includes(normalized))) continue;
+    seen.add(normalized);
+    aliases.push(alias);
+  }
+  return aliases;
+}
 
 export function validateMediumBody(body: string, allowedIds: readonly string[]): MediumBodyValidation {
   const measured = nonWhitespaceCodePointCount(body);

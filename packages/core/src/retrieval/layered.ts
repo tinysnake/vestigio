@@ -73,6 +73,7 @@ export type LayeredSearchInput = {
   store: MemoryStore;
   query: string;
   scope: Scope;
+  match_mode?: "all" | "any" | undefined;
   /** Default 5, hard cap 10. */
   limit?: number | undefined;
   /** Pages the Active ranking only; Archived fills the remaining card budget. */
@@ -493,7 +494,8 @@ export async function layeredSearch(input: LayeredSearchInput): Promise<LayeredS
     "max_result_bytes",
   );
 
-  const activeHits = input.store.searchActive(input.query, { scope, limit, offset });
+  const mode = input.match_mode ?? "all";
+  const activeHits = input.store.searchActive(input.query, { scope, limit, offset, mode });
   const activeBuild = buildCards(input.store, activeHits);
   const activeLayer: LayerOutcome = {
     layer: "active",
@@ -523,6 +525,7 @@ export async function layeredSearch(input: LayeredSearchInput): Promise<LayeredS
       scope,
       limit: Math.max(1, archivedBudget),
       offset: 0,
+      mode,
     });
     const built = buildCards(input.store, archivedHits);
     const kept = built.cards.slice(0, archivedBudget);

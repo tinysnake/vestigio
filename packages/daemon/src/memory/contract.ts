@@ -150,6 +150,8 @@ export type MemorySearchInput = {
   op: "memory.search";
   project_id: string;
   query: string;
+  /** Opts into miss recovery using the original user question. */
+  question?: string | undefined;
   include_archived?: boolean | undefined;
   include_history?: boolean | undefined;
   include_history_read?: boolean | undefined;

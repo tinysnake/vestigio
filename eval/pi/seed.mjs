@@ -92,6 +92,14 @@ const functional = [
 		nav: "缓存键与失效策略，改缓存前值得读取。",
 		prefix: "写路径先删缓存再写库，读路径回填时带随机抖动。",
 	}),
+	memory({
+		id: "mem-docker-image",
+		project: projectId,
+		title: "镜像标签规则",
+		keywords: ["镜像标签", "容器", "image-tag"],
+		nav: "镜像标签与推送规则。",
+		prefix: "镜像标签用提交短哈希，latest 只在主分支成功后覆盖。",
+	}),
 ];
 
 for (const item of functional) {

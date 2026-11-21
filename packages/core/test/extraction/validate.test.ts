@@ -7,10 +7,38 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { describeMediumFailure, validateMediumBody } from "../../src/extraction/index.js";
+import { ALIAS_MAX, describeMediumFailure, validateMediumAliases, validateMediumBody } from "../../src/extraction/index.js";
 import { bodyOfLength, nonWhitespace } from "./support.js";
 
 const allowed = ["h-1", "h-2"];
+
+describe("medium aliases", () => {
+  it("keeps only terms copied verbatim from the grounded user text", () => {
+    const aliases = validateMediumAliases(
+      ["容器", "镜像", "invented", "容器", "容器镜像", "x"],
+      ["打包成容器的时候名字怎么起", "我们推镜像到仓库"],
+    );
+    expect(aliases).toEqual(["容器", "镜像"]);
+  });
+
+  it("drops non-arrays, oversized aliases and citation fragments", () => {
+    expect(validateMediumAliases("容器", ["容器"])).toEqual([]);
+    expect(validateMediumAliases([{ alias: "容器" }], ["容器"])).toEqual([]);
+    expect(validateMediumAliases(["容"], ["容器"])).toEqual([]);
+    expect(validateMediumAliases(["这是一段明显超过二十四个字符上限的别名文本不应该被保存下来"], ["这是一段明显超过二十四个字符上限的别名文本不应该被保存下来"])).toEqual([]);
+    expect(validateMediumAliases(["[来源:h-1]"], ["[来源:h-1]"])).toEqual([]);
+  });
+
+  it(`caps the stored aliases at ${ALIAS_MAX}`, () => {
+    const grounding = ["容器 镜像 命名 tag 推送 规则"];
+    expect(validateMediumAliases(["容器", "镜像", "命名", "tag", "推送", "规则"], grounding)).toEqual([
+      "容器",
+      "镜像",
+      "命名",
+      "tag",
+    ]);
+  });
+});
 
 describe("medium body length", () => {
   it("rejects 499 non-whitespace points and accepts 500", () => {

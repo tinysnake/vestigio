@@ -8,8 +8,8 @@
 import { ValidationError, splitMemoryUri, type MemoryUri } from "@vestigio/core";
 import { InjectionLedger, planInjection } from "@vestigio/core/hotspots";
 import type { MemoryRequest } from "@vestigio/core/requests";
-import { layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
-import { resolveMemory } from "@vestigio/core/resolver";
+import { layeredSearch, readMemoryResult, type LayeredSearchInput } from "@vestigio/core/retrieval";
+import { resolveMemory, searchWithRecovery } from "@vestigio/core/resolver";
 import {
   optionalBoolean,
   optionalInteger,
@@ -71,7 +71,7 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
   const offset = optionalInteger(input, "offset", 0, 100_000);
   const include_archived = optionalBoolean(input, "include_archived");
   const include_history_read = optionalBoolean(input, "include_history_read");
-  const result = await layeredSearch({
+  const options: LayeredSearchInput = {
     store: ctx.runtime.store,
     query,
     scope: { kind: "project", project_id },
@@ -81,12 +81,20 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
     ...(offset === undefined ? {} : { offset }),
     ...(include_archived === undefined ? {} : { include_archived }),
     ...(include_history_read === undefined ? {} : { include_history_read }),
+  };
+  const question = optionalString(input, "question", 8192);
+  const recovered = question === undefined ? null : await searchWithRecovery({
+    ...options,
+    question,
+    getModel: () => ctx.runtime.model,
+    signal: ctx.signal,
   });
+  const result = recovered ?? await layeredSearch(options);
   const note = wantHistory && history === null ? NO_HISTORY : null;
   const deferred: DependencyRequest[] = [];
   const session_id = optionalString(input, "session_id");
   const input_id = optionalString(input, "input_id");
-  if (session_id !== undefined && input_id !== undefined) {
+  if (session_id !== undefined && input_id !== undefined && result.result.cards.length > 0) {
     deferred.push(
       dependency(
         "usage.search_hits",
@@ -114,8 +122,9 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
       hits_recorded: null,
       stale_cards: staleCards(result.result),
       measured: result.measured,
+      ...(recovered === null ? {} : { recovery: recovered.recovery }),
     },
-    text: renderSearch(query, project_id, result, note),
+    text: renderSearch(query, project_id, result, note, recovered?.recovery),
     deferred,
   });
 }

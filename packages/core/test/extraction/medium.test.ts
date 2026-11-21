@@ -152,4 +152,47 @@ describe("extractMediumSummary", () => {
     expect(user).toContain("500-660");
     expect(requests[0]?.max_output_tokens).toBe(1600);
   });
+
+  it("asks for a concrete subject and verbatim aliases", async () => {
+    const { run, requests } = extractWith(JSON.stringify({ body: bodyOfLength(600) }));
+    await run;
+    const system = requests[0]?.messages[0]?.content ?? "";
+    expect(system).toContain("concrete subject and the attribute");
+    expect(system).toContain("character-for-character");
+    expect(system).toContain('"aliases"');
+  });
+
+  it("keeps only aliases grounded in the current question or the listed evidence ids", async () => {
+    const summary = JSON.stringify({
+      body: bodyOfLength(600, "h-1"),
+      aliases: ["默认端口", "容器", "h-2 grounded", "not grounded"],
+    });
+    const model = makeScriptedModel(() => ({ text: summary }));
+    const outcome = await extractMediumSummary({
+      model: model.port,
+      model_id: "stub/model",
+      evidence: {
+        question: "默认端口是多少",
+        project: "/tmp/proj-a",
+        evidence: [
+          ...evidence,
+          {
+            id: "h-2",
+            kind: "history",
+            provider: "obelisk",
+            source_instance: "fixture",
+            session_id: "sess-a",
+            timestamp: "2026-11-17T10:01:00.000Z",
+            text: "打包成容器的时候 h-2 grounded 写法",
+          },
+        ],
+        alias_grounding_ids: ["h-2"],
+      },
+      allowed_ids: ["h-1", "h-2"],
+      max_output_tokens: 1600,
+      signal: new AbortController().signal,
+    });
+    expect(outcome.status).toBe("ok");
+    expect(outcome.aliases).toEqual(["默认端口", "容器", "h-2 grounded"]);
+  });
 });
