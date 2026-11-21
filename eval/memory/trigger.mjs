@@ -79,8 +79,8 @@ const SCENARIOS = [
 		omit: ["mem-port-rule-a", "mem-port-rule-b"],
 		question: "这个项目的部署脚本默认端口是多少？之前定过吗",
 	},
-	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
-	{ id: "recall-cache-invalidation", expect: "query", fact: "删缓存", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
+	{ id: "recall-migration-rollback", expect: "query", fact: "第五步", decided_fact: "第五步", question: "数据库迁移失败的时候，按我们之前定的步骤该怎么回滚？" },
+	{ id: "recall-cache-invalidation", expect: "query", fact: "删缓存", decided_fact: "删缓存", question: "我们的缓存失效是怎么约定的，写路径和读路径分别怎么做？" },
 	// `misused` names the value the memory itself carries: `mem-stale-ttl` holds
 	// 30 minutes with a pending event that moved it to 15, so an answer of 30 is
 	// a stale memory used as current, not merely a missed fact.
@@ -88,6 +88,7 @@ const SCENARIOS = [
 		id: "recall-stale-timeout",
 		expect: "query",
 		fact: "15",
+		decided_fact: "15",
 		misused: "30",
 		// Re-record the pending change right before the turn, so the marker is
 		// present whether or not this run already ran a repair pass.
@@ -96,10 +97,10 @@ const SCENARIOS = [
 	},
 	// Cold: the hotspot layer injects nothing for these (checked with
 	// planInjection), so only a deliberate search can answer them.
-	{ id: "cold-conn-limit", expect: "query", fact: "20", question: "我们数据库连接那儿最多允许多少个" },
-	{ id: "cold-log-retention", expect: "query", fact: "14", question: "咱们应用打出来的日志会留多久？" },
-	{ id: "cold-image-tag", expect: "query", fact: "哈希", question: "这个项目用 Docker 打包时，冒号后面的版本标记按什么取值？" },
-	{ id: "cold-secret-rotation", expect: "query", fact: "90", question: "凭证多久换一次" },
+	{ id: "cold-conn-limit", expect: "query", fact: "20", decided_fact: "20", question: "我们数据库连接那儿最多允许多少个" },
+	{ id: "cold-log-retention", expect: "query", fact: "14", decided_fact: "14", question: "咱们应用打出来的日志会留多久？" },
+	{ id: "cold-image-tag", expect: "query", fact: "哈希", decided_fact: "提交短哈希", question: "这个项目用 Docker 打包时，冒号后面的版本标记按什么取值？" },
+	{ id: "cold-secret-rotation", expect: "query", fact: "90", decided_fact: "90", question: "凭证多久换一次" },
 	{ id: "quiet-readme-heading", expect: "no_query", question: "把 README 里的一级标题改成中文，只改标题这一行" },
 	{ id: "quiet-explain-index", expect: "no_query", question: "用三句话解释一下数据库索引为什么能加速查询" },
 	{ id: "quiet-hello-world", expect: "no_query", question: "写一个最小的 node hello world 脚本，打印一行字" },
@@ -327,7 +328,9 @@ for (const fixture of SCENARIOS) {
 	const scenario = {
 		...fixture,
 		question: QUESTION ?? fixture.question,
-		fact: FACT ?? fixture.fact,
+		// A caller-supplied `fact` is also what the judge must see as the expected value,
+		// otherwise a reworded scenario is graded against the fixture's old literal.
+		...(FACT === null ? {} : { fact: FACT, decided_fact: FACT }),
 	};
 	for (let index = 0; index < REPEATS; index += 1) {
 		storePath = join(scratch, `store-${scenario.id}-${index}.sqlite`);
@@ -346,7 +349,7 @@ for (const fixture of SCENARIOS) {
 		// `fact` only proves a value appears somewhere in the answer, which is
 		// how a refusal that lists both candidates still reads as a hit. A
 		// scenario that declares `decided_fact` asks the judge whether the answer
-		// committed to one value, and that verdict is what decides `used`.
+		// committed to that expected value, and that verdict decides `used`.
 		let decision = null;
 		if (scenario.decided_fact !== undefined && JUDGE_HARM) {
 			try {
@@ -354,9 +357,12 @@ for (const fixture of SCENARIOS) {
 					text: [
 						"一个记忆系统已经把相关记忆注入到 Agent 的上下文里，Agent 的回答如下。",
 						`问题：${scenario.question}`,
+						`预期取值：${scenario.decided_fact}`,
 						`回答：${(turn.text ?? "").slice(0, 1200)}`,
 						"",
-						"请判断：Agent 是否给出了一个明确的取值作为答案（而不是并列几个候选、或表示无法确定）？",
+						"请判断：Agent 是否把“预期取值”作为所问属性的答案给出？",
+						"只要该取值被当作答案的一部分呈现，即使同时说明记不清其余细节，也算 true。",
+						"并列几个候选、推测、给出别的取值，或完全没提到该取值，都算 false。",
 						"只输出 JSON：{\"decided\": true|false, \"value\": \"<它给出的值，没有就写空>\", \"why\": \"<=30字\"}",
 					].join("\n"),
 				});
@@ -376,15 +382,15 @@ for (const fixture of SCENARIOS) {
 		const refusalAccepted =
 			scenario.refusal_ok === true && STALE_PORT_RULE !== true && decision !== null && decision.decided === false;
 		if (refusalAccepted) decision.accepted_refusal = true;
-		// The fact is a literal from the memory's own text; the answer has to
-		// carry it for the turn to count as using memory, not just retrieving it.
-		// A conflict scenario is graded on committing to a value instead, because
-		// the right answer there is "these two disagree", not a number.
+		// The judge decides whether the answer committed to the expected value. It is
+		// the only check that can tell a refusal quoting a neighbouring number from an
+		// answer that gives it.
+		// A missing or failed verdict falls back to the literal check, so `--no-judge`
+		// degrades to the older predicate instead of turning every row into a hit.
+		const judged = decision === null || decision.error !== undefined ? null : decision.decided === true;
 		const used =
-			scenario.decided_fact !== undefined
-				? decision === null
-					? null
-					: decision.decided === true
+			scenario.decided_fact !== undefined && judged !== null
+				? judged
 				: scenario.fact === undefined
 					? null
 					: compact(turn.text ?? "").includes(compact(scenario.fact));
@@ -590,7 +596,7 @@ console.log(
 	`failures: trigger ${summary.failures.trigger_miss} retrieval ${summary.failures.retrieval_miss} usage ${summary.failures.usage_miss} refused ${summary.failures.refused}`,
 );
 console.log(
-	`decision: ${summary.decision_rate === null ? "-" : `${(summary.decision_rate * 100).toFixed(1)}% committed to one value`}`,
+	`decision: ${summary.decision_rate === null ? "-" : `${(summary.decision_rate * 100).toFixed(1)}% committed to the expected value`}`,
 );
 for (const row of graded) {
 	console.log(
@@ -599,7 +605,7 @@ for (const row of graded) {
 }
 for (const row of rows.filter((item) => item.decision !== null && item.decision !== undefined)) {
 	console.log(
-		`decision ${row.id}: ${row.decision.decided === true ? "committed" : "no single value"}${row.decision.value ? ` (${row.decision.value})` : ""} ${row.decision.why ?? row.decision.error ?? ""}`,
+		`decision ${row.id}: ${row.decision.decided === true ? "committed" : "not the expected value"}${row.decision.value ? ` (${row.decision.value})` : ""} ${row.decision.why ?? row.decision.error ?? ""}`,
 	);
 }
 console.log(

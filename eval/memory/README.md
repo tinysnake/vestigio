@@ -473,9 +473,10 @@ project knowledge available is memory. Fourteen scenarios:
   memories that disagree and nothing in the store says which one superseded.
 
 Every scenario may also declare `contaminated_by: <memory-id>`, which grades what
-an unnecessary delivery did to the answer, `decided_fact: <value>`, which asks
-the judge whether the answer committed to one value instead of listing
-candidates, `refusal_ok: true`, which accepts 「无法确定」 as the right answer
+an unnecessary delivery did to the answer, `decided_fact: <value>`, which sends
+that value to the judge and asks whether the answer presented it as the answer
+to the asked property — a different value, a list of candidates, or no mention
+of it counts false, `refusal_ok: true`, which accepts 「无法确定」 as the right answer
 where the store cannot settle the question, `omit: [...]`, which keeps a
 scenario to its own fixtures, or `stale_before: true`, which re-records the timeout change just
 before that turn so a stale delivery stays observable in a multi-turn run;
@@ -541,6 +542,17 @@ not substring-checked: the catalogue deliberately holds two contradicting
 端口约定 memories and they join the deploy-port question's hotspot plan too, so an
 answer that lists 18080 beside 8080 and declines is a refusal, not a hit. The
 first full run after that change is recorded below.
+
+The judge has to be shown the expected value, or it grades a different question.
+Until it was, the prompt asked only whether the answer committed to *some* value,
+which scored a turn that answered 8080 where the catalogue says 18080 the same
+as a correct one. A scenario without `decided_fact`, and any row whose verdict
+could not be parsed (`decision.error`), falls back to the literal check, so
+`--no-judge` degrades to the older predicate instead of turning misses into
+hits. Re-running the nine judge-graded scenarios three times each after the fix:
+the final arm committed in 27 of 27 turns, the baseline arm in 25 or 26 of 27,
+and the turn it keeps losing is `cold-conn-limit`, which missed in at least one
+repeat of every baseline run.
 
 ### How repeatable is a run?
 
