@@ -63,6 +63,18 @@ live beside the store, in `<store>.daemon/` (`daemon.log`, `endpoint.json`,
 `jobs.sqlite`). Stop it with `packages/cli/bin/vestigio stop --db <store>`.
 There is no idle timeout: closing pi does not stop the daemon.
 
+## Activity panel
+
+Above the editor, the extension keeps a short log of what memory did during
+the session: what was injected and how large the block was, which memory a
+read resolved with which revision, detector findings, stale marks and
+repairs. The newest event is last. It shows only identifiers, titles, counts
+and timings, the same fields as the decision log.
+
+`/vestigio-log off` hides it, `/vestigio-log on` restores it, and
+`/vestigio-log clear` empties it. In print mode (`-p`) and JSON mode there is
+no panel.
+
 ## Configuration file
 
 Every entry point reads the same file, `~/.vestigio/config.json`. It fills the

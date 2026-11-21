@@ -12,9 +12,12 @@ afterEach(() => {
 
 type Handler = (event: Record<string, unknown>, ctx: Record<string, unknown>) => unknown;
 
+type CommandHandler = (args: string, ctx: Record<string, unknown>) => Promise<void>;
+
 function stubPi() {
 	const handlers = new Map<string, Handler>();
 	const tools: string[] = [];
+	const commands = new Map<string, CommandHandler>();
 	const pi = {
 		on(event: string, handler: Handler) {
 			handlers.set(event, handler);
@@ -22,9 +25,24 @@ function stubPi() {
 		registerTool(tool: { name: string }) {
 			tools.push(tool.name);
 		},
+		registerCommand(name: string, command: { handler: CommandHandler }) {
+			commands.set(name, command.handler);
+		},
 		appendEntry() {},
 	};
-	return { pi, handlers, tools };
+	return { pi, handlers, tools, commands };
+}
+
+function uiCtx() {
+	const setWidget = vi.fn();
+	const notify = vi.fn();
+	const branch = [{ id: "root" }, { id: "turn" }];
+	return {
+		setWidget,
+		notify,
+		ctx: { hasUI: true, sessionManager: { getBranch: () => branch }, ui: { setWidget, notify } },
+		branch,
+	};
 }
 
 function withEnv(env: Record<string, string>, fn: () => void): void {
@@ -95,6 +113,39 @@ describe("vestigio extension", () => {
 		branch = [{ id: "root" }, { id: "original" }, { id: "next-turn" }];
 		deliver(event);
 		expect(notify).toHaveBeenCalledOnce();
+	});
+
+	it("registers the activity panel command and hides the panel on off", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		const { pi, commands } = stubPi();
+		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
+		cleanups.push(() => bind.mockRestore());
+		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
+		const { setWidget, notify, ctx } = uiCtx();
+		const command = commands.get("vestigio-log");
+		expect(command).toBeDefined();
+		await command!("off", ctx);
+		expect(setWidget.mock.lastCall).toEqual(["vestigio-activity", undefined]);
+		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已关闭", "info");
+	});
+
+	it("shows a delivered job in the panel", () => {
+		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		const { pi, handlers } = stubPi();
+		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
+		cleanups.push(() => bind.mockRestore());
+		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
+		const { setWidget, ctx } = uiCtx();
+		handlers.get("session_start")!({}, ctx);
+		const deliver = bind.mock.lastCall![1];
+		deliver({
+			eventId: "event", jobId: "job", sessionRef: 1, kind: "maintenance", state: "succeeded",
+			resultCode: "ok", createdAt: 1, expiresAt: 2,
+			result: { turnLeaf: "turn", op: "repair.memories", result: { repaired: 1 } },
+		} as never);
+		expect(setWidget.mock.lastCall?.[1]).toContain("· 已修复 1 条记忆");
 	});
 
 	it("agent_end skips cleanly when the store has nothing seen", async () => {

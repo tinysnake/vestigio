@@ -231,7 +231,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 		const offerReply = assistantText(offer.events);
 		check("request: the proactive reply ends with the offer question", /[?？]/u.test(offerReply) && offerReply.includes("记忆") && offerReply.includes("全量测试"), offerReply.slice(-300));
 		check("request: the prompt rule reaches the agent", offer.wire.some((entry) => systemOf(entry.body).includes("end your reply with one short question")), offer.wire.length + " wire");
-		check("request: the offer turn opens no confirm dialog", offer.events.every((event) => event.type !== "extension_ui_request" || event.method === "notify"));
+		check("request: the offer turn opens no confirm dialog", offer.events.every((event) => event.type !== "extension_ui_request" || event.method === "notify" || event.method === "setWidget"));
 
 		// The operator's next message clearly agrees: the agent now calls the tool.
 		const approve = await ask("好", "approve");
@@ -270,7 +270,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 		for (const event of client.client.events) {
 			if (event.type === "extension_ui_request") uiRequests.push(event);
 		}
-		const dialogs = uiRequests.filter((event) => event.method !== "notify");
+		const dialogs = uiRequests.filter((event) => ["select", "confirm", "input", "editor"].includes(event.method));
 		check("request: no confirm dialog was ever opened", dialogs.length === 0, JSON.stringify(dialogs));
 		check("request: pi displays a background save notification", uiRequests.some((event) => event.method === "notify" && event.message.includes("条记忆保存请求")));
 

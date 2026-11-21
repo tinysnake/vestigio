@@ -4,6 +4,7 @@ import type { TSchema, Static } from "typebox";
 import type { Kind } from "@vestigio/client";
 import { splitMemoryUri } from "@vestigio/core";
 import { requestTitle } from "@vestigio/core/requests";
+import { ActivityPanel, clip, formatInjection, formatJobEvent, formatNotInjected, formatToolEvent, line } from "./activity.js";
 import { type VestigioConfig } from "./config.js";
 import { DecisionLog, hashQuery } from "./decision-log.js";
 import { PiDaemon, sessionOf } from "./daemon-client.js";
@@ -36,15 +37,18 @@ function report(error: unknown): void {
 export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: string) {
 	const daemon = new PiDaemon(storePath);
 	const log = new DecisionLog(config.decision_log);
+	const panel = new ActivityPanel();
 	let currentInput: { text: string; id: string } | undefined;
 	const seen = new Set<string>();
 	const checkpoints = new Map<string, string>();
 	const bind = (ctx: ExtensionContext) => {
 		currentInput = undefined;
 		seen.clear();
+		panel.attach(ctx);
 		daemon.bind(ctx, (event) => {
 			const detail = event.result as { turnLeaf?: string; op?: string; result?: Record<string, unknown> } | null;
 			if (!detail?.turnLeaf || !ctx.sessionManager.getBranch().some((entry) => entry.id === detail.turnLeaf)) return;
+			panel.pushAll(ctx, formatJobEvent(String(detail.op ?? event.kind), String(event.state), detail.result));
 			if (event.state === "failed" || event.state === "cancelled") {
 				ctx.ui.notify(`Vestigio ${detail.op ?? event.kind}: ${event.state}`, "warning");
 				return;
@@ -55,7 +59,10 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			if (saved > 0) ctx.ui.notify(`Vestigio 已处理 ${saved} 条记忆保存请求`, "info");
 		});
 	};
-	pi.on("session_start", (_event, ctx) => bind(ctx));
+	pi.on("session_start", (_event, ctx) => {
+		panel.clear(ctx);
+		bind(ctx);
+	});
 	pi.on("session_tree", (_event, ctx) => bind(ctx));
 	pi.on("session_shutdown", () => daemon.close());
 
@@ -100,9 +107,16 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 					block_bytes: plan.budget.used_bytes, estimated_tokens: plan.budget.estimated_tokens,
 				}),
 			});
+			if (text === undefined) {
+				const skipped = formatNotInjected(result.reason ?? null);
+				if (skipped !== null) panel.push(ctx, skipped);
+			} else if (plan !== undefined) {
+				panel.pushAll(ctx, formatInjection(plan));
+			}
 			return text === undefined ? { action: "continue" } : { action: "transform", text };
 		} catch (error) {
 			log.write({ ...base, status: "not_injected", reason: "store_error", error: String(error) });
+			panel.push(ctx, line("error", "注入失败 · 记忆库不可用"));
 			report(error);
 			return { action: "continue" };
 		}
@@ -175,8 +189,10 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 						model_cost_usd: detail.recovery?.cost_usd ?? detail.measured?.cost_usd ?? null,
 					});
 				}
+				panel.pushAll(ctx, formatToolEvent(String(payload["op"]), payload, result.result));
 				return { content: [{ type: "text", text: result.text ?? JSON.stringify(result.result) }], details: result.result };
 			} catch (error) {
+				panel.push(ctx, line("error", `${name} 失败 · ${clip(error instanceof Error ? error.message : String(error), 48)}`));
 				return { content: [{ type: "text", text: `${name}: ${error instanceof Error ? error.message : String(error)}` }], details: { status: "unavailable" } };
 			}
 		} });
@@ -208,5 +224,27 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 		if (!sources.length) throw new Error("Evidence has no source references");
 		return { op: "stale.publish", events: [{ memory_id: uri.memoryId, observed_revision: params.observed_revision,
 			reason: params.reason, excerpt: params.excerpt, sources, producer: "agent", branch_ref: context.branch_ref }] };
+	});
+	pi.registerCommand("vestigio-log", {
+		description: "记忆活动面板：on 打开，off 关闭，clear 清空",
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const action = args.trim().toLowerCase();
+			if (action === "off") {
+				panel.setEnabled(false, ctx);
+				ctx.ui.notify("记忆活动面板已关闭", "info");
+				return;
+			}
+			if (action === "on") {
+				panel.setEnabled(true, ctx);
+				ctx.ui.notify("记忆活动面板已打开", "info");
+				return;
+			}
+			if (action === "" || action === "clear") {
+				panel.clear(ctx);
+				ctx.ui.notify("记忆活动面板已清空", "info");
+				return;
+			}
+			ctx.ui.notify("用法：/vestigio-log on | off | clear", "warning");
+		},
 	});
 }
