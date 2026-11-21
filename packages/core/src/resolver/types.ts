@@ -46,8 +46,21 @@ export type ModelRequest = {
   /** Ask the backend for a JSON object; the resolver still validates it. */
   expect_json: boolean;
   thinking?: ModelThinking | undefined;
+  /** Sent as `user-agent`, so a gateway can attribute the call to an agent. */
+  user_agent?: string | undefined;
   signal: AbortSignal;
 };
+
+/**
+ * Every agent that drives the model names itself here. Without it the gateway
+ * sees one client identity and cannot split token usage per agent.
+ */
+export const AGENT_USER_AGENT = {
+  resolver: "vestigio/resolver",
+  extraction: "vestigio/extraction",
+  detector: "vestigio/detector",
+  nav: "vestigio/nav",
+} as const;
 
 export type ModelUsage = {
   tokens_in: number;

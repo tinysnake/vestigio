@@ -15,6 +15,7 @@ import {
 } from "./budget.js";
 import { buildJudgeUserMessage } from "./judge.js";
 import { expandPhrasings } from "./resolver.js";
+import { AGENT_USER_AGENT } from "./types.js";
 import type {
   MemoryCard,
   MemoryStore,
@@ -292,6 +293,7 @@ export async function searchWithRecovery(input: SearchRecoveryInput): Promise<Se
       messages,
       max_output_tokens: ledger.nextOutputCap(),
       expect_json: true,
+      user_agent: AGENT_USER_AGENT.resolver,
       signal,
     };
     let result: ModelResult;

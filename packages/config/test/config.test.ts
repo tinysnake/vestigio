@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import {
 	defaultConfigPath,
 	loadConfigFile,
 	resolveEnv,
+	saveActivity,
 } from "../src/index.js";
 
 function tempHome(config: unknown = null): string {
@@ -133,5 +134,62 @@ describe("configToEnv", () => {
 	it("exposes the values a fresh file should carry", () => {
 		expect(CONFIG_DEFAULTS["retrieval.budget_bytes"]).toBe(4096);
 		expect(CONFIG_DEFAULTS["retrieval.timeout_ms"]).toBe(1000);
+	});
+});
+
+describe("logging.activity", () => {
+	it("defaults off and reaches the environment as a flag", () => {
+		expect(loadConfigFile({}, { home: tempHome() })).toBeNull();
+		expect(configToEnv({ logging: { activity: true } })).toEqual({ VESTIGIO_ACTIVITY: "1" });
+		expect(configToEnv({ logging: { activity: false } })).toEqual({ VESTIGIO_ACTIVITY: "0" });
+		expect(CONFIG_DEFAULTS["logging.activity"]).toBe(false);
+	});
+
+	it("rejects a non-boolean value", () => {
+		const home = tempHome({ logging: { activity: "yes please" } });
+		expect(() => loadConfigFile({}, { home })).toThrow("vestigio config");
+	});
+
+	it("is overridden by an explicit variable", () => {
+		const home = tempHome({ logging: { activity: true } });
+		expect(resolveEnv({ VESTIGIO_ACTIVITY: "0" }, { home }).VESTIGIO_ACTIVITY).toBe("0");
+	});
+});
+
+describe("saveActivity", () => {
+	it("creates the default file and keeps other keys", () => {
+		const home = tempHome({ store: "/tmp/s.sqlite", model: { id: "m" } });
+		const path = defaultConfigPath({ home });
+		expect(saveActivity(true, {}, { home })).toEqual({ status: "saved", path });
+		const saved = JSON.parse(readFileSync(path, "utf8"));
+		expect(saved.store).toBe("/tmp/s.sqlite");
+		expect(saved.model).toEqual({ id: "m" });
+		expect(saved.logging).toEqual({ activity: true });
+		saveActivity(false, {}, { home });
+		const next = loadConfigFile({}, { home });
+		expect(next?.logging?.activity).toBe(false);
+		expect(next?.store).toBe("/tmp/s.sqlite");
+	});
+
+	it("writes a fresh file when the default one is missing", () => {
+		const home = tempHome();
+		const path = join(home, ".vestigio", "config.json");
+		expect(saveActivity(true, {}, { home })).toEqual({ status: "saved", path });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ logging: { activity: true } });
+	});
+
+	it("refuses a path the operator named but never created", () => {
+		const home = tempHome();
+		const missing = join(home, "absent.json");
+		expect(saveActivity(true, { [CONFIG_PATH_ENV]: missing }, { home })).toEqual({ status: "no_file" });
+		expect(saveActivity(true, { [CONFIG_PATH_ENV]: "" }, { home })).toEqual({ status: "no_file" });
+	});
+
+	it("leaves a broken file alone", () => {
+		const home = tempHome("{ not json");
+		const path = join(home, ".vestigio", "config.json");
+		const result = saveActivity(true, {}, { home });
+		expect(result.status).toBe("error");
+		expect(readFileSync(path, "utf8")).toBe("{ not json");
 	});
 });

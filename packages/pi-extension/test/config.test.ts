@@ -26,6 +26,13 @@ describe("readConfig", () => {
 		expect(config.decision_log).toBeNull();
 	});
 
+	it("keeps the activity panel off unless configured", () => {
+		expect(readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite" }).activity_panel).toBe(false);
+		expect(readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_ACTIVITY: "on" }).activity_panel).toBe(true);
+		expect(readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_ACTIVITY: "0" }).activity_panel).toBe(false);
+		expect(readConfig({ VESTIGIO_STORE: "/tmp/memory.sqlite", VESTIGIO_ACTIVITY: "maybe" }).activity_panel).toBe(false);
+	});
+
 	it("honours overrides", () => {
 		const config = readConfig({
 			VESTIGIO_STORE: "/tmp/memory.sqlite",

@@ -10,7 +10,7 @@
  * `VESTIGIO_CONFIG=""`.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
@@ -51,6 +51,8 @@ export type HistorySection = {
 
 export type LoggingSection = {
 	readonly decision_log?: string | null;
+	/** The on-screen activity panel; off unless the operator turns it on. */
+	readonly activity?: boolean;
 };
 
 export type ConfigFile = {
@@ -70,7 +72,7 @@ const ROOT_KEYS = ["version", "store", "model", "retrieval", "history", "logging
 const MODEL_KEYS = ["base_url", "id", "api_key", "thinking"] as const;
 const RETRIEVAL_KEYS = ["budget_bytes", "max_memories", "min_score", "pool_capacity", "timeout_ms"] as const;
 const HISTORY_KEYS = ["obelisk_home", "obelisk_cli"] as const;
-const LOGGING_KEYS = ["decision_log"] as const;
+const LOGGING_KEYS = ["decision_log", "activity"] as const;
 const THINKING_LEVELS: readonly ModelThinking[] = ["off", "low", "medium", "high"];
 
 export function defaultConfigPath(options: ConfigOptions = {}): string {
@@ -110,6 +112,57 @@ export function applyConfigToEnv(env: VestigioEnv = process.env, options: Config
 	Object.assign(env, resolveEnv(env, options));
 }
 
+export type ConfigWriteResult =
+	| { readonly status: "saved"; readonly path: string }
+	| { readonly status: "no_file" }
+	| { readonly status: "error"; readonly message: string };
+
+/**
+ * Persist the activity panel's on/off state. A missing default file is created;
+ * a missing file named by `VESTIGIO_CONFIG` is not, because the operator named
+ * a path and inventing one would put settings somewhere they did not ask for.
+ */
+export function saveActivity(enabled: boolean, env: VestigioEnv = process.env, options: ConfigOptions = {}): ConfigWriteResult {
+	const override = env[CONFIG_PATH_ENV];
+	let path: string;
+	if (override === undefined) {
+		path = defaultConfigPath(options);
+	} else {
+		const trimmed = override.trim();
+		if (trimmed.length === 0) return { status: "no_file" };
+		path = expandHome(trimmed, options);
+	}
+	const text = readIfPresent(path);
+	if (text === null && override !== undefined) return { status: "no_file" };
+	let root: Record<string, unknown> = {};
+	if (text !== null) {
+		let raw: unknown;
+		try {
+			raw = JSON.parse(text);
+		} catch (error) {
+			return { status: "error", message: message(error) };
+		}
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+			return { status: "error", message: "the file must be a JSON object" };
+		}
+		root = raw as Record<string, unknown>;
+	}
+	const current = root["logging"];
+	if (current !== undefined && (typeof current !== "object" || current === null || Array.isArray(current))) {
+		return { status: "error", message: "logging must be a JSON object" };
+	}
+	root["logging"] = { ...(current as Record<string, unknown> | undefined), activity: enabled };
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		const temporary = `${path}.${process.pid}.tmp`;
+		writeFileSync(temporary, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+		renameSync(temporary, path);
+		return { status: "saved", path };
+	} catch (error) {
+		return { status: "error", message: message(error) };
+	}
+}
+
 export function configToEnv(file: ConfigFile): Record<string, string> {
 	const out: Record<string, string> = {};
 	if (file.store !== undefined) {
@@ -141,6 +194,7 @@ export function configToEnv(file: ConfigFile): Record<string, string> {
 	if (logging !== undefined && logging.decision_log !== undefined && logging.decision_log !== null) {
 		out["VESTIGIO_DECISION_LOG"] = logging.decision_log;
 	}
+	if (logging?.activity !== undefined) out["VESTIGIO_ACTIVITY"] = logging.activity ? "1" : "0";
 	return out;
 }
 
@@ -151,6 +205,7 @@ export const CONFIG_DEFAULTS = {
 	"retrieval.min_score": DEFAULT_MIN_MATCH_SCORE,
 	"retrieval.pool_capacity": DEFAULT_HOTSPOT_POOL_CAPACITY,
 	"retrieval.timeout_ms": DEFAULT_HOTSPOT_TIMEOUT_MS,
+	"logging.activity": false,
 } as const;
 
 function parseConfig(text: string, path: string, options: ConfigOptions): ConfigFile {
@@ -223,10 +278,11 @@ function parseHistory(section: unknown, path: string, base: string, options: Con
 function parseLogging(section: unknown, path: string, base: string, options: ConfigOptions): LoggingSection {
 	const record = objectAt(section, path, "logging");
 	onlyKeys(record, path, "logging", LOGGING_KEYS);
-	const out: { decision_log?: string | null } = {};
+	const out: { decision_log?: string | null; activity?: boolean } = {};
 	if (record["decision_log"] !== undefined) {
 		out.decision_log = record["decision_log"] === null ? null : pathAt(record["decision_log"], path, "logging.decision_log", base, options);
 	}
+	if (record["activity"] !== undefined) out.activity = boolAt(record["activity"], path, "logging.activity");
 	return out;
 }
 
@@ -269,6 +325,11 @@ function integerAt(value: unknown, path: string, where: string, min: number): nu
 	if (typeof value !== "number" || !Number.isInteger(value) || value < min) {
 		throw new Error(`vestigio config ${path}: ${where} must be an integer >= ${min}`);
 	}
+	return value;
+}
+
+function boolAt(value: unknown, path: string, where: string): boolean {
+	if (typeof value !== "boolean") throw new Error(`vestigio config ${path}: ${where} must be true or false`);
 	return value;
 }
 

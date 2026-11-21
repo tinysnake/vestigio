@@ -176,7 +176,11 @@ export function formatJobEvent(op: string, state: string, result: unknown): LogL
 export class ActivityPanel {
 	private lines: string[] = [];
 	private ctx: ExtensionContext | null = null;
-	private enabled = true;
+	private enabled: boolean;
+
+	constructor(enabled = false) {
+		this.enabled = enabled;
+	}
 
 	get active(): boolean {
 		return this.enabled;

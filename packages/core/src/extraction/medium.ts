@@ -7,7 +7,7 @@
  */
 
 import { nonWhitespaceCodePointCount } from "../contracts/index.js";
-import type { ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
+import { AGENT_USER_AGENT, type ModelRequest, type ModelResult, type ModelUsage } from "../resolver/types.js";
 import { MEDIUM_REWRITE_SYSTEM_NOTE, MEDIUM_SUMMARY_SYSTEM_PROMPT, buildMediumUserMessage, describeMediumFailure, validateMediumAliases, validateMediumBody } from "./prompt.js";
 import type { MediumCall, MediumExtractInput, MediumExtraction } from "./types.js";
 
@@ -77,6 +77,7 @@ export async function extractMediumSummary(input: MediumExtractInput): Promise<M
   const evidence = input.evidence;
   const request: ModelRequest = {
     ...(input.model_id === undefined ? {} : { model: input.model_id }),
+    user_agent: AGENT_USER_AGENT.extraction,
     messages: [
       {
         role: "system",

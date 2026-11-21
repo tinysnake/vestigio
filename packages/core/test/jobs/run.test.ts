@@ -53,6 +53,7 @@ describe("runDueJobs", () => {
     expect(published?.medium.body).toBe(memory.medium.body);
     expect(store.readHotspotMemberships(PROJECT_A).map((row) => row.memory_id)).toContain("mem-job");
     expect(readSummaryJob(store.database(), "mem-job", 1)?.state).toBe("done");
+    expect(model.requests.at(-1)?.user_agent).toBe("vestigio/nav");
   });
 
   it("leaves the medium summary readable while the nav call fails, then retries", async () => {

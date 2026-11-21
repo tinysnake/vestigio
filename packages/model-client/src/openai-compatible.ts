@@ -121,6 +121,7 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
             "content-type": "application/json",
             ...(options.api_key === undefined ? {} : { authorization: `Bearer ${options.api_key}` }),
             ...options.headers,
+            ...(request.user_agent === undefined ? {} : { "user-agent": request.user_agent }),
           },
           body: JSON.stringify(body),
           signal,

@@ -81,6 +81,7 @@ describe("detectStale", () => {
       },
     ]);
     expect(scripted.calls).toHaveLength(1);
+    expect(scripted.calls[0]?.user_agent).toBe("vestigio/detector");
   });
 
   it("keeps an already-stale candidate eligible and passes its pending events to the model", async () => {

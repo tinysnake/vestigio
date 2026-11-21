@@ -16,7 +16,7 @@ import {
   normalizeStaleReason,
   type FreshnessBrief,
 } from "../contracts/index.js";
-import type { ModelFailureStatus, ModelPort, ModelRequest, ModelResult, ModelUsage } from "../resolver/types.js";
+import { AGENT_USER_AGENT, type ModelFailureStatus, type ModelPort, type ModelRequest, type ModelResult, type ModelUsage } from "../resolver/types.js";
 
 export const DETECTOR_MAX_OUTPUT_TOKENS = 1024;
 export const DETECTOR_MAX_CANDIDATES = 24;
@@ -248,6 +248,7 @@ export async function detectStale(input: StaleDetectorInput): Promise<DetectorRe
     ],
     max_output_tokens: DETECTOR_MAX_OUTPUT_TOKENS,
     expect_json: true,
+    user_agent: AGENT_USER_AGENT.detector,
     thinking: "off",
     signal: input.signal,
   };

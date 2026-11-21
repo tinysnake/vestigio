@@ -126,6 +126,7 @@ describe("memory.resolve: re-gathering the judged layer", () => {
     const outcome = await resolve({ store, question: QUESTION, scope: projectA, model: model.port });
 
     expect(judgedLayer(model.requests[0])).toBe("active");
+    expect(model.requests[0]?.user_agent).toBe("vestigio/resolver");
     expect(judgedLayer(model.requests[1])).toBe("active");
     expect(model.calls).toBe(2);
     expect(searches.queries.filter((query) => query === "maxWorkers")).toHaveLength(1);

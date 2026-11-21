@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +42,16 @@ function uiCtx() {
 		notify,
 		ctx: { hasUI: true, sessionManager: { getBranch: () => branch }, ui: { setWidget, notify } },
 		branch,
+	};
+}
+
+/** Pin a variable for the whole test, because a command handler reads it later. */
+function pinEnv(key: string, value: string): () => void {
+	const previous = process.env[key];
+	process.env[key] = value;
+	return () => {
+		if (previous === undefined) delete process.env[key];
+		else process.env[key] = previous;
 	};
 }
 
@@ -115,30 +125,51 @@ describe("vestigio extension", () => {
 		expect(notify).toHaveBeenCalledOnce();
 	});
 
-	it("registers the activity panel command and hides the panel on off", async () => {
+	it("registers the activity panel command and remembers the state in the config file", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		const configPath = join(dir, "config.json");
+		writeFileSync(configPath, JSON.stringify({ version: 1, store: join(dir, "store.sqlite") }));
+		const { pi, commands } = stubPi();
+		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
+		cleanups.push(() => bind.mockRestore());
+		cleanups.push(pinEnv("VESTIGIO_CONFIG", configPath));
+		vestigio(pi as never);
+		const { setWidget, notify, ctx } = uiCtx();
+		const command = commands.get("vestigio-log");
+		expect(command).toBeDefined();
+		await command!("on", ctx);
+		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已打开，已写入配置", "info");
+		expect(JSON.parse(readFileSync(configPath, "utf8")).logging).toEqual({ activity: true });
+		await command!("off", ctx);
+		expect(setWidget.mock.lastCall).toEqual(["vestigio-activity", undefined]);
+		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已关闭，已写入配置", "info");
+		expect(JSON.parse(readFileSync(configPath, "utf8")).logging).toEqual({ activity: false });
+	});
+
+	it("keeps a toggle for the session when no config file exists", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 		const { pi, commands } = stubPi();
 		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
 		cleanups.push(() => bind.mockRestore());
+		cleanups.push(pinEnv("VESTIGIO_CONFIG", ""));
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
-		const { setWidget, notify, ctx } = uiCtx();
-		const command = commands.get("vestigio-log");
-		expect(command).toBeDefined();
-		await command!("off", ctx);
-		expect(setWidget.mock.lastCall).toEqual(["vestigio-activity", undefined]);
-		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已关闭", "info");
+		const { notify, ctx } = uiCtx();
+		await commands.get("vestigio-log")!("on", ctx);
+		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已打开，仅本次会话（没有配置文件）", "info");
 	});
 
-	it("shows a delivered job in the panel", () => {
+	it("shows a delivered job in the panel", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-		const { pi, handlers } = stubPi();
+		const { pi, handlers, commands } = stubPi();
 		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
 		cleanups.push(() => bind.mockRestore());
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
 		const { setWidget, ctx } = uiCtx();
 		handlers.get("session_start")!({}, ctx);
+		await commands.get("vestigio-log")!("on", ctx);
 		const deliver = bind.mock.lastCall![1];
 		deliver({
 			eventId: "event", jobId: "job", sessionRef: 1, kind: "maintenance", state: "succeeded",

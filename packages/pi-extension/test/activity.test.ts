@@ -139,8 +139,17 @@ describe("formatJobEvent", () => {
 });
 
 describe("ActivityPanel", () => {
-	it("keeps the newest lines and renders them as a widget", () => {
+	it("stays hidden unless enabled", () => {
 		const panel = new ActivityPanel();
+		const { ctx, setWidget } = fakeCtx();
+		panel.push(ctx, line("info", "事件"));
+		expect(panel.active).toBe(false);
+		expect(setWidget).not.toHaveBeenCalled();
+		expect(new ActivityPanel(true).active).toBe(true);
+	});
+
+	it("keeps the newest lines and renders them as a widget", () => {
+		const panel = new ActivityPanel(true);
 		const { ctx, setWidget } = fakeCtx();
 		for (let index = 0; index < ACTIVITY_MAX_LINES + 3; index += 1) {
 			panel.push(ctx, line("info", `事件 ${index}`));
@@ -153,7 +162,7 @@ describe("ActivityPanel", () => {
 	});
 
 	it("renders nothing without a UI and never throws", () => {
-		const panel = new ActivityPanel();
+		const panel = new ActivityPanel(true);
 		const { ctx, setWidget } = fakeCtx(false);
 		panel.push(ctx, line("info", "事件"));
 		expect(setWidget).not.toHaveBeenCalled();
@@ -162,7 +171,7 @@ describe("ActivityPanel", () => {
 	});
 
 	it("stops rendering and clears the widget when turned off", () => {
-		const panel = new ActivityPanel();
+		const panel = new ActivityPanel(true);
 		const { ctx, setWidget } = fakeCtx();
 		panel.push(ctx, line("info", "事件"));
 		panel.setEnabled(false, ctx);
@@ -176,7 +185,7 @@ describe("ActivityPanel", () => {
 	});
 
 	it("clears on demand", () => {
-		const panel = new ActivityPanel();
+		const panel = new ActivityPanel(true);
 		const { ctx, setWidget } = fakeCtx();
 		panel.push(ctx, line("warn", "事件"));
 		panel.clear();

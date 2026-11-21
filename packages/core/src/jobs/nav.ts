@@ -10,7 +10,7 @@
 
 import { codePointCount, NAV_TEXT_MAX } from "../contracts/index.js";
 import type { Memory, NavSummary } from "../contracts/index.js";
-import type { ModelPort } from "../resolver/types.js";
+import { AGENT_USER_AGENT, type ModelPort } from "../resolver/types.js";
 
 export const NAV_SUMMARY_SYSTEM_PROMPT = [
   "You write a 导航短摘要 (navigation summary) for one stored memory.",
@@ -84,6 +84,7 @@ export async function generateNavigation(input: {
       ],
       max_output_tokens: input.max_output_tokens,
       expect_json: true,
+      user_agent: AGENT_USER_AGENT.nav,
       thinking: "off",
       signal: input.signal,
     });

@@ -64,6 +64,7 @@ import {
   parseJudgeDecision,
   type JudgeDecision,
 } from "./judge.js";
+import { AGENT_USER_AGENT } from "./types.js";
 import type {
   ModelPort,
   ModelRequest,
@@ -509,6 +510,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       messages,
       max_output_tokens: ledger.nextOutputCap(),
       expect_json: true,
+      user_agent: AGENT_USER_AGENT.resolver,
       signal: local,
     };
     const callStarted = mono();

@@ -71,9 +71,11 @@ read resolved with which revision, detector findings, stale marks and
 repairs. The newest event is last. It shows only identifiers, titles, counts
 and timings, the same fields as the decision log.
 
-`/vestigio-log off` hides it, `/vestigio-log on` restores it, and
-`/vestigio-log clear` empties it. In print mode (`-p`) and JSON mode there is
-no panel.
+The panel starts hidden. `/vestigio-log on` shows it, `/vestigio-log off`
+hides it, and `/vestigio-log clear` empties it; the on/off state is written to
+`logging.activity` in the config file, so the next session keeps it.
+`VESTIGIO_ACTIVITY` wins over the file for that session. In print mode (`-p`)
+and JSON mode there is no panel.
 
 ## Configuration file
 
@@ -93,13 +95,16 @@ variable, then the file, then the built-in default decides each value.
   },
   "retrieval": { "budget_bytes": 4096, "max_memories": 3, "min_score": 1, "pool_capacity": 32, "timeout_ms": 1000 },
   "history": { "obelisk_home": null, "obelisk_cli": null },
-  "logging": { "decision_log": null }
+  "logging": { "decision_log": null, "activity": false }
 }
 ```
 
 `VESTIGIO_CONFIG` points at a different file, and an empty value disables the
 file. A relative path in the file resolves against the file's directory.
-Unknown keys and wrong types are errors. A process reads the file when it
+Unknown keys and wrong types are errors. Requests to `model.base_url` carry a
+`user-agent` naming the caller (`vestigio/resolver`, `vestigio/extraction`,
+`vestigio/detector`, `vestigio/nav`), so a gateway can attribute usage per
+agent. A process reads the file when it
 starts, so a running daemon keeps the values it started with; `vestigio stop
 --db <store>` and the next tool call pick up an edit.
 

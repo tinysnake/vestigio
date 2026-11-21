@@ -40,6 +40,15 @@ function extractWith(text: string, allowed = ["h-1"]) {
 }
 
 describe("extractMediumSummary", () => {
+  it("tags the call with the extraction agent", async () => {
+    const run = extractWith(JSON.stringify({ body: bodyOfLength(600, "h-1") }));
+
+    await run.run;
+
+    expect(run.requests[0]?.user_agent).toBe("vestigio/extraction");
+  });
+
+
   it("appends the rewrite note to the system prompt only on a repair call", async () => {
     const body = bodyOfLength(600, "h-1");
     const run = async (extra: {

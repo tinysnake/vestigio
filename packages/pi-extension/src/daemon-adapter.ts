@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
 import type { TSchema, Static } from "typebox";
 import type { Kind } from "@vestigio/client";
+import { saveActivity } from "@vestigio/config";
 import { splitMemoryUri } from "@vestigio/core";
 import { requestTitle } from "@vestigio/core/requests";
 import { ActivityPanel, clip, formatInjection, formatJobEvent, formatNotInjected, formatToolEvent, line } from "./activity.js";
-import { type VestigioConfig } from "./config.js";
+import { ACTIVITY_ENV, type VestigioConfig } from "./config.js";
 import { DecisionLog, hashQuery } from "./decision-log.js";
 import { PiDaemon, sessionOf } from "./daemon-client.js";
 import { loadLedger, persistLedgerDelta } from "./ledger-store.js";
@@ -37,7 +38,7 @@ function report(error: unknown): void {
 export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: string) {
 	const daemon = new PiDaemon(storePath);
 	const log = new DecisionLog(config.decision_log);
-	const panel = new ActivityPanel();
+	const panel = new ActivityPanel(config.activity_panel);
 	let currentInput: { text: string; id: string } | undefined;
 	const seen = new Set<string>();
 	const checkpoints = new Map<string, string>();
@@ -229,14 +230,10 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 		description: "记忆活动面板：on 打开，off 关闭，clear 清空",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const action = args.trim().toLowerCase();
-			if (action === "off") {
-				panel.setEnabled(false, ctx);
-				ctx.ui.notify("记忆活动面板已关闭", "info");
-				return;
-			}
-			if (action === "on") {
-				panel.setEnabled(true, ctx);
-				ctx.ui.notify("记忆活动面板已打开", "info");
+			if (action === "off" || action === "on") {
+				const enabled = action === "on";
+				panel.setEnabled(enabled, ctx);
+				ctx.ui.notify(`记忆活动面板已${enabled ? "打开" : "关闭"}${persistenceNote(enabled)}`, "info");
 				return;
 			}
 			if (action === "" || action === "clear") {
@@ -247,4 +244,20 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			ctx.ui.notify("用法：/vestigio-log on | off | clear", "warning");
 		},
 	});
+}
+
+/**
+ * The panel's state lives in `logging.activity`, so a toggle outlives the
+ * session. An explicit `VESTIGIO_ACTIVITY` outranks the file, so writing then
+ * would promise a change the next start would not honour.
+ */
+function persistenceNote(next: boolean): string {
+	const override = process.env[ACTIVITY_ENV];
+	if (override !== undefined && override.trim().length > 0) {
+		return "，仅本次会话（环境变量 VESTIGIO_ACTIVITY 优先）";
+	}
+	const saved = saveActivity(next);
+	if (saved.status === "saved") return "，已写入配置";
+	if (saved.status === "no_file") return "，仅本次会话（没有配置文件）";
+	return `，本次会话生效（配置写入失败：${clip(saved.message, 60)}）`;
 }

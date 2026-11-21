@@ -67,6 +67,18 @@ describe("createOpenAiCompatibleClient", () => {
     expect(headers["authorization"]).toBe("Bearer secret-key");
   });
 
+  it("sends the request's user agent beside the configured headers", async () => {
+    const { client, captured } = clientWith(() => ok({ choices: [{ message: { content: "{}" } }] }), {
+      headers: { "x-gateway-team": "snake" },
+    });
+
+    await client.complete({ ...request, user_agent: "vestigio/detector" });
+
+    const headers = captured[0]?.init.headers as Record<string, string>;
+    expect(headers["user-agent"]).toBe("vestigio/detector");
+    expect(headers["x-gateway-team"]).toBe("snake");
+  });
+
   it("reports a usable-but-failing endpoint as failed without leaking the key", async () => {
     const { client } = clientWith(() => new Response("bad request: model not found secret-key", { status: 400 }));
 

@@ -33,6 +33,7 @@ export const MODEL_BASE_URL_ENV = "VESTIGIO_MODEL_BASE_URL";
 export const MODEL_ID_ENV = "VESTIGIO_MODEL_ID";
 export const MODEL_API_KEY_ENV = "VESTIGIO_MODEL_API_KEY";
 export const MODEL_THINKING_ENV = "VESTIGIO_MODEL_THINKING";
+export const ACTIVITY_ENV = "VESTIGIO_ACTIVITY";
 
 export type VestigioEnv = Record<string, string | undefined>;
 
@@ -47,6 +48,8 @@ export type VestigioConfig = {
 	readonly pool_capacity: number;
 	readonly timeout_ms: number;
 	readonly decision_log: string | null;
+	/** The activity panel above the editor; off unless configured. */
+	readonly activity_panel: boolean;
 	/** OpenAI-compatible base URL; `null` means `memory_resolve` degrades to PR-04. */
 	readonly model_base_url: string | null;
 	readonly model_id: string;
@@ -82,6 +85,7 @@ export function readConfig(env: VestigioEnv = process.env): VestigioConfig {
 		pool_capacity: intOr(env[POOL_CAPACITY_ENV], VESTIGIO_DEFAULTS.pool_capacity, 1),
 		timeout_ms: intOr(env[TIMEOUT_ENV], VESTIGIO_DEFAULTS.timeout_ms, 1),
 		decision_log: strOrNull(env[DECISION_LOG_ENV]),
+		activity_panel: boolOr(env[ACTIVITY_ENV], false),
 		model_base_url: strOrNull(env[MODEL_BASE_URL_ENV]),
 		model_id: strOrNull(env[MODEL_ID_ENV]) ?? DEFAULT_MODEL_ID,
 		model_api_key: strOrNull(env[MODEL_API_KEY_ENV]),
@@ -102,6 +106,16 @@ function strOrNull(value: string | undefined): string | null {
 	if (value === undefined) return null;
 	const trimmed = value.trim();
 	return trimmed.length === 0 ? null : trimmed;
+}
+
+const TRUE_WORDS = ["1", "true", "yes", "on"];
+const FALSE_WORDS = ["0", "false", "no", "off"];
+
+function boolOr(value: string | undefined, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	const word = value.trim().toLowerCase();
+	if (TRUE_WORDS.includes(word)) return true;
+	return FALSE_WORDS.includes(word) ? false : fallback;
 }
 
 /** A positive integer override, or `fallback` when absent/garbage/below `min`. */
