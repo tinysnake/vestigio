@@ -187,6 +187,7 @@ function mergeConfig(path, options) {
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`);
   renameSync(temporary, path);
+  chmodSync(path, 0o600);
   step("config", "ok", `wrote ${path}`);
 }
 

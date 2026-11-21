@@ -44,11 +44,12 @@ export const DEFAULT_RESOLVE_MODEL_ID = "auto/deepseek-v4.1-flash";
 export const USAGE = `vestigio — layered memory inspection
 
 Usage:
-  vestigio search --db <path> (--project <abs path> | --global) --query <text> [options]
-  vestigio read   --db <path> --uri <memory://store/id> [--revision <n>] [--json]
-  vestigio probe  --db <path> --obelisk-home <dir> [--json]
-  vestigio resolve --db <path> (--project <abs path> | --global) --question <text> [options]
-  vestigio jobs run --db <path> [--limit <1..20>] [options]
+  vestigio search [--db <path>] (--project <abs path> | --global) --query <text> [options]
+  vestigio read   [--db <path>] --uri <memory://store/id> [--revision <n>] [--json]
+  vestigio probe  [--db <path>] --obelisk-home <dir> [--json]
+  vestigio resolve [--db <path>] (--project <abs path> | --global) --question <text> [options]
+  vestigio jobs run [--db <path>] [--limit <1..20>] [options]
+  vestigio stop   [--db <path>]
   vestigio --help
 
 Search options:
