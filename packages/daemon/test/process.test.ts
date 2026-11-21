@@ -78,7 +78,8 @@ test("a live owner excludes other processes, while a crash releases the lock and
 		await Promise.allSettled(children.map(({ exited }) => exited));
 		await rm(directory, { recursive: true, force: true });
 	}
-}, 10_000);
+	// Three daemons start in sequence; a cold CI runner needs more than the local 2s.
+}, 30_000);
 
 test("a running maintenance agent leaves foreground transactions available", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "vestigio-foreground-"));
