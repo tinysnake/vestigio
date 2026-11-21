@@ -10,7 +10,8 @@
  * extension.
  */
 
-import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { agentModelSettings } from "@vestigio/config";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import type { HistoryPort } from "@vestigio/core/retrieval";
@@ -72,7 +73,8 @@ export function createModelClient(env: RuntimeEnv = process.env): MemoryRuntime[
   const api_key = strOrNull(env[MODEL_API_KEY_ENV]);
   if (api_key !== null) options.api_key = api_key;
   options.thinking = thinkingOr(env[MODEL_THINKING_ENV], DEFAULT_MODEL_THINKING);
-  return createOpenAiCompatibleClient(options);
+  // Every agent may name its own model; the tag in `user_agent` picks the client.
+  return createAgentModelPort(options, agentModelSettings(env));
 }
 
 export function createHistoryPort(env: RuntimeEnv = process.env): HistoryPort | null {

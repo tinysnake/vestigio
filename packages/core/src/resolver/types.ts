@@ -55,12 +55,16 @@ export type ModelRequest = {
  * Every agent that drives the model names itself here. Without it the gateway
  * sees one client identity and cannot split token usage per agent.
  */
-export const AGENT_USER_AGENT = {
+export const AGENT_NAMES = ["resolver", "extraction", "detector", "nav"] as const;
+
+export type AgentName = (typeof AGENT_NAMES)[number];
+
+export const AGENT_USER_AGENT: Record<AgentName, string> = {
   resolver: "vestigio/resolver",
   extraction: "vestigio/extraction",
   detector: "vestigio/detector",
   nav: "vestigio/nav",
-} as const;
+};
 
 export type ModelUsage = {
   tokens_in: number;

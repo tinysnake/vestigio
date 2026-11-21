@@ -118,7 +118,11 @@ variable, then the file, then the built-in default decides each value.
     "base_url": "http://127.0.0.1:11434/v1",
     "id": "auto/deepseek-v4.1-flash",
     "api_key": null,
-    "thinking": "low"
+    "thinking": "low",
+    "agents": {
+      "extraction": { "id": "auto/gpt-6-luna" },
+      "detector": { "thinking": "off" }
+    }
   },
   "retrieval": { "budget_bytes": 4096, "max_memories": 3, "min_score": 1, "pool_capacity": 32, "timeout_ms": 1000 },
   "history": { "obelisk_home": null, "obelisk_cli": null },
@@ -131,7 +135,31 @@ file. A relative path in the file resolves against the file's directory.
 Unknown keys and wrong types are errors. Requests to `model.base_url` carry a
 `user-agent` naming the caller (`vestigio/resolver`, `vestigio/extraction`,
 `vestigio/detector`, `vestigio/nav`), so a gateway can attribute usage per
-agent. A process reads the file when it
+agent.
+
+### Per-agent models
+
+Four agents call the model: `resolver` (search and answer), `extraction`
+(summary and navigation on save), `detector` (staleness judgments) and `nav`
+(maintenance repair). `model.agents.<agent>` overrides `id` and `thinking` for
+one of them and inherits `base_url` and `api_key` from the base. A model named
+there wins over the daemon's default id, so a cheap model on the detector does
+not drag the resolver down.
+
+```json
+"model": {
+  "base_url": "http://127.0.0.1:3425/v1",
+  "id": "auto/deepseek-v4.1-flash",
+  "api_key": "magpie",
+  "agents": { "detector": { "id": "auto/mimo-v2.6-flash" }, "nav": { "id": "auto/mimo-v2.6-flash" } }
+}
+```
+
+The same choices have environment names, `VESTIGIO_MODEL_RESOLVER_ID`,
+`VESTIGIO_MODEL_DETECTOR_ID`, `VESTIGIO_MODEL_EXTRACTION_ID`,
+`VESTIGIO_MODEL_NAV_ID`, plus `_THINKING` for each. The file fills them when
+the variable is absent, and the extension, CLI and daemon all route on the
+`user_agent` tag the calls already send. A process reads the file when it
 starts, so a running daemon keeps the values it started with; `vestigio stop
 --db <store>` and the next tool call pick up an edit.
 

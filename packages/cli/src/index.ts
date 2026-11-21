@@ -21,7 +21,8 @@ import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/cor
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
-import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { agentModelSettings } from "@vestigio/config";
 import { formatFreshnessLines, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 import { VestigioClient } from "@vestigio/client";
@@ -716,6 +717,7 @@ type ModelWiring = {
  * explicit price table. Never prints the key.
  */
 function wireModel(context: CommandContext): ModelWiring {
+  const agents = agentModelSettings(process.env);
   const baseUrl =
     stringFlag(context.parsed, "model-base-url") ?? process.env["VESTIGIO_MODEL_BASE_URL"] ?? null;
   const modelId =
@@ -729,18 +731,23 @@ function wireModel(context: CommandContext): ModelWiring {
   const model =
     baseUrl === null
       ? null
-      : (context.deps.createModel ?? createOpenAiCompatibleClient)({
-          base_url: baseUrl,
-          model: modelId,
-          api_key: apiKey,
-          thinking,
-          cost: cost ?? undefined,
-        });
+      : createAgentModelPort(
+          {
+            base_url: baseUrl,
+            model: modelId,
+            api_key: apiKey,
+            thinking,
+            cost: cost ?? undefined,
+          },
+          agents,
+          context.deps.createModel ?? undefined,
+        );
   return {
     model,
     info: {
       base_url: baseUrl,
-      model_id: modelId,
+      // What the resolver will actually call; the per-agent override wins.
+      model_id: agents.resolver?.model ?? modelId,
       thinking,
       cost_table: cost,
       skip_reason: baseUrl === null ? "未配置 --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,

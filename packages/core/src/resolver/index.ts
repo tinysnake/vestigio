@@ -57,7 +57,8 @@ export {
   readResolveBudget,
 } from "./budget.js";
 export type { LedgerStop } from "./budget.js";
-export { AGENT_USER_AGENT } from "./types.js";
+export { AGENT_NAMES, AGENT_USER_AGENT } from "./types.js";
+export type { AgentName } from "./types.js";
 export type {
   ModelFailure,
   ModelFailureStatus,

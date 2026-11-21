@@ -8,6 +8,8 @@ import {
 	applyConfigToEnv,
 	configToEnv,
 	defaultConfigPath,
+	agentModelEnvKey,
+	agentModelSettings,
 	loadConfigFile,
 	resolveEnv,
 	saveActivity,
@@ -134,6 +136,49 @@ describe("configToEnv", () => {
 	it("exposes the values a fresh file should carry", () => {
 		expect(CONFIG_DEFAULTS["retrieval.budget_bytes"]).toBe(4096);
 		expect(CONFIG_DEFAULTS["retrieval.timeout_ms"]).toBe(1000);
+	});
+});
+
+describe("model.agents", () => {
+	it("reads per-agent models and inherits nothing it was not given", () => {
+		const file = loadConfigFile(
+			{},
+			{ home: tempHome({ model: { id: "base", agents: { detector: { id: "cheap" }, nav: {} } } }) },
+		);
+		expect(file?.model).toEqual({ id: "base", agents: { detector: { id: "cheap" }, nav: {} } });
+	});
+
+	it("rejects an unknown agent and an unknown field", () => {
+		expect(() => loadConfigFile({}, { home: tempHome({ model: { agents: { summariser: { id: "x" } } } }) })).toThrow(
+			/model\.agents\.summariser/,
+		);
+		expect(() => loadConfigFile({}, { home: tempHome({ model: { agents: { detector: { base_url: "http://x" } } } }) })).toThrow(
+			/model\.agents\.detector\.base_url/,
+		);
+	});
+
+	it("maps each override to its own variables", () => {
+		const env = configToEnv({
+			model: { base_url: "http://x/v1", id: "base", agents: { detector: { id: "cheap", thinking: "off" } } },
+		});
+		expect(env["VESTIGIO_MODEL_DETECTOR_ID"]).toBe("cheap");
+		expect(env["VESTIGIO_MODEL_DETECTOR_THINKING"]).toBe("off");
+		expect(env["VESTIGIO_MODEL_ID"]).toBe("base");
+	});
+
+	it("feeds the routing port from the environment and ignores blank or bad values", () => {
+		expect(agentModelSettings({})).toEqual({});
+		expect(agentModelSettings({ VESTIGIO_MODEL_DETECTOR_ID: "cheap" })).toEqual({ detector: { model: "cheap" } });
+		expect(agentModelSettings({ VESTIGIO_MODEL_NAV_ID: " ", VESTIGIO_MODEL_NAV_THINKING: "loud" })).toEqual({});
+		expect(agentModelEnvKey("extraction", "ID")).toBe("VESTIGIO_MODEL_EXTRACTION_ID");
+		expect(
+			agentModelSettings({ VESTIGIO_MODEL_RESOLVER_ID: "big", VESTIGIO_MODEL_RESOLVER_THINKING: "high" }),
+		).toEqual({ resolver: { model: "big", thinking: "high" } });
+	});
+
+	it("reaches the entry points through resolveEnv", () => {
+		const home = tempHome({ model: { base_url: "http://x/v1", agents: { extraction: { id: "cheap" } } } });
+		expect(resolveEnv({}, { home })["VESTIGIO_MODEL_EXTRACTION_ID"]).toBe("cheap");
 	});
 });
 

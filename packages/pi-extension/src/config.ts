@@ -17,7 +17,11 @@ import {
 	DEFAULT_MAX_HOTSPOT_MEMORIES,
 	DEFAULT_MIN_MATCH_SCORE,
 } from "@vestigio/core/hotspots";
-import type { ModelThinking } from "@vestigio/core/resolver";
+import { agentModelSettings } from "@vestigio/config";
+import type { AgentName, ModelThinking } from "@vestigio/core/resolver";
+
+/** One agent's model choice, inherited from the base when a field is absent. */
+export type AgentModelSettings = { readonly model?: string; readonly thinking?: ModelThinking };
 
 export const STORE_ENV = "VESTIGIO_STORE";
 export const PROJECT_ENV = "VESTIGIO_PROJECT_ID";
@@ -55,6 +59,8 @@ export type VestigioConfig = {
 	readonly model_id: string;
 	readonly model_api_key: string | null;
 	readonly model_thinking: ModelThinking;
+	/** Per-agent model choices from the config file or `VESTIGIO_MODEL_<AGENT>_*`. */
+	readonly agent_models: Partial<Record<AgentName, AgentModelSettings>>;
 	readonly enabled: boolean;
 };
 
@@ -70,6 +76,7 @@ export const VESTIGIO_DEFAULTS = {
 	timeout_ms: DEFAULT_HOTSPOT_TIMEOUT_MS,
 	model_id: DEFAULT_MODEL_ID,
 	model_thinking: DEFAULT_MODEL_THINKING,
+	agent_models: {},
 } as const;
 
 export function readConfig(env: VestigioEnv = process.env): VestigioConfig {
@@ -90,6 +97,7 @@ export function readConfig(env: VestigioEnv = process.env): VestigioConfig {
 		model_id: strOrNull(env[MODEL_ID_ENV]) ?? DEFAULT_MODEL_ID,
 		model_api_key: strOrNull(env[MODEL_API_KEY_ENV]),
 		model_thinking: thinkingOr(env[MODEL_THINKING_ENV], DEFAULT_MODEL_THINKING),
+		agent_models: agentModelSettings(env),
 		enabled: store_path !== null,
 	};
 }

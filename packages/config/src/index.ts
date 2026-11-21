@@ -20,7 +20,7 @@ import {
 	DEFAULT_MAX_HOTSPOT_MEMORIES,
 	DEFAULT_MIN_MATCH_SCORE,
 } from "@vestigio/core/hotspots";
-import type { ModelThinking } from "@vestigio/core/resolver";
+import { AGENT_NAMES, type AgentName, type ModelThinking } from "@vestigio/core/resolver";
 
 export const CONFIG_PATH_ENV = "VESTIGIO_CONFIG";
 export const CONFIG_DIRECTORY = ".vestigio";
@@ -29,11 +29,18 @@ export const CONFIG_VERSION = 1;
 
 export type VestigioEnv = Record<string, string | undefined>;
 
+export type AgentModelSection = {
+	readonly id?: string;
+	readonly thinking?: ModelThinking;
+};
+
 export type ModelSection = {
 	readonly base_url?: string;
 	readonly id?: string;
 	readonly api_key?: string | null;
 	readonly thinking?: ModelThinking;
+	/** Per-agent overrides that inherit the values above. */
+	readonly agents?: Partial<Record<AgentName, AgentModelSection>>;
 };
 
 export type RetrievalSection = {
@@ -69,7 +76,8 @@ export type ConfigOptions = {
 };
 
 const ROOT_KEYS = ["version", "store", "model", "retrieval", "history", "logging"] as const;
-const MODEL_KEYS = ["base_url", "id", "api_key", "thinking"] as const;
+const MODEL_KEYS = ["base_url", "id", "api_key", "thinking", "agents"] as const;
+const AGENT_MODEL_KEYS = ["id", "thinking"] as const;
 const RETRIEVAL_KEYS = ["budget_bytes", "max_memories", "min_score", "pool_capacity", "timeout_ms"] as const;
 const HISTORY_KEYS = ["obelisk_home", "obelisk_cli"] as const;
 const LOGGING_KEYS = ["decision_log", "activity"] as const;
@@ -176,6 +184,12 @@ export function configToEnv(file: ConfigFile): Record<string, string> {
 		if (model.id !== undefined) out["VESTIGIO_MODEL_ID"] = model.id;
 		if (model.api_key !== undefined && model.api_key !== null) out["VESTIGIO_MODEL_API_KEY"] = model.api_key;
 		if (model.thinking !== undefined) out["VESTIGIO_MODEL_THINKING"] = model.thinking;
+		for (const agent of AGENT_NAMES) {
+			const override = model.agents?.[agent];
+			if (override === undefined) continue;
+			if (override.id !== undefined) out[agentModelEnvKey(agent, "ID")] = override.id;
+			if (override.thinking !== undefined) out[agentModelEnvKey(agent, "THINKING")] = override.thinking;
+		}
 	}
 	const retrieval = file.retrieval;
 	if (retrieval !== undefined) {
@@ -234,13 +248,74 @@ function parseConfig(text: string, path: string, options: ConfigOptions): Config
 function parseModel(section: unknown, path: string): ModelSection {
 	const record = objectAt(section, path, "model");
 	onlyKeys(record, path, "model", MODEL_KEYS);
-	const out: { base_url?: string; id?: string; api_key?: string | null; thinking?: ModelThinking } = {};
+	const out: {
+		base_url?: string;
+		id?: string;
+		api_key?: string | null;
+		thinking?: ModelThinking;
+		agents?: Partial<Record<AgentName, AgentModelSection>>;
+	} = {};
 	if (record["base_url"] !== undefined) out.base_url = urlAt(record["base_url"], path, "model.base_url");
 	if (record["id"] !== undefined) out.id = stringAt(record["id"], path, "model.id");
 	if (record["api_key"] !== undefined) {
 		out.api_key = record["api_key"] === null ? null : stringAt(record["api_key"], path, "model.api_key");
 	}
 	if (record["thinking"] !== undefined) out.thinking = thinkingAt(record["thinking"], path, "model.thinking");
+	if (record["agents"] !== undefined) out.agents = parseAgents(record["agents"], path);
+	return out;
+}
+
+function parseAgents(section: unknown, path: string): Partial<Record<AgentName, AgentModelSection>> {
+	const record = objectAt(section, path, "model.agents");
+	const out: Partial<Record<AgentName, AgentModelSection>> = {};
+	for (const key of Object.keys(record)) {
+		if (!(AGENT_NAMES as readonly string[]).includes(key)) {
+			throw new Error(`vestigio config ${path}: unknown key model.agents.${key}`);
+		}
+		const agent = key as AgentName;
+		const entry = objectAt(record[key], path, `model.agents.${agent}`);
+		onlyKeys(entry, path, `model.agents.${agent}`, AGENT_MODEL_KEYS);
+		const override: { id?: string; thinking?: ModelThinking } = {};
+		if (entry["id"] !== undefined) override.id = stringAt(entry["id"], path, `model.agents.${agent}.id`);
+		if (entry["thinking"] !== undefined) {
+			override.thinking = thinkingAt(entry["thinking"], path, `model.agents.${agent}.thinking`);
+		}
+		out[agent] = override;
+	}
+	return out;
+}
+
+function envText(raw: string | undefined): string | undefined {
+	if (raw === undefined) return undefined;
+	const trimmed = raw.trim();
+	return trimmed.length === 0 ? undefined : trimmed;
+}
+
+/** `VESTIGIO_MODEL_DETECTOR_ID`, `VESTIGIO_MODEL_DETECTOR_THINKING`, ... */
+export function agentModelEnvKey(agent: AgentName, field: "ID" | "THINKING"): string {
+	return `VESTIGIO_MODEL_${agent.toUpperCase()}_${field}`;
+}
+
+export type AgentModelSettings = { readonly model?: string; readonly thinking?: ModelThinking };
+
+/**
+ * The per-agent model choices an entry point passes to the routing port. An
+ * empty string counts as unset, the same rule the rest of the file follows.
+ */
+export function agentModelSettings(env: VestigioEnv): Partial<Record<AgentName, AgentModelSettings>> {
+	const out: Partial<Record<AgentName, AgentModelSettings>> = {};
+	for (const agent of AGENT_NAMES) {
+		const id = envText(env[agentModelEnvKey(agent, "ID")]);
+		const raw = envText(env[agentModelEnvKey(agent, "THINKING")]);
+		const thinking = raw !== undefined && (THINKING_LEVELS as readonly string[]).includes(raw)
+			? (raw as ModelThinking)
+			: undefined;
+		if (id === undefined && thinking === undefined) continue;
+		out[agent] = {
+			...(id === undefined ? {} : { model: id }),
+			...(thinking === undefined ? {} : { thinking }),
+		};
+	}
 	return out;
 }
 

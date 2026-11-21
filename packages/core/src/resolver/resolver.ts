@@ -458,12 +458,13 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     outcome: ResolveCallRecord["outcome"],
     usage: { tokens_in: number; tokens_out: number; cost_usd: number | null },
     elapsed: number,
+    model: string,
   ): ResolveCallRecord {
     return {
       index: calls.length,
       layer,
       purpose: "judge_expand",
-      model: input.model_id ?? "unconfigured",
+      model,
       tokens_in: usage.tokens_in,
       tokens_out: usage.tokens_out,
       cost_usd: usage.cost_usd,
@@ -520,7 +521,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       result = await model.complete(request);
     } catch (error) {
       modelMs += mono() - callStarted;
-      calls.push(callRecord(layer, "failed", emptyUsage, mono() - callStarted));
+      calls.push(callRecord(layer, "failed", emptyUsage, mono() - callStarted, request.model ?? "unconfigured"));
       return {
         kind: "stop",
         reason: `model_threw:${error instanceof Error ? error.message : String(error)}`,
@@ -530,7 +531,15 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     const elapsed = mono() - callStarted;
     modelMs += elapsed;
     if (!result.ok) {
-      calls.push(callRecord(layer, result.status === "cancelled" ? "cancelled" : "failed", emptyUsage, elapsed));
+      calls.push(
+        callRecord(
+          layer,
+          result.status === "cancelled" ? "cancelled" : "failed",
+          emptyUsage,
+          elapsed,
+          request.model ?? "unconfigured",
+        ),
+      );
       if (result.status === "cancelled") {
         return { kind: "stop", reason: controller.signal.aborted ? "cancelled" : "deadline_exceeded", retryable: false };
       }
@@ -539,10 +548,10 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     ledger.recordModelCall(result.value.usage);
     const parsed = parseJudgeDecision(result.value.text, judgeAllowList(current));
     if (!parsed.ok) {
-      calls.push(callRecord(layer, "malformed", result.value.usage, elapsed));
+      calls.push(callRecord(layer, "malformed", result.value.usage, elapsed, result.value.model));
       return { kind: "stop", reason: `model_malformed_output:${parsed.reason}`, retryable: true };
     }
-    calls.push(callRecord(layer, "ok", result.value.usage, elapsed));
+    calls.push(callRecord(layer, "ok", result.value.usage, elapsed, result.value.model));
     return { kind: "decision", decision: parsed.value };
   }
 

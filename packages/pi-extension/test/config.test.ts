@@ -53,6 +53,18 @@ describe("readConfig", () => {
 		expect(config.decision_log).toBe("/tmp/vestigio.jsonl");
 	});
 
+	it("collects per-agent model choices", () => {
+		const config = readConfig({
+			VESTIGIO_STORE: "/tmp/memory.sqlite",
+			VESTIGIO_MODEL_RESOLVER_ID: "auto/glm-5.3-flash",
+			VESTIGIO_MODEL_DETECTOR_THINKING: "off",
+		});
+		expect(config.agent_models).toEqual({
+			resolver: { model: "auto/glm-5.3-flash" },
+			detector: { thinking: "off" },
+		});
+	});
+
 	it("falls back rather than accepting a garbage integer", () => {
 		const config = readConfig({
 			VESTIGIO_STORE: "/tmp/memory.sqlite",

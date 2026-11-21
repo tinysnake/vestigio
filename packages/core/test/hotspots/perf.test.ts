@@ -31,8 +31,9 @@ function queryFor(index: number): string {
 }
 
 describe("hotspot match path performance", () => {
-  // The ceiling describes this machine, not the code: a shared two-core CI runner timed out
-  // at 5s on this test while the same suite finishes in ~1s locally.
+  // The 1s ceiling below is the assertion that matters. The wall-clock budget is
+  // wider because a busy machine stretches the loop itself past vitest's 5s
+  // default while every single plan still lands under the ceiling.
   it.skipIf(process.env.CI)(`stays under the one second ceiling across ${TURNS} turns on a full pool`, () => {
     const store = newStore();
     for (let index = 0; index < POOL_SIZE; index += 1) {
@@ -97,5 +98,5 @@ describe("hotspot match path performance", () => {
     expect(Math.max(...elapsed)).toBeLessThan(1000);
     expect(injectedTurns).toBeGreaterThan(0);
     store.close();
-  });
+  }, 30_000);
 });

@@ -18,7 +18,7 @@ import type { VestigioConfig } from "./config.js";
 import { DecisionLog, type DecisionRecord } from "./decision-log.js";
 import { loadLedger } from "./ledger-store.js";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
-import { createOpenAiCompatibleClient } from "@vestigio/model-client";
+import { createAgentModelPort, createOpenAiCompatibleClient } from "@vestigio/model-client";
 import type { OpenAiCompatibleOptions } from "@vestigio/model-client";
 import type { SessionManagerLike, SessionTreeLike } from "./pi-types.js";
 
@@ -255,12 +255,16 @@ export class VestigioState {
 		if (this.modelAttempted) return null;
 		this.modelAttempted = true;
 		try {
-			this.model = this.createModel({
-				base_url: this.config.model_base_url,
-				model: this.config.model_id,
-				api_key: this.config.model_api_key ?? undefined,
-				thinking: this.config.model_thinking,
-			});
+			this.model = createAgentModelPort(
+				{
+					base_url: this.config.model_base_url,
+					model: this.config.model_id,
+					api_key: this.config.model_api_key ?? undefined,
+					thinking: this.config.model_thinking,
+				},
+				this.config.agent_models,
+				(options) => this.createModel(options),
+			);
 			return this.model;
 		} catch (error) {
 			this.modelFailure = errorText(error);
