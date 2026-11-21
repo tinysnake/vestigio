@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "description": "Vestigio pi extension: bounded hotspot reminders on real user input plus the memory search/read tools.",
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
   "type": "module",
   "engines": {
     "node": ">=22.5"

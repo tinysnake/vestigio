@@ -44,10 +44,12 @@ pnpm test && pnpm typecheck
 node scripts/daemon-smoke.mjs     # CLI creates a store, daemon starts, stop works
 ```
 
-Load the extension into pi with `-e`, or add the same path to the `extensions`
-list in `~/.pi/agent/settings.json`. `VESTIGIO_STORE`, or `store` in the
-config file, is the only required setting; without it the extension stays
-inert. Memory retrieval and saving do not need a model, and staleness
+The supported install registers the package with `pi install`. `-e` loads one
+file for one run and caches it under `~/.pi/agent/tmp/extensions/`, so it is
+not an install and the deploy script does not accept it as one.
+
+`VESTIGIO_STORE`, or `store` in the config file, is the only required setting;
+without it the extension stays inert. Memory retrieval and saving do not need a model, and staleness
 detection and cold-search recovery stay off until `VESTIGIO_MODEL_BASE_URL` and
 `VESTIGIO_MODEL_ID` are set.
 
@@ -62,6 +64,23 @@ The first memory tool call starts the daemon. Its state, job database and log
 live beside the store, in `<store>.daemon/` (`daemon.log`, `endpoint.json`,
 `jobs.sqlite`). Stop it with `packages/cli/bin/vestigio stop --db <store>`.
 There is no idle timeout: closing pi does not stop the daemon.
+
+## Deploy locally
+
+```sh
+node scripts/deploy.mjs --model-base-url http://127.0.0.1:11434/v1 \
+  --model-id auto/deepseek-v4.1-flash
+```
+
+Steps, each printed as `ok`, `skip`, `warn` or `FAIL`: `pnpm install`, write
+`~/.vestigio/config.json` (keeps existing keys, adds `store` and
+`logging.activity: false`), `pi install` the extension package and verify the
+entry landed in the pi settings `packages` list, and link `vestigio` into
+`/usr/local/bin` or `~/.local/bin`. `--dry-run` prints the plan, `--config`
+and `--pi-settings` point it at another machine layout, and `--skip-install`
+or `--skip-link` drop a step. A cached `-e` copy only produces a warning;
+the install is confirmed by reading the settings file, not by trusting the
+command's exit code.
 
 ## Activity panel
 
