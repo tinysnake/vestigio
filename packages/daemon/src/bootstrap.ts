@@ -11,6 +11,10 @@ export async function startDaemon(requested: string, createHandler: (store: stri
 	mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
 	const lock = tryLock(paths.lock);
 	if (!lock) return;
+	// The connection behind this lock is the exclusion. It must stay reachable for the
+	// daemon's lifetime; a local that V8 collects is closed and lets a second daemon
+	// adopt the same store.
+	const heldLock = lock;
 
 	const handler = await createHandler(paths.store);
 	const store = new JobStore(paths.jobs);
@@ -28,6 +32,7 @@ export async function startDaemon(requested: string, createHandler: (store: stri
 		service.stop();
 		server.close();
 		rmSync(paths.endpoint, { force: true });
+		heldLock.close();
 		process.exit(0);
 	}
 	const server = httpServer(service, endpoint, stop);
