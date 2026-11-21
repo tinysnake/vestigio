@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { JobStore } from "./jobs.js";
 import { tryLock } from "./lock.js";
@@ -10,6 +11,7 @@ export async function startDaemon(requested: string, createHandler: (store: stri
 	const paths = runtimePaths(requested);
 	mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
 	const lock = tryLock(paths.lock);
+	appendFileSync("/tmp/vestigio-lock-trace.log", `daemon ${process.pid} lock ${lock ? "acquired" : "busy"} ${paths.lock}\n`);
 	if (!lock) return;
 
 	const handler = await createHandler(paths.store);
