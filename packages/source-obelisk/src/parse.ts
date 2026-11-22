@@ -34,6 +34,12 @@ export type CliMessage = {
   readonly is_meta: boolean;
   readonly cwd: string | null;
   readonly source: string | null;
+  /**
+   * `tool_use` / `tool_result` / `thinking` / `text` / …, or null for a row the
+   * index did not classify. Search uses it to drop tool traffic, which carries
+   * no knowledge but ranks high on keywords.
+   */
+  readonly content_type: string | null;
   readonly unrecognised: readonly string[];
 };
 
@@ -173,6 +179,7 @@ export function parseMessage(value: unknown, path: string): CliMessage {
     is_meta: record["is_meta"] === undefined ? false : boolish(record, "is_meta", path),
     cwd: nullableStr(record, "cwd", path),
     source: nullableStr(record, "source", path),
+    content_type: nullableStr(record, "content_type", path),
     unrecognised: unknown(record, MESSAGE_KEYS),
   };
 }

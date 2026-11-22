@@ -59,6 +59,16 @@ const ALLOWED_KEYS = [
 
 const SESSION_LOOKUP_LIMIT = 50;
 
+/**
+ * Tool traffic is not knowledge. A `memory_search` output echoed into a later
+ * session matches the same keywords as the answer and outranks it, so a hit
+ * whose content type is a tool call or its result is dropped.
+ */
+const TOOL_TRAFFIC = new Set(["tool_use", "tool_result"]);
+
+/** Extra rows requested so dropping tool traffic still fills the caller's window. */
+const OVERSCAN = 3;
+
 export type SearchOptions = {
   /** FTS5 query text. Never spliced: it is one argv element or one JSON value. */
   readonly text: string;
@@ -202,13 +212,16 @@ export async function runSearch(
   let hits: CliHit[];
   let child_ms = 0;
   let session_found: boolean | null = null;
+  // Ask for more rows than the caller wants: the filter below can drop most of
+  // a window on a tool-heavy index, and the CLI's limit is a plain LIMIT.
+  const fetch_limit = Math.min(normalised.limit * OVERSCAN, SEARCH_LIMIT_MAX);
 
   if (use_script) {
     const ran = await runtime.runScript(
       "search",
       {
         text: query.text,
-        limit: normalised.limit,
+        limit: fetch_limit,
         context_limit: normalised.context_limit,
         include_meta: normalised.include_meta,
         include_inactive: normalised.include_inactive,
@@ -235,7 +248,7 @@ export async function runSearch(
       "--search",
       query.text,
       "--limit",
-      String(normalised.limit),
+      String(fetch_limit),
       "--context-limit",
       String(normalised.context_limit),
     ];
@@ -277,6 +290,10 @@ export async function runSearch(
       );
     }
   }
+
+  // Filter after the session checks: an empty window still means "no matching
+  // text", which must stay distinguishable from "no such session".
+  hits = hits.filter((hit) => !TOOL_TRAFFIC.has(hit.message.content_type ?? "")).slice(0, normalised.limit);
 
   return {
     hits: hits.map((hit) => mapHit(hit, runtime.source_instance, normalised.project_path ?? null)),

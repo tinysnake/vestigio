@@ -2,6 +2,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isObeliskError } from "../../src/errors.js";
 import {
+  UUID_A2,
+  UUID_A3,
   argvLog,
   fakeSource,
   hitJson,
@@ -46,8 +48,27 @@ describe("search — fast path", () => {
     await fakeSource(home).search({ text: "zqleak", project_path: "/tmp/x_a" });
 
     expect(argvLog(log)).toEqual([
-      ["--search", "zqleak*", "--limit", "20", "--context-limit", "0", "--project-path", "/tmp/x_a"],
+      ["--search", "zqleak*", "--limit", "60", "--context-limit", "0", "--project-path", "/tmp/x_a"],
     ]);
+  });
+
+  it("drops a tool call's own output and still fills the caller's window", async () => {
+    // A memory_search output echoed into a later session matches the same words
+    // as the answer, so the window is overscanned and the tool rows are dropped.
+    const { home, log } = prepared();
+    setFakeEnv({
+      FAKE_OBELISK_ARGV_LOG: log,
+      FAKE_OBELISK_SEARCH: JSON.stringify([
+        hitJson({ message: { text: "memory_search(\"端口\") -> partial | 0 card(s)", extra: { content_type: "tool_result" } } }),
+        hitJson({ message: { uuid: UUID_A2, text: "the port is 8080" } }),
+        hitJson({ message: { uuid: UUID_A3, text: "echo", extra: { content_type: "tool_use" } } }),
+      ]),
+    });
+
+    const result = await fakeSource(home).search({ text: "端口", limit: 2 });
+
+    expect(result.hits.map((hit) => hit.text)).toEqual(["the port is 8080"]);
+    expect(argvLog(log)[0]![3]).toBe("6");
   });
 
   it("turns a multi-character term into a prefix match, because the index tokenizes with unicode61", async () => {
