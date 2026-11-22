@@ -66,6 +66,22 @@ describe("read", () => {
     expect(result.next_cursor).toBe("c2");
   });
 
+  it("keeps command output in a window but drops reasoning and the bare tool call", async () => {
+    const { home } = prepared();
+    const window_rows = [
+      messageJson({ uuid: UUID_A1, parent_uuid: null }),
+      messageJson({ uuid: UUID_A2, parent_uuid: UUID_A1, role: "assistant", extra: { content_type: "thinking" } }),
+      messageJson({ uuid: UUID_A3, parent_uuid: UUID_A2, role: "toolResult", extra: { content_type: "tool_result" }, text: "Host 10.0.0.125\n  User snake" }),
+      messageJson({ uuid: "m-4", parent_uuid: UUID_A3, role: "toolResult", extra: { content_type: "tool_use" }, text: "" }),
+    ];
+    setFakeEnv({ FAKE_OBELISK_QUERY: JSON.stringify(pageJson(window_rows)) });
+
+    const result = await fakeSource(home).read({ anchor: UUID_A1, relation: "timeline", before: 0, after: 3 });
+
+    expect(result.messages.map((row) => row.source_ref.message_id)).toEqual([UUID_A1, UUID_A3]);
+    expect(result.anchor.message_id).toBe(UUID_A1);
+  });
+
   it("reports a hidden, inactive or missing anchor as message_not_visible", async () => {
     const { home } = prepared();
     setFakeEnv({ FAKE_OBELISK_QUERY: JSON.stringify({ found: false }) });

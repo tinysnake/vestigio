@@ -14,6 +14,7 @@
  */
 
 import { obeliskError } from "./errors.js";
+import { isSearchNoise } from "./evidence.js";
 import {
   type CliHit,
   parseCliSearch,
@@ -58,13 +59,6 @@ const ALLOWED_KEYS = [
 ] as const;
 
 const SESSION_LOOKUP_LIMIT = 50;
-
-/**
- * Tool traffic is not knowledge. A `memory_search` output echoed into a later
- * session matches the same keywords as the answer and outranks it, so a hit
- * whose content type is a tool call or its result is dropped.
- */
-const TOOL_TRAFFIC = new Set(["tool_use", "tool_result"]);
 
 /** Extra rows requested so dropping tool traffic still fills the caller's window. */
 const OVERSCAN = 3;
@@ -293,7 +287,7 @@ export async function runSearch(
 
   // Filter after the session checks: an empty window still means "no matching
   // text", which must stay distinguishable from "no such session".
-  hits = hits.filter((hit) => !TOOL_TRAFFIC.has(hit.message.content_type ?? "")).slice(0, normalised.limit);
+  hits = hits.filter((hit) => !isSearchNoise(hit.message.content_type)).slice(0, normalised.limit);
 
   return {
     hits: hits.map((hit) => mapHit(hit, runtime.source_instance, normalised.project_path ?? null)),

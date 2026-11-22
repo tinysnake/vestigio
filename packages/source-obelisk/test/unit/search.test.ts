@@ -52,7 +52,7 @@ describe("search — fast path", () => {
     ]);
   });
 
-  it("drops a tool call's own output and still fills the caller's window", async () => {
+  it("drops a tool call's own output and a reasoning row, and still fills the caller's window", async () => {
     // A memory_search output echoed into a later session matches the same words
     // as the answer, so the window is overscanned and the tool rows are dropped.
     const { home, log } = prepared();
@@ -62,6 +62,7 @@ describe("search — fast path", () => {
         hitJson({ message: { text: "memory_search(\"端口\") -> partial | 0 card(s)", extra: { content_type: "tool_result" } } }),
         hitJson({ message: { uuid: UUID_A2, text: "the port is 8080" } }),
         hitJson({ message: { uuid: UUID_A3, text: "echo", extra: { content_type: "tool_use" } } }),
+        hitJson({ message: { uuid: "m-4", text: "Maybe the port lives in the env file", extra: { content_type: "thinking" } } }),
       ]),
     });
 

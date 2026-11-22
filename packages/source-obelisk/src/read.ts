@@ -16,6 +16,7 @@ import {
   DEFAULT_TIMEOUT_MS,
 } from "./pinned.js";
 import { obeliskError } from "./errors.js";
+import { isWindowNoise } from "./evidence.js";
 import {
   optionalBoolean,
   optionalInteger,
@@ -62,6 +63,7 @@ export type ReadMessage = {
   readonly role: string | null;
   readonly visibility: string;
   readonly is_meta: boolean;
+  readonly content_type: string | null;
   readonly unrecognised: readonly string[];
 };
 
@@ -185,6 +187,7 @@ export async function runRead(runtime: CliRuntime, options: unknown): Promise<Re
     role: message.role,
     visibility: message.visibility,
     is_meta: message.is_meta,
+    content_type: message.content_type,
     unrecognised: message.unrecognised,
   }));
 
@@ -198,7 +201,9 @@ export async function runRead(runtime: CliRuntime, options: unknown): Promise<Re
 
   return {
     anchor: messages[anchor_index]!.source_ref,
-    messages,
+    // Reasoning and the bare tool call stay out of evidence. `anchor` keeps
+    // naming the row the window was built around even when it is one of them.
+    messages: messages.filter((message) => !isWindowNoise(message.content_type)),
     session,
     has_more: page.has_more,
     next_cursor: page.next_cursor,
