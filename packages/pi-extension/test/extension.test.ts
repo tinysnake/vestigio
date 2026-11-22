@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiDaemon } from "../src/daemon-client.js";
-import vestigio, { STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
+import vestigio, { RECALL_INSTRUCTIONS, STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -87,6 +87,9 @@ describe("vestigio extension", () => {
 		};
 		expect(result.systemPrompt.startsWith("HOST PROMPT\n\n")).toBe(true);
 		expect(result.systemPrompt).toContain(STALE_MAINTENANCE_INSTRUCTIONS);
+		expect(result.systemPrompt).toContain(RECALL_INSTRUCTIONS);
+		expect(RECALL_INSTRUCTIONS).toContain("call `memory_search` once");
+		expect(RECALL_INSTRUCTIONS).toContain("only after both tools return nothing");
 	});
 
 	it("states the one repair path and the answer rule", () => {

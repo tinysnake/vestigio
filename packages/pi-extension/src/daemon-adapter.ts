@@ -198,11 +198,11 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			}
 		} });
 	}
-	tool("memory_search", "Look up project-specific conventions, settings, policies, or past decisions. Use it when the user asks how this project does something, including colloquial questions about our defaults or policies. Search with a few specific terms. If literal search is empty, a configured model checks rewritten and ranked partial matches against the current question.", searchParameters, "search", (params) => ({
+	tool("memory_search", "Search what you already know about this project and this machine: recorded memories plus, by default, the indexed past sessions. Use it before answering a recall question (a host, an account, a port, a config value, a past decision or fix) and before grepping files or session logs. If literal search is empty, a configured model checks rewritten and ranked partial matches against the current question.", searchParameters, "search", (params) => ({
 		op: "memory.search", ...params, question: currentInput?.text.trim().slice(0, 8192) || params.query,
 	}));
 	tool("memory_read", "Read a memory and its freshness evidence.", readParameters, "search", (params) => ({ op: "memory.read", ...params }));
-	tool("memory_resolve", "Resolve a question against layered memory and session evidence.", resolveParameters, "search", (params, context) => ({ op: "memory.resolve", context_handle: context.branch_ref, ...params }));
+	tool("memory_resolve", "Answer a recall question from the layered memory: recorded memories first, then the raw session history. Use it when one memory_search was not enough. Budgeted and model-backed.", resolveParameters, "search", (params, context) => ({ op: "memory.resolve", context_handle: context.branch_ref, ...params }));
 	tool("memory_request_status", "Read the status of a durable save request.", statusParameters, "search", (params) => ({ op: "request.status", ...params }));
 	tool("memory_request_write", "Queue a durable memory when the operator asks to save it. Provide their exact words or real entry IDs.", writeParameters, "maintenance", (params, context) => {
 		const directive = classifySaveDirective(currentInput?.text ?? "");

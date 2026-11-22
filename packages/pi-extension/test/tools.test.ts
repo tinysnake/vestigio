@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import type { Memory } from "@vestigio/core";
 import { openStore } from "@vestigio/core/storage";
+import type { HistoryPort } from "@vestigio/core/retrieval";
 import { afterEach, describe, expect, it } from "vitest";
 import { readConfig } from "../src/config.js";
 import { DecisionLog } from "../src/decision-log.js";
@@ -188,6 +189,28 @@ describe("memory_search", () => {
 		// A returned card counts as a hit; the medium body never appears.
 		expect(store.countUsageEvents()).toBe(1);
 		expect(text).not.toContain("18080");
+		store.close();
+	});
+
+	it("searches the indexed sessions unless the caller turns the layer off", async () => {
+		let searches = 0;
+		const history: HistoryPort = {
+			async probe() {
+				return { available: true, reason: null };
+			},
+			async search() {
+				searches += 1;
+				return { ok: true, value: { hits: [], evidence: "resolved", elapsed_ms: 1 } };
+			},
+			async readByAnchor() {
+				return { ok: false, status: "failed", reason: "not used by search" };
+			},
+		};
+		const { store, tools, ctx } = setup({ deps: { create_history: () => history } });
+		await tools.get("memory_search")!.execute("call-h1", { query: "部署 端口" }, undefined, undefined, ctx);
+		expect(searches).toBe(1);
+		await tools.get("memory_search")!.execute("call-h2", { query: "部署 端口", include_history: false }, undefined, undefined, ctx);
+		expect(searches).toBe(1);
 		store.close();
 	});
 

@@ -16,11 +16,10 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { ValidationError, splitMemoryUri } from "@vestigio/core";
 import type { Freshness, FreshnessBrief, MemoryUri, RetrievalResult, SourceRef, StaleEventSummary } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
-import { MAX_CARD_LIMIT, layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
+import { layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
 import type { ResolveOutcome, ModelPort, PersistenceOutcome } from "@vestigio/core/resolver";
 import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/resolver";
 import type { MemoryStore } from "@vestigio/core/storage";
@@ -30,78 +29,14 @@ import { hashQuery } from "./decision-log.js";
 import { publishRevision } from "./read-repair.js";
 import { stripInjectedNote } from "./stale-detector.js";
 import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
-
-const searchParameters = Type.Object({
-	query: Type.String({
-		description:
-			"Hotspot keywords or a short phrase to look up in the local memory store. Exact words work best.",
-	}),
-	include_archived: Type.Optional(
-		Type.Boolean({ description: "Also search archived memories (default false)." }),
-	),
-	include_history: Type.Optional(
-		Type.Boolean({
-			description:
-				"Also search the read-only session history layer. Requires the host to be configured with a history source.",
-		}),
-	),
-	limit: Type.Optional(
-		Type.Integer({
-			description: `Maximum number of memory cards (1-${MAX_CARD_LIMIT}, default 5).`,
-			minimum: 1,
-			maximum: MAX_CARD_LIMIT,
-		}),
-	),
-});
-
-const readParameters = Type.Object({
-	uri: Type.String({
-		description: "A memory URI of the form memory://<store-id>/<memory-id>, as returned by memory_search.",
-	}),
-	revision: Type.Optional(
-		Type.Integer({ description: "Read a specific revision instead of the current one.", minimum: 1 }),
-	),
-});
-
-const resolveParameters = Type.Object({
-	question: Type.String({
-		description:
-			"A question in natural language. The resolver gathers zero-LLM candidates, then asks the configured model to judge them, expand the query and descend through Active, Archived and the raw history layer.",
-	}),
-	include_history: Type.Optional(
-		Type.Boolean({
-			description:
-				"Search the read-only history layer when the stored memories are not sufficient (default true).",
-		}),
-	),
-});
-
-const markStaleParameters = Type.Object({
-	uri: Type.String({
-		description: "A memory URI of the form memory://<store-id>/<memory-id>, as returned by memory_search.",
-	}),
-	observed_revision: Type.Integer({
-		minimum: 1,
-		description: "The revision of the summary you actually read (the delivered revision).",
-	}),
-	reason: Type.String({
-		description: "One short sentence naming the change this summary has not absorbed yet.",
-	}),
-	excerpt: Type.String({
-		description:
-			"The later evidence text. It is bounded and stored next to the event so the warning survives even when history indexing lags.",
-	}),
-	source_message_ids: Type.Optional(Type.Array(Type.String(), {
-		description: "Optional real entry ids from the active branch. If omitted, excerpt must quote a user/tool message verbatim so the tool can locate it.",
-	})),
-});
+import { markStaleParameters, readParameters, resolveParameters, searchParameters } from "./tool-parameters.js";
 
 export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): void {
 	pi.registerTool({
 		name: "memory_search",
 		label: "Memory search",
 		description:
-			"Search the local Vestigio memory store for previously captured project memories. Returns bounded navigation cards (memory URI, title, short summary). Use memory_read for the full long summary.",
+			"Search what you already know about this project and this machine: recorded memories plus, by default, the indexed past sessions. Use it before answering a recall question (a host, an account, a port, a config value, a past decision or fix) and before grepping files or session logs. Returns bounded navigation cards (memory URI, title, short summary); use memory_read for the full summary.",
 		parameters: searchParameters,
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const store = state.ensureStore();
@@ -111,7 +46,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const projectId = state.projectId(ctx.cwd);
 			const inputId = `tool:${toolCallId}`;
 			const at = nowIso();
-			const wantHistory = params.include_history === true;
+			const wantHistory = params.include_history !== false;
 			const history = wantHistory ? await state.historyPort() : null;
 			const outcome = await layeredSearch({
 				store,
@@ -179,7 +114,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 		name: "memory_resolve",
 		label: "Memory resolve",
 		description:
-			"Budgeted, model-backed layered retrieval. Walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-660 character medium summary, returns that exact body with its URI and revision, and generates the short nav before the tool returns, so the memory is findable by memory_search immediately; if that nav step fails, the memory stays unsearchable until `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
+			"Answer a recall question from the layered memory: recorded memories first, then the raw session history. Use it when one memory_search was not enough. Budgeted and model-backed: walks Active then Archived then the raw session history, lets the configured model judge whether the evidence answers the question, and stops as soon as it does. When the answer rests on raw history it also writes one 500-660 character medium summary, returns that exact body with its URI and revision, and generates the short nav before the tool returns, so the memory is findable by memory_search immediately; if that nav step fails, the memory stays unsearchable until `vestigio jobs run`. It never edits files or widens the project scope. Costs a few model calls when the store alone is not enough.",
 		parameters: resolveParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const store = state.ensureStore();

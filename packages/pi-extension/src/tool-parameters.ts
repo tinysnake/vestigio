@@ -5,7 +5,7 @@ import { MAX_REQUEST_EVIDENCE, MAX_REQUEST_INTENT_CHARS } from "./request-consen
 export const searchParameters = Type.Object({
 	query: Type.String({
 		description:
-			"Hotspot keywords or a short phrase to look up in the local memory store. Exact words work best.",
+			"Keywords or a short phrase to look up, quoted from the user when possible. Exact words work best. Searches recorded memories and, by default, the indexed past sessions of this project.",
 	}),
 	include_archived: Type.Optional(
 		Type.Boolean({ description: "Also search archived memories (default false)." }),
@@ -13,7 +13,7 @@ export const searchParameters = Type.Object({
 	include_history: Type.Optional(
 		Type.Boolean({
 			description:
-				"Also search the read-only session history layer. Requires the host to be configured with a history source.",
+				"Search the read-only session-history layer (default true). Requires the host to be configured with a history source; without one the layer is skipped and the result says why.",
 		}),
 	),
 	limit: Type.Optional(
@@ -37,7 +37,7 @@ export const readParameters = Type.Object({
 export const resolveParameters = Type.Object({
 	question: Type.String({
 		description:
-			"A question in natural language. The resolver gathers zero-LLM candidates, then asks the configured model to judge them, expand the query and descend through Active, Archived and the raw history layer.",
+			"A recall question in natural language, including the details the user gave. Use this when one memory_search was not enough. The resolver gathers zero-LLM candidates, then asks the configured model to judge them, expand the query and descend through Active, Archived and the raw history layer.",
 	}),
 	include_history: Type.Optional(
 		Type.Boolean({
