@@ -199,7 +199,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 		} });
 	}
 	tool("memory_search", "Search what you already know about this project and this machine: recorded memories plus, by default, the indexed past sessions. Use it before answering a recall question (a host, an account, a port, a config value, a past decision or fix) and before grepping files or session logs. If literal search is empty, a configured model checks rewritten and ranked partial matches against the current question.", searchParameters, "search", (params) => ({
-		op: "memory.search", ...params, question: currentInput?.text.trim().slice(0, 8192) || params.query,
+		op: "memory.search", ...params, include_history: params.include_history !== false, question: currentInput?.text.trim().slice(0, 8192) || params.query,
 	}));
 	tool("memory_read", "Read a memory and its freshness evidence.", readParameters, "search", (params) => ({ op: "memory.read", ...params }));
 	tool("memory_resolve", "Answer a recall question from the layered memory: recorded memories first, then the raw session history. Use it when one memory_search was not enough. Budgeted and model-backed.", resolveParameters, "search", (params, context) => ({ op: "memory.resolve", context_handle: context.branch_ref, ...params }));
