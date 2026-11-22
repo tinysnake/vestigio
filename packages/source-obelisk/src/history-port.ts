@@ -105,6 +105,7 @@ export function createObeliskHistoryPort(options: ObeliskHistoryOptions): Histor
           relation: input.relation ?? "parents",
           before: input.before,
           after: input.after ?? 0,
+          ...(input.timeout_ms === undefined ? {} : { timeout_ms: input.timeout_ms }),
         });
         return {
           ok: true,

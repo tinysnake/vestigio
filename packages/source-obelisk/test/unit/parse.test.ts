@@ -90,6 +90,23 @@ describe("parseScriptPage", () => {
     expect(parseScriptPage({ found: false })).toEqual({ found: false });
   });
 
+  it("keeps a window row whose only content is a tool call", () => {
+    const toolCall = messageJson({ role: "assistant", extra: { content_type: "tool_use" } });
+    toolCall["text"] = null;
+    const parsed = parseScriptPage(pageJson([messageJson(), toolCall]));
+    if (!parsed.found) throw new Error("expected a page");
+    expect(parsed.messages.map((message) => message.text)).toEqual([
+      "zqleak alpha first user message",
+      "",
+    ]);
+  });
+
+  it("still rejects a window row whose text is neither a string nor null", () => {
+    const broken = messageJson();
+    broken["text"] = { blocks: [] };
+    expect(kindOf(() => parseScriptPage(pageJson([broken])))).toBe("protocol");
+  });
+
   it("keeps has_more and the cursor", () => {
     const parsed = parseScriptPage(pageJson([messageJson()], { has_more: true, next_cursor: "c1" }));
     expect(parsed.found).toBe(true);

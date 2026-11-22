@@ -90,9 +90,16 @@ function nullableStr(record: Record<string, unknown>, key: string, path: string)
   return value;
 }
 
-function textOf(record: Record<string, unknown>, key: string, path: string): string {
-  const value = record[key];
-  if (typeof value !== "string") fail(`${path}.${key}`, `expected a string, got ${typeof value}`);
+/**
+ * A window row with no flat text is still part of the conversation: an
+ * assistant turn that only called a tool reports `text: null`. Rejecting the
+ * row would fail the whole window over one tool call, so it contributes an
+ * empty text and the caller's own filtering decides what to keep.
+ */
+function messageText(record: Record<string, unknown>, path: string): string {
+  const value = record["text"];
+  if (value === null) return "";
+  if (typeof value !== "string") fail(`${path}.text`, `expected a string or null, got ${typeof value}`);
   return value;
 }
 
@@ -159,7 +166,7 @@ export function parseMessage(value: unknown, path: string): CliMessage {
     uuid: str(record, "uuid", path),
     session_id: nullableStr(record, "session_id", path),
     parent_uuid: nullableStr(record, "parent_uuid", path),
-    text: textOf(record, "text", path),
+    text: messageText(record, path),
     role: nullableStr(record, "role", path),
     timestamp: str(record, "timestamp", path),
     visibility: (record["visibility"] === undefined ? "visible" : str(record, "visibility", path)) as string,
