@@ -24,7 +24,7 @@ import type { HistoryHit, HistoryPort } from "../../src/retrieval/index.js";
 import type { ModelPort, ModelRequest, ModelResult, ResolveInput } from "../../src/resolver/index.js";
 import { resolveMemory } from "../../src/resolver/index.js";
 import type { MemoryStore } from "../../src/storage/index.js";
-import { PROJECT_A, PROJECT_B, historyHit, openTempStore, seedMemory } from "../retrieval/support.js";
+import { PROJECT_A, PROJECT_B, historyHit, makeHistoryPort, openTempStore, seedMemory } from "../retrieval/support.js";
 
 const stores: MemoryStore[] = [];
 
@@ -241,6 +241,7 @@ describe("memory.resolve: descent and sufficiency", () => {
 
   it("reports a walk that covered every layer as an evidence gap, not as a truncated budget", async () => {
     const store = newStore();
+    seedMemory(store, { memory_id: "mem-active" });
     const model = makeModel([], { text: judgeJson({ descend: true }) });
 
     const outcome = await resolve({ store, question: "nothing here", scope: projectA, model: model.port });
@@ -251,17 +252,33 @@ describe("memory.resolve: descent and sufficiency", () => {
     expect(outcome.result.missing).not.toContain("model_call_cap");
   });
 
-  it("reports an honest gap when nothing is found", async () => {
+  it("reports an honest gap without calling the model when the scope holds nothing", async () => {
     const store = newStore();
     const model = makeModel([{ text: judgeJson({}) }]);
 
     const outcome = await resolve({ store, question: "nothing here", scope: projectA, model: model.port });
 
+    expect(model.calls).toBe(0);
     expect(outcome.result.status).toBe("not_found");
     expect(outcome.result.cards).toEqual([]);
     expect(outcome.result.answer).toBeNull();
-    expect(outcome.result.missing).toContain("evidence_insufficient");
+    expect(outcome.result.missing).toContain("empty_scope");
     expect(outcome.result.missing).toContain("no_candidates_gathered");
+    expect(outcome.layers).toEqual([]);
+  });
+
+  it("still walks when raw history can answer without a stored memory", async () => {
+    const history = makeTimedHistoryPort(1, [historyHit("the raw decision was to keep port 8787")]);
+    const model = makeModel([], { text: judgeJson({ descend: true }) });
+
+    const outcome = await resolve({ store: newStore(), question: "deploy port", scope: projectA, model: model.port, history: history.port });
+
+    expect(history.searches).toBe(1);
+    expect(outcome.result.missing).not.toContain("empty_scope");
+    // The memory layers held no candidate to judge, so the only model call is
+    // the history layer's.
+    expect(model.calls).toBe(1);
+    expect(outcome.calls.map((call) => call.layer)).toEqual(["history"]);
   });
 
   it("does not call an empty store a candidate the judge rejected", async () => {
@@ -368,6 +385,7 @@ describe("memory.resolve: malformed structured output", () => {
 describe("memory.resolve: budgets", () => {
   it("stops before the first call when the input token ceiling cannot fit it", async () => {
     const store = newStore();
+    seedMemory(store, { memory_id: "mem-active" });
     const model = makeModel([{ text: judgeJson({}) }]);
 
     const outcome = await resolve({
@@ -575,9 +593,9 @@ describe("memory.resolve: deadline, cold allowance and cancellation", () => {
     const store = newStore();
     const hit = historyHit("the raw decision was to keep port 8787");
     const history = makeTimedHistoryPort(6000, [hit]);
+    // An empty scope goes straight to the history layer, so the first judge
+    // call is history's and it is the one that answers.
     const model = makeModel([
-      { text: judgeJson({ descend: true }) },
-      { text: judgeJson({ descend: true }) },
       {
         delay_ms: 80,
         text: judgeJson({ sufficient: true, answer: "History says 8787.", evidence_ids: [hit.source_ref.message_id] }),
@@ -598,13 +616,90 @@ describe("memory.resolve: deadline, cold allowance and cancellation", () => {
     expect(outcome.result.status).toBe("resolved");
   });
 
+  it("spends one read allowance on the first anchor, not once per query variant", async () => {
+    const store = newStore();
+    const hit = historyHit("zqleak alpha first user message");
+    const history = makeTimedHistoryPort(1, [hit]);
+    const model = makeModel([
+      {
+        text: judgeJson({
+          sufficient: false,
+          answer: null,
+          evidence_ids: [],
+          read_uris: [],
+          next_queries: ["zqleak beta", "zqleak gamma"],
+          conflicts: [],
+          descend: true,
+        }),
+      },
+      {
+        text: judgeJson({
+          sufficient: false,
+          answer: null,
+          evidence_ids: [],
+          read_uris: [],
+          next_queries: [],
+          conflicts: [],
+          descend: true,
+        }),
+      },
+    ]);
+
+    const outcome = await resolve({
+      store,
+      question: "zqleak alpha",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      budget: { max_history_reads: 1, warm_deadline_ms: 5000, cold_deadline_ms: 5000 },
+    });
+
+    // The anchor has two windows (parents, then the reply timeline); the second
+    // is refused rather than paid for again on the next variant.
+    expect(history.reads).toBe(1);
+    expect(outcome.result.missing).toContain("history:read_skipped:reads");
+  });
+
+  it("bounds a slow read with the timeout the allowance granted", async () => {
+    const store = newStore();
+    const hit = historyHit("zqleak slow read question");
+    const history = makeHistoryPort({ hits: [hit], read_delay_ms: 5000 });
+    const model = makeModel([
+      {
+        text: judgeJson({
+          sufficient: false,
+          answer: null,
+          evidence_ids: [],
+          read_uris: [],
+          next_queries: [],
+          conflicts: [],
+          descend: false,
+        }),
+      },
+    ]);
+
+    const started = performance.now();
+    const outcome = await resolve({
+      store,
+      question: "zqleak slow read",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      budget: { max_history_reads: 1, warm_deadline_ms: 3000, cold_deadline_ms: 3000 },
+    });
+    const elapsed = performance.now() - started;
+
+    // The port was told to give up before the warm deadline, so the read fails
+    // fast instead of holding the resolve until its own 5 s.
+    expect(outcome.result.missing).toContain("history:read_failed:test_timeout");
+    expect(elapsed).toBeLessThan(4500);
+  });
+
   it("surfaces the bounded history excerpts it gathered", async () => {
     const store = newStore();
     const hit = historyHit("the raw decision was to keep port 8787");
     const history = makeTimedHistoryPort(1, [hit]);
     const model = makeModel([
-      { text: judgeJson({ descend: true }) },
-      { text: judgeJson({ descend: true }) },
       {
         text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: [hit.source_ref.message_id] }),
       },
@@ -630,8 +725,6 @@ describe("memory.resolve: deadline, cold allowance and cancellation", () => {
     const hit = historyHit("warm history read");
     const history = makeTimedHistoryPort(1, [hit]);
     const model = makeModel([
-      { text: judgeJson({ descend: true }) },
-      { text: judgeJson({ descend: true }) },
       { delay_ms: 300, text: judgeJson({}) },
     ]);
 

@@ -295,5 +295,7 @@ export type ResolveBudgetOptions = {
   max_session_resolves: number;
   max_candidate_cards: number;
   max_query_variants: number;
+  /** Windows the history layer may read across one resolve, all variants included. */
+  max_history_reads: number;
   continuation_ttl_ms: number;
 };

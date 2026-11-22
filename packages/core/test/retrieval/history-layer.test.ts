@@ -255,6 +255,61 @@ describe("history layer: byte ceiling and the one bounded read", () => {
     expect(outcome.result.evidence.map((ref) => ref.message_id)).toEqual(["m-1", "h-1", "h-2", "h-0"]);
   });
 
+  it("refuses the read when the caller's allowance is spent and says which limit", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });
+    const top = hit("zqleak first message", "h-1");
+    const fake = makeHistoryPort({ hits: [top] });
+    const granted: string[] = [];
+
+    const outcome = await layeredSearch({
+      store,
+      query: "端口",
+      scope: projectA,
+      include_history: true,
+      include_history_read: true,
+      history: fake.port,
+      history_read_budget: {
+        take() {
+          granted.push("refused");
+          return { ok: false, reason: "deadline" };
+        },
+      },
+    });
+
+    expect(granted).toEqual(["refused"]);
+    expect(fake.calls.readByAnchor).toBe(0);
+    expect(outcome.result.missing).toContain("history:read_skipped:deadline");
+  });
+
+  it("gives the port the timeout the allowance granted", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });
+    const top = hit("zqleak first message", "h-1");
+    const fake = makeHistoryPort({ hits: [top] });
+    const timeouts: number[] = [];
+
+    await layeredSearch({
+      store,
+      query: "端口",
+      scope: projectA,
+      include_history: true,
+      include_history_read: true,
+      history: fake.port,
+      history_read_budget: {
+        take() {
+          if (timeouts.length >= 2) return { ok: false, reason: "reads" };
+          timeouts.push(1234);
+          return { ok: true, timeout_ms: 1234 };
+        },
+      },
+    });
+
+    // Both windows of the one anchor, each inside the granted ceiling.
+    expect(fake.calls.readByAnchor).toBe(2);
+    expect(fake.calls.last_read?.timeout_ms).toBe(1234);
+  });
+
   it("reads the reply that follows a user message instead of only its parents", async () => {
     const store = newStore();
     seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });

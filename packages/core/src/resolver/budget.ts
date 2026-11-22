@@ -9,6 +9,7 @@
  */
 
 import { retrievalError } from "../retrieval/errors.js";
+import type { HistoryReadBudget } from "../retrieval/types.js";
 import type { ResolveBudgetOptions } from "./types.js";
 
 /** Warm path: candidates, judgment, composition and (PR-07) writes. */
@@ -47,6 +48,22 @@ export const RESOLVE_MAX_SESSION_RESOLVES = 40;
 export const RESOLVE_MAX_CANDIDATE_CARDS = 10;
 /** Query variants the model may expand into for the next layer's lexical search. */
 export const RESOLVE_MAX_QUERY_VARIANTS = 3;
+/**
+ * History reads are the only stage whose cost is decided by an external process,
+ * and one measured window took 16 s against a 30 s warm deadline. A read may
+ * not spend the time the judgment and summary still need.
+ */
+export const RESOLVE_HISTORY_READ_RESERVE_MS = 8_000;
+/**
+ * Ceiling for one read. The Obelisk CLI kills its own script at 30 s, so a read
+ * that needs longer is already failing rather than slow.
+ */
+export const RESOLVE_HISTORY_READ_TIMEOUT_MS = 20_000;
+/**
+ * Windows one resolve may read, shared by all of its query variants: the
+ * parents chain and the reply timeline of the one anchor worth reading.
+ */
+export const RESOLVE_MAX_HISTORY_READS = 2;
 /** How long a returned continuation stays reusable. */
 export const RESOLVE_CONTINUATION_TTL_MS = 5 * 60_000;
 /** Same estimator PR-01/PR-04 use, so the token numbers compare. */
@@ -64,6 +81,7 @@ export const DEFAULT_RESOLVE_BUDGET: ResolveBudgetOptions = {
   max_session_resolves: RESOLVE_MAX_SESSION_RESOLVES,
   max_candidate_cards: RESOLVE_MAX_CANDIDATE_CARDS,
   max_query_variants: RESOLVE_MAX_QUERY_VARIANTS,
+  max_history_reads: RESOLVE_MAX_HISTORY_READS,
   continuation_ttl_ms: RESOLVE_CONTINUATION_TTL_MS,
 };
 
@@ -79,6 +97,7 @@ const CAPS: Record<keyof ResolveBudgetOptions, readonly [number, number]> = {
   max_session_resolves: [0, 100_000],
   max_candidate_cards: [1, 100],
   max_query_variants: [0, 10],
+  max_history_reads: [0, 10],
   continuation_ttl_ms: [0, 24 * 60 * 60_000],
 };
 
@@ -213,4 +232,29 @@ export class ResolveBudgetLedger {
     this.evidence_messages += messages;
     return true;
   }
+}
+
+/**
+ * Builds the read allowance a resolve hands to the history layer. Refusals are
+ * cheap and explicit: `reads` when the allowance is gone, `deadline` when the
+ * time left is under the reserve the judgment still needs.
+ */
+export function createHistoryReadBudget(input: {
+  remaining_ms: () => number;
+  max_reads: number;
+  reserve_ms?: number | undefined;
+  timeout_cap_ms?: number | undefined;
+}): HistoryReadBudget {
+  let reads = input.max_reads;
+  const reserve = input.reserve_ms ?? RESOLVE_HISTORY_READ_RESERVE_MS;
+  const cap = input.timeout_cap_ms ?? RESOLVE_HISTORY_READ_TIMEOUT_MS;
+  return {
+    take() {
+      if (reads <= 0) return { ok: false, reason: "reads" };
+      const timeout = Math.min(cap, Math.floor(input.remaining_ms() - reserve));
+      if (timeout < 1) return { ok: false, reason: "deadline" };
+      reads -= 1;
+      return { ok: true, timeout_ms: timeout };
+    },
+  };
 }

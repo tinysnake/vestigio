@@ -34,6 +34,7 @@ import {
   type Scope,
   type SourceRef,
 } from "../contracts/index.js";
+import type { HistoryReadBudget } from "./types.js";
 import type { MemoryStore, SearchHit } from "../storage/store.js";
 import { findConflictingMemoryIds } from "./conflict.js";
 import { retrievalError } from "./errors.js";
@@ -84,6 +85,11 @@ export type LayeredSearchInput = {
   include_history?: boolean | undefined;
   /** One extra bounded read-by-anchor on the top history hit. */
   include_history_read?: boolean | undefined;
+  /**
+   * Deadline and read allowance for the read stage. Absent means unbounded,
+   * which is what a plain search wants; a resolve passes its own.
+   */
+  history_read_budget?: HistoryReadBudget | undefined;
   history?: HistoryPort | undefined;
   history_limit?: number | undefined;
   history_excerpt_chars?: number | undefined;
@@ -239,6 +245,7 @@ async function runHistoryLayer(input: {
   include_read: boolean;
   read_before: number;
   read_after: number;
+  budget: HistoryReadBudget | undefined;
 }): Promise<HistoryRun> {
   const layer: LayerOutcome = {
     layer: "history",
@@ -383,12 +390,18 @@ async function runHistoryLayer(input: {
       windows.push({ relation: "timeline", before: 0, after: input.read_after });
     }
     for (const window of windows) {
+      const grant = input.budget?.take() ?? { ok: true as const, timeout_ms: null };
+      if (!grant.ok) {
+        missing.push(`history:read_skipped:${grant.reason}`);
+        break;
+      }
       try {
         const read = await input.port.readByAnchor({
           anchor: topAnchor,
           before: window.before,
           relation: window.relation,
           after: window.after,
+          ...(grant.timeout_ms === null ? {} : { timeout_ms: grant.timeout_ms }),
         });
         if (!read.ok) {
           missing.push(`history:read_${read.status}:${read.reason}`);
@@ -556,6 +569,7 @@ export async function layeredSearch(input: LayeredSearchInput): Promise<LayeredS
     include_read: input.include_history_read === true,
     read_before: DEFAULT_HISTORY_READ_BEFORE,
     read_after: DEFAULT_HISTORY_READ_AFTER,
+    budget: input.history_read_budget,
   });
 
   const cards = [...activeBuild.cards, ...archivedBuild.cards];

@@ -90,7 +90,19 @@ export type HistoryPort = {
     before: number;
     relation?: "parents" | "timeline" | undefined;
     after?: number | undefined;
+    /** Bounds this one source call; the caller spends its deadline here. */
+    timeout_ms?: number | undefined;
   }): Promise<HistoryResult<HistoryReadOutput>>;
+};
+
+/**
+ * The read allowance a caller with a deadline hands to the history layer. The
+ * resolver creates one per resolve, so every query variant draws from the same
+ * allowance and one slow source call cannot spend the time judgment needs.
+ */
+export type HistoryReadBudget = {
+  /** One read with the timeout to give it, or a refusal naming the limit. */
+  take(): { ok: true; timeout_ms: number } | { ok: false; reason: "deadline" | "reads" };
 };
 
 export type LayerName = "active" | "archived" | "history";

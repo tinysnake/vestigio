@@ -259,6 +259,9 @@ export async function searchWithRecovery(input: SearchRecoveryInput): Promise<Se
 
   if (input.offset !== undefined && input.offset !== 0) return skipped();
   if (strict.result.cards.length > 0 || strict.history.length > 0) return skipped();
+  // A rewrite can find a memory the literal query missed, but it cannot find
+  // one the store does not hold: on an empty scope the call is pure cost.
+  if (!input.store.hasMemories(scope)) return skipped();
   if (input.signal?.aborted === true) return skipped();
 
   const recoveryStarted = performance.now();

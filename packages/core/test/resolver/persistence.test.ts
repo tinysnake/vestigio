@@ -46,6 +46,14 @@ function oneHistoryHit(text = HISTORY_DECISION_TEXT): ReturnType<typeof historyH
   return historyHit(text);
 }
 
+/**
+ * An empty scope judges only the history layer, so the first judge call is the
+ * one that answers. A test that seeds a memory needs the layered script instead.
+ */
+function historyOnly(messageId: string) {
+  return judgeScript(messageId, { layers_before_history: 0 });
+}
+
 function countAccess(store: MemoryStore): number {
   const row = store.database().prepare("SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'access'").get();
   return typeof row?.["n"] === "number" ? row["n"] : 0;
@@ -65,7 +73,7 @@ describe("resolved history is written as one medium summary", () => {
   it("returns the stored body at a readable revision with a pending nav job", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const model = makeScriptedModel(judgeScript(hit.source_ref.message_id));
+    const model = makeScriptedModel(historyOnly(hit.source_ref.message_id));
 
     const outcome = await resolveWithHistory(store, hit, model);
     const result = outcome.result;
@@ -107,7 +115,7 @@ describe("resolved history is written as one medium summary", () => {
   it("stores a grounded question alias so a later search by that wording finds the memory", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const base = judgeScript(hit.source_ref.message_id);
+    const base = historyOnly(hit.source_ref.message_id);
     const model = makeScriptedModel((kind, index) =>
       kind === "summary"
         ? { text: JSON.stringify({ body: bodyOfLength(600, "e1"), aliases: ["容器", "镜像"] }) }
@@ -130,13 +138,13 @@ describe("resolved history is written as one medium summary", () => {
   it("reuses the same revision and makes no summary call on a repeat request", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const first = await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {
+    const first = await resolveWithHistory(store, hit, makeScriptedModel(historyOnly(hit.source_ref.message_id)), {
       request_id: "req-repeat",
     });
     const uri = first.result.memory_uri;
     if (uri === null) throw new Error("expected a saved memory");
 
-    const secondModel = makeScriptedModel(judgeScript(hit.source_ref.message_id));
+    const secondModel = makeScriptedModel(historyOnly(hit.source_ref.message_id));
     const second = await resolveWithHistory(store, hit, secondModel, { request_id: "req-repeat" });
 
     expect(secondModel.summary_calls).toBe(0);
@@ -153,7 +161,7 @@ describe("resolved history is written as one medium summary", () => {
   it("records one access for a retried delivery of the same request and a second for a new one", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {
+    await resolveWithHistory(store, hit, makeScriptedModel(historyOnly(hit.source_ref.message_id)), {
       request_id: "req-1",
     });
     const uri = store.listHeads()[0]?.uri;
@@ -161,12 +169,14 @@ describe("resolved history is written as one medium summary", () => {
 
     // The client saw no response and retried the identical request: the body
     // reaches it again, but the access was already recorded.
-    const retry = await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {
+    const retry = await resolveWithHistory(store, hit, makeScriptedModel(historyOnly(hit.source_ref.message_id)), {
       request_id: "req-1",
     });
     expect(retry.persistence?.delivery_recorded).toBe(false);
     expect(store.readMemory(uri, 1)?.access_count).toBe(1);
 
+    // The saved memory gives Active a layer to judge, so this resolve needs the
+    // layered script: descend through Active, then answer from history.
     const fresh = await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {
       request_id: "req-2",
     });
@@ -180,7 +190,7 @@ describe("resolved history is written as one medium summary", () => {
     const first = await resolveWithHistory(
       store,
       firstHit,
-      makeScriptedModel(judgeScript(firstHit.source_ref.message_id)),
+      makeScriptedModel(historyOnly(firstHit.source_ref.message_id)),
     );
     const uri = first.result.memory_uri;
     if (uri === null) throw new Error("expected a saved memory");
@@ -228,7 +238,7 @@ describe("the repeat path", () => {
   it("returns the stored answer, never the generated title", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const first = await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {
+    const first = await resolveWithHistory(store, hit, makeScriptedModel(historyOnly(hit.source_ref.message_id)), {
       request_id: "req-answer",
     });
 
@@ -249,7 +259,7 @@ describe("the repeat path", () => {
   it("ages out a question-keyed replay so a later re-ask searches again", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    await resolveWithHistory(store, hit, makeScriptedModel(judgeScript(hit.source_ref.message_id)), {});
+    await resolveWithHistory(store, hit, makeScriptedModel(historyOnly(hit.source_ref.message_id)), {});
     const savedAt = Date.now();
     const replayAt = (wall: number) =>
       replaySavedRequest({ store, scope: projectA, question: QUESTION, mono_now: () => 0, wall_now: () => wall });
@@ -302,7 +312,7 @@ describe("when the write must not happen", () => {
   it("refuses to summarize evidence shorter than the minimum body, and spends no call", async () => {
     const store = newStore();
     const hit = historyHit("决定保持端口 8787，回滚时恢复旧配置");
-    const model = makeScriptedModel(judgeScript(hit.source_ref.message_id));
+    const model = makeScriptedModel(historyOnly(hit.source_ref.message_id));
 
     const outcome = await resolveWithHistory(store, hit, model);
     expect(outcome.result.status).toBe("resolved");
@@ -317,7 +327,7 @@ describe("when the write must not happen", () => {
   it("rejects a body longer than the evidence it claims to summarize", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const judge = judgeScript(hit.source_ref.message_id);
+    const judge = historyOnly(hit.source_ref.message_id);
     const model = makeScriptedModel((kind, index) =>
       kind === "summary" ? { text: JSON.stringify({ body: bodyOfLength(1000, "e1") }) } : judge(kind, index),
     );
@@ -334,7 +344,7 @@ describe("when the write must not happen", () => {
   it("reports insufficient_evidence and saves nothing when the honest body is too short", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const judge = judgeScript(hit.source_ref.message_id);
+    const judge = historyOnly(hit.source_ref.message_id);
     const model = makeScriptedModel((kind, index) =>
       kind === "summary"
         ? { text: JSON.stringify({ body: bodyOfLength(499, "e1") }) }
@@ -356,10 +366,12 @@ describe("when the write must not happen", () => {
   it("reports budget_exhausted when the ledger has no summary slot", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const model = makeScriptedModel(judgeScript(hit.source_ref.message_id));
+    const model = makeScriptedModel(historyOnly(hit.source_ref.message_id));
 
     const outcome = await resolveWithHistory(store, hit, model, {
-      budget: { max_model_calls: 3, max_output_tokens: 90 },
+      // One judge call is all an empty scope spends, so the output ceiling that
+      // leaves no room for a summary must sit at its cost.
+      budget: { max_model_calls: 3, max_output_tokens: 1 },
     });
     expect(outcome.result.status).toBe("resolved");
     expect(outcome.result.persistence_status).toBe("budget_exhausted");
@@ -380,6 +392,7 @@ describe("when the write must not happen", () => {
       title: "另一段记忆",
       body: bodyWith("这段记忆与本次写入口径不同，保存时必须被拒绝。"),
     });
+    // The seeded memory gives Active a layer to judge before history.
     const model = makeScriptedModel(judgeScript(hit.source_ref.message_id));
 
     const outcome = await resolveWithHistory(store, hit, model);
@@ -396,7 +409,7 @@ describe("when the write must not happen", () => {
   it("reports a model failure as failed without a body or a row", async () => {
     const store = newStore();
     const hit = oneHistoryHit();
-    const model = makeScriptedModel(judgeScript(hit.source_ref.message_id), { fail_summary: true });
+    const model = makeScriptedModel(historyOnly(hit.source_ref.message_id), { fail_summary: true });
 
     const outcome = await resolveWithHistory(store, hit, model);
     expect(outcome.result.status).toBe("resolved");

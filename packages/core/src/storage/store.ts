@@ -523,6 +523,36 @@ export class MemoryStore {
     return this.searchIndex("archived", query, options);
   }
 
+  /**
+   * Whether any memory head exists in `scope`. An existence probe for a caller
+   * that must decide whether searching the scope can pay off at all; it never
+   * materializes the heads the way `listHeads` does.
+   */
+  hasMemories(scope?: Scope): boolean {
+    this.assertOpen();
+    const row =
+      scope === undefined
+        ? this.db.prepare("SELECT 1 AS present FROM memory_heads LIMIT 1").get()
+        : scope.kind === "global"
+          ? this.db
+              .prepare(
+                `SELECT 1 AS present FROM memories
+                   JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                                   AND memory_heads.revision = memories.revision
+                  WHERE memories.scope_kind = 'global' LIMIT 1`,
+              )
+              .get()
+          : this.db
+              .prepare(
+                `SELECT 1 AS present FROM memories
+                   JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                                   AND memory_heads.revision = memories.revision
+                  WHERE memories.scope_kind = 'project' AND memories.project_id = ? LIMIT 1`,
+              )
+              .get(scope.project_id);
+    return row !== undefined;
+  }
+
   countMemories(state?: MemoryState): number {
     this.assertOpen();
     const row =

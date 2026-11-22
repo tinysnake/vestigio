@@ -109,6 +109,8 @@ export type FakeHistoryOptions = {
   search_failure?: { status: "unavailable" | "failed"; reason: string };
   read_throws?: string;
   read_failure?: { status: "unavailable" | "failed"; reason: string };
+  /** Waits this long, or the timeout, whichever is shorter; then reports a timeout. */
+  read_delay_ms?: number;
 };
 
 export type FakeHistory = {
@@ -118,7 +120,13 @@ export type FakeHistory = {
     search: number;
     readByAnchor: number;
     last_search: { text: string; project_path: string; limit: number } | null;
-    last_read: { anchor: string; before: number; relation?: "parents" | "timeline" | undefined; after?: number | undefined } | null;
+    last_read: {
+      anchor: string;
+      before: number;
+      relation?: "parents" | "timeline" | undefined;
+      after?: number | undefined;
+      timeout_ms?: number | undefined;
+    } | null;
   };
 };
 
@@ -165,6 +173,13 @@ export function makeHistoryPort(options: FakeHistoryOptions = {}): FakeHistory {
       }
       if (options.read_failure !== undefined) {
         return { ok: false, status: options.read_failure.status, reason: options.read_failure.reason };
+      }
+      if (options.read_delay_ms !== undefined) {
+        const wait = Math.min(options.read_delay_ms, input.timeout_ms ?? options.read_delay_ms);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        if (input.timeout_ms !== undefined && input.timeout_ms < options.read_delay_ms) {
+          return { ok: false, status: "failed", reason: "test_timeout" };
+        }
       }
       const anchor = options.hits?.[0]?.source_ref ?? historyMessage("anchor").source_ref;
       return {

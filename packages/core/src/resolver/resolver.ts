@@ -53,8 +53,10 @@ import { retrievalError } from "../retrieval/errors.js";
 import { type MemoryStore } from "../storage/store.js";
 import {
   RESOLVE_COLD_REFRESH_THRESHOLD_MS,
+  RESOLVE_HISTORY_READ_RESERVE_MS,
   RESOLVE_TOKEN_ESTIMATE_BYTES_PER_TOKEN,
   ResolveBudgetLedger,
+  createHistoryReadBudget,
   readResolveBudget,
 } from "./budget.js";
 import {
@@ -338,6 +340,16 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     return limit - (mono() - started);
   };
 
+  // One allowance for the whole resolve: every query variant draws from it, so
+  // a slow source cannot be paid for three times with the same question.
+  const historyReads = createHistoryReadBudget({
+    remaining_ms: remaining,
+    max_reads: options.max_history_reads,
+    // A warm deadline shorter than the reserve still has to allow a short read,
+    // otherwise a test-sized deadline would forbid the stage it is testing.
+    reserve_ms: Math.min(RESOLVE_HISTORY_READ_RESERVE_MS, Math.floor(options.warm_deadline_ms / 4)),
+  });
+
   const measuringPort = (): HistoryPort | null => {
     const port = input.history;
     if (port === null || port === undefined) return null;
@@ -383,6 +395,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
         include_archived: archivedWanted,
         include_history: historyWanted,
         include_history_read: historyWanted,
+        history_read_budget: historyWanted ? historyReads : undefined,
         history: port ?? undefined,
         history_limit: HISTORY_HITS,
         history_excerpt_chars: HISTORY_EXCERPT_CHARS,
@@ -734,6 +747,14 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   if (controller.signal.aborted) {
     return finish(stopAssembly("cancelled", emptyBundle()), null, false);
   }
+  // An empty scope holds nothing to judge, rewrite or summarize. Walking it
+  // would spend the whole model budget to rediscover that, and the caller would
+  // read the capped budget as exhaustion rather than as an empty store. Raw
+  // history is the one layer that can answer without a stored memory.
+  const scopeHasMemories = input.store.hasMemories(scope);
+  if (!scopeHasMemories && !(input.history != null && scope.kind === "project")) {
+    return finish(stopAssembly("empty_scope", emptyBundle()), null, false);
+  }
 
   // ---- replay of an already-saved request -----------------------------------
   //
@@ -863,6 +884,14 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     if (remaining() <= 0) {
       stopReason = "deadline_exceeded";
       break;
+    }
+
+    // An empty scope has nothing for the memory layers to judge, so a judge
+    // call there can only spend the ledger. History is the layer that can still
+    // answer, and it is gathered on the next turn of this loop.
+    if (!scopeHasMemories && layer !== "history") {
+      layerIndex += 1;
+      continue;
     }
 
     let judged = await judgeLayer(layer, bundle);

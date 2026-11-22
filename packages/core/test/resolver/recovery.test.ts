@@ -4,7 +4,7 @@ import { layeredSearch } from "../../src/retrieval/index.js";
 import { searchWithRecovery } from "../../src/resolver/index.js";
 import type { MemoryStore } from "../../src/storage/index.js";
 import { bodyOfLength, makeScriptedModel } from "../extraction/support.js";
-import { PROJECT_A, makeHistoryPort, openTempStore, seedMemory } from "../retrieval/support.js";
+import { PROJECT_A, PROJECT_B, makeHistoryPort, openTempStore, seedMemory } from "../retrieval/support.js";
 
 const stores: MemoryStore[] = [];
 
@@ -71,8 +71,12 @@ describe("searchWithRecovery: an explicit strict miss", () => {
   });
 
   it("does not submit a failed model call as a zero-call recovery", async () => {
+    const store = newStore();
+    // A stored memory keeps the empty-scope short-circuit out of the way, so an
+    // attempted call is the only reason this can end without a model.
+    seedImageMemory(store);
     const outcome = await searchWithRecovery({
-      store: newStore(), query: QUESTION, question: QUESTION, scope: projectA,
+      store, query: QUESTION, question: QUESTION, scope: projectA,
       getModel: () => ({ complete: async () => { throw new Error("model unavailable"); } }),
     });
     expect(outcome.recovery).toMatchObject({ status: "unavailable", model_calls: 1, cost_usd: null });
@@ -444,6 +448,9 @@ describe("searchWithRecovery: fail closed", () => {
 
   it("stops without verification when neither the rewrite nor partial matching finds candidates", async () => {
     const store = newStore();
+    // An unrelated memory keeps the scope non-empty without giving the partial
+    // match a candidate, which is the case this test pins.
+    seedMemory(store, { memory_id: "mem-unrelated", title: "zqleak install notes", keywords: ["zqleak"], nav_text: "install notes only, no conclusion" });
     const model = makeScriptedModel(() => ({ text: rewriteJson() }));
     const outcome = await searchWithRecovery({
       store,
@@ -454,6 +461,46 @@ describe("searchWithRecovery: fail closed", () => {
     });
 
     expect(outcome.recovery).toMatchObject({ status: "not_found", model_calls: 1 });
+    expect(outcome.result.cards).toEqual([]);
+  });
+});
+
+describe("searchWithRecovery: an empty scope", () => {
+  it("skips the rewrite without calling the model", async () => {
+    const model = makeScriptedModel(() => {
+      throw new Error("the rewrite must not run on an empty store");
+    });
+    const outcome = await searchWithRecovery({
+      store: newStore(),
+      query: QUESTION,
+      question: QUESTION,
+      scope: projectA,
+      getModel: () => model.port,
+    });
+
+    expect(outcome.recovery).toMatchObject({ status: "skipped", model_calls: 0, cost_usd: null });
+    expect(model.judge_calls).toBe(0);
+    expect(outcome.result.status).toBe("not_found");
+  });
+
+  it("counts only the requested scope, so another project's memory does not pay for a rewrite", async () => {
+    const store = newStore();
+    seedMemory(store, {
+      memory_id: "mem-other-project",
+      scope: { kind: "project", project_id: PROJECT_B },
+      title: "镜像标签规则",
+      keywords: ["镜像标签"],
+    });
+    const model = makeScriptedModel(() => ({ text: rewriteJson(["镜像标签"]) }));
+    const outcome = await searchWithRecovery({
+      store,
+      query: QUESTION,
+      question: QUESTION,
+      scope: projectA,
+      getModel: () => model.port,
+    });
+
+    expect(model.judge_calls).toBe(0);
     expect(outcome.result.cards).toEqual([]);
   });
 });
