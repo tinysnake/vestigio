@@ -28,6 +28,21 @@ export type ResolvePublication = {
 const SEARCH_SNIPPET_LIMIT = 3;
 
 /**
+ * One compact ledger entry. The read stage adds excerpts that were never
+ * search candidates, so an emitted/candidate ratio can look inverted; name the
+ * two counts instead of printing a fraction it is not.
+ */
+export function layerSummary(layers: readonly { layer: string; status: string; candidates: number; emitted: number }[]): string {
+  return layers
+    .map((layer) => {
+      const hits = `${layer.candidates} hit(s)`;
+      const extra = layer.emitted > layer.candidates ? ` → ${layer.emitted} excerpt(s)` : "";
+      return `${layer.layer}=${layer.status}(${hits}${extra})`;
+    })
+    .join(" ");
+}
+
+/**
  * A short, readable pointer. Obelisk message ids already begin with their
  * session id, so printing both would repeat it twice on every line.
  */
@@ -129,9 +144,7 @@ export function renderSearch(
     const rest = outcome.history.length - shown.length;
     if (rest > 0) lines.push(`  … ${rest} more snippet(s); memory_resolve reads the full window`);
   }
-  lines.push(
-    `layers: ${outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`).join(" ")}`,
-  );
+  lines.push(`layers: ${layerSummary(outcome.layers)}`);
   if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);
   if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);
   if (result.next_action !== null) lines.push(`next: ${result.next_action}`);
@@ -153,9 +166,7 @@ export function renderResolve(
   lines.push(
     `memory_resolve(${JSON.stringify(question)}) -> ${result.status} | ${result.cards.length} card(s) | ${outcome.history.length} excerpt(s) | project=${projectId}`,
   );
-  lines.push(
-    `layers: ${outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`).join(" ")}`,
-  );
+  lines.push(`layers: ${layerSummary(outcome.layers)}`);
   lines.push(
     `budget: calls=${measured.model_calls} in=${measured.tokens_in} out=${measured.tokens_out} cost=${measured.cost_usd === null ? "n/a" : `$${measured.cost_usd.toFixed(6)}`} elapsed=${Math.round(measured.elapsed_ms)}ms gather=${Math.round(measured.gather_ms)}ms model=${Math.round(measured.model_ms)}ms${measured.cold ? " cold" : ""}`,
   );
