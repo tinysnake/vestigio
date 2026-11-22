@@ -212,7 +212,15 @@ function mergeLayers(target: Bundle, add: readonly LayerOutcome[]): void {
       continue;
     }
     const existing = target.layers[index] as LayerOutcome;
-    const incomingWins = LAYER_STATUS_RANK[incoming.status] > LAYER_STATUS_RANK[existing.status];
+    // `not_requested` is what a layer records when the caller did not ask for
+    // it, and every gather of another layer produces one. A later gather that
+    // did ask, and found the adapter missing, must replace it: the recorded
+    // reason is how a reader learns the layer was unavailable, not unasked.
+    const attemptedNow = incoming.reason !== null && incoming.reason !== "not_requested";
+    const attemptedBefore = existing.reason !== null && existing.reason !== "not_requested";
+    const incomingWins =
+      LAYER_STATUS_RANK[incoming.status] > LAYER_STATUS_RANK[existing.status] ||
+      (incoming.status === existing.status && attemptedNow && !attemptedBefore);
     target.layers[index] = {
       layer: incoming.layer,
       status: incomingWins ? incoming.status : existing.status,
@@ -380,7 +388,10 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   ): Promise<{ bundle: Bundle; coldRefresh: boolean }> {
     const bundle = emptyBundle();
     const port = measuringPort();
-    const historyWanted = layer === "history" && port !== null && scope.kind === "project";
+    // Asked for whenever the caller could have an adapter wired. The layered
+    // search reports `history_port_missing` when none is, which is the honest
+    // reason; passing false would record `not_requested` and hide the gap.
+    const historyWanted = layer === "history" && scope.kind === "project";
     const archivedWanted = layer !== "active";
     let coldRefresh = false;
     const list = queries.length === 0 ? [question] : [...queries];
@@ -855,6 +866,17 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   }
 
   /**
+   * Calls held back for raw history. History is the layer that can answer when
+   * the stored ones cannot, so the walk may not spend its last ledger call on
+   * an empty layer's guess and leave that layer unvisited.
+   */
+  function historyReserve(): number {
+    if (input.history === null || input.history === undefined) return 0;
+    if (scope.kind !== "project") return 0;
+    return bundle.gathered.has("history") ? 0 : 1;
+  }
+
+  /**
    * Re-gather the layer the judge just looked at, once, with the phrasings it
    * supplied. A re-gather costs a judge call by construction, so the deadline and
    * the model-call ledger stay the hard bound and this check runs before both the
@@ -869,6 +891,8 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     if (queryUsed.get(layer) === queryFingerprint(querySet)) return false;
     if (remaining() <= 0) return false;
     if (ledger.stopReason() !== null) return false;
+    // A re-ask costs a call and so does the history layer it descends into.
+    if (ledger.model_calls + 1 + historyReserve() > options.max_model_calls) return false;
     return true;
   }
 
@@ -890,6 +914,22 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     // call there can only spend the ledger. History is the layer that can still
     // answer, and it is gathered on the next turn of this loop.
     if (!scopeHasMemories && layer !== "history") {
+      layerIndex += 1;
+      continue;
+    }
+
+    // An empty layer can still earn its call: the judge's phrasings are a
+    // second, differently worded search, and a stored memory that the caller's
+    // words missed is often found by them. What it may not do is spend the call
+    // that raw history needs, so an empty layer is skipped when only the
+    // reserve is left.
+    const gathered_here = currentLayers.find((entry) => entry.layer === layer);
+    const empty_here = gathered_here !== undefined && gathered_here.candidates === 0;
+    if (empty_here && ledger.model_calls + 1 + historyReserve() > options.max_model_calls) {
+      if (layerIndex + 1 >= LAYER_ORDER.length) {
+        stopReason = judgedAny ? "evidence_insufficient" : "no_candidates";
+        break;
+      }
       layerIndex += 1;
       continue;
     }
@@ -1040,7 +1080,15 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       currentLayers = bundle.layers;
       continue;
     }
-    if (!lastDecision.descend || layerIndex + 1 >= LAYER_ORDER.length) {
+    if (layerIndex + 1 >= LAYER_ORDER.length) {
+      stopReason = "evidence_insufficient";
+      break;
+    }
+    // History is the fallback, not a layer the judge has to ask for. When the
+    // stored layers are a dead end and raw history can still answer, the walk
+    // goes there once rather than reporting a gap it never tried to close.
+    const history_pending = !bundle.gathered.has("history") && input.history != null && scope.kind === "project";
+    if (!lastDecision.descend && !history_pending) {
       stopReason = "evidence_insufficient";
       break;
     }

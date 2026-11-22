@@ -281,6 +281,74 @@ describe("memory.resolve: descent and sufficiency", () => {
     expect(outcome.calls.map((call) => call.layer)).toEqual(["history"]);
   });
 
+  it("reaches raw history when the judge stops descending at a stored layer", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const hit = historyHit("the raw decision was to keep port 8787");
+    const history = makeTimedHistoryPort(1, [hit]);
+    const model = makeModel([
+      { text: judgeJson({ descend: false }) },
+      { text: judgeJson({ descend: true }) },
+      { text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: [hit.source_ref.message_id] }) },
+    ]);
+
+    const outcome = await resolve({
+      store,
+      question: "端口",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      defer_persistence: true,
+    });
+
+    // The stored layer held a card the judge could not use. That used to end the
+    // walk and report a gap the history layer was never asked about.
+    expect(history.searches).toBe(1);
+    expect(outcome.calls.map((call) => call.layer)).toEqual(["active", "archived", "history"]);
+    expect(outcome.result.status).toBe("resolved");
+    expect(outcome.result.answer).toBe("8787");
+  });
+
+  it("keeps a ledger call for history instead of judging an empty archived layer", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const hit = historyHit("the raw decision was to keep port 8787");
+    const history = makeTimedHistoryPort(1, [hit]);
+    const model = makeModel([
+      { text: judgeJson({ descend: true, next_queries: ["部署", "并发"] }) },
+      { text: judgeJson({ descend: true }) },
+      { text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: [hit.source_ref.message_id] }) },
+    ]);
+
+    const outcome = await resolve({
+      store,
+      question: "端口",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      defer_persistence: true,
+    });
+
+    // Two calls are already spent on Active. Archived holds nothing, so its
+    // judge call would leave History unvisited under the three-call ceiling.
+    expect(outcome.calls.map((call) => call.layer)).toEqual(["active", "active", "history"]);
+    expect(model.calls).toBe(3);
+    expect(outcome.layers.find((layer) => layer.layer === "archived")?.candidates).toBe(0);
+    expect(outcome.result.status).toBe("resolved");
+  });
+
+  it("names the missing history adapter instead of reporting it as unrequested", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const model = makeModel([{ text: judgeJson({ descend: true }) }, { text: judgeJson({ descend: true }) }]);
+
+    const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
+
+    const historyLayer = outcome.layers.find((layer) => layer.layer === "history");
+    expect(historyLayer?.status).toBe("skipped");
+    expect(historyLayer?.reason).toBe("history_port_missing");
+  });
+
   it("does not call an empty store a candidate the judge rejected", async () => {
     const store = newStore();
     seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
