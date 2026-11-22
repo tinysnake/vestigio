@@ -18,6 +18,7 @@ import { JobStore } from "../../src/jobs.js";
 import { JobService, type Handler } from "../../src/service.js";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import type { ModelPort } from "@vestigio/core/resolver";
+import type { HistoryPort } from "@vestigio/core/retrieval";
 import type { Memory, MemoryId, MemoryUri, SourceRef } from "@vestigio/core";
 import {
   MEMORY_OPS,
@@ -99,12 +100,12 @@ function captureControl(): CapturedControl {
 
 async function harness(
 	run: (store: MemoryStore, handler: ReturnType<typeof createMemoryJobHandler>) => Promise<void>,
-	options: { model?: ModelPort | null } = {},
+	options: { model?: ModelPort | null; history?: HistoryPort | null } = {},
 ): Promise<void> {
 	const directory = await mkdtemp(join(tmpdir(), "vestigio-memory-"));
 	const path = join(directory, "memory.sqlite");
 	const store = openStore({ path });
-	const runtime = openMemoryRuntime(path, { store, model: options.model ?? null, history: null, project_id: PROJECT, env: {} });
+	const runtime = openMemoryRuntime(path, { store, model: options.model ?? null, history: options.history ?? null, project_id: PROJECT, env: {} });
 	try {
 		await run(store, createMemoryJobHandler(runtime));
 	} finally {
@@ -275,6 +276,49 @@ test("a search job hands its usage write to the maintenance slot and the parent 
 		store.close();
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test("a search prints the raw-history snippets it already fetched", async () => {
+	const history: HistoryPort = {
+		async probe() {
+			return { available: true, reason: null };
+		},
+		async search() {
+			return {
+				ok: true,
+				value: {
+					hits: [
+						{
+							source_ref: sourceRef({ session_id: "s-old", message_id: "m-old", content_hash: "hash-old" }),
+							text: "十周年的部署端口最后定成了 8080，验证方式是 curl 一次健康检查。",
+							timestamp: "2026-11-10T09:00:00Z",
+							role: "user",
+							evidence_complete: true,
+							project_resolved: true,
+						},
+					],
+					evidence: "resolved",
+					elapsed_ms: 1,
+				},
+			};
+		},
+		async readByAnchor() {
+			return { ok: false, status: "failed", reason: "not used by search" };
+		},
+	};
+	await harness(async (_store, handler) => {
+		const result = await call(handler, "search", {
+			op: "memory.search",
+			query: "部署 端口",
+			include_history: true,
+			session_id: "s-1",
+			input_id: "in-1",
+		});
+		// The layer already fetched and byte-capped this body. Printing it saves the
+		// second tool call the agent used to spend on memory_resolve.
+		expect(result.text).toContain("history snippets (1):");
+		expect(result.text).toContain("十周年的部署端口最后定成了 8080");
+	}, { history });
 });
 
 test("a resolve that matched no card does not defer an empty usage write", async () => {

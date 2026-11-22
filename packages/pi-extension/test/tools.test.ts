@@ -200,15 +200,45 @@ describe("memory_search", () => {
 			},
 			async search() {
 				searches += 1;
-				return { ok: true, value: { hits: [], evidence: "resolved", elapsed_ms: 1 } };
+				return {
+					ok: true,
+					value: {
+						hits: [
+							{
+								source_ref: {
+									provider: "pi",
+									source_instance: "local",
+									session_id: "s-1",
+									message_id: "m-1",
+									parent_message_id: null,
+									project_id: PROJECT,
+									timestamp: AT,
+									content_hash: "hash-1",
+									locator: null,
+								},
+								text: "十周年的部署端口最后定成了 8080，验证方式是 curl 一次健康检查。",
+								timestamp: AT,
+								role: "user",
+								evidence_complete: true,
+								project_resolved: true,
+							},
+						],
+						evidence: "resolved",
+						elapsed_ms: 1,
+					},
+				};
 			},
 			async readByAnchor() {
 				return { ok: false, status: "failed", reason: "not used by search" };
 			},
 		};
 		const { store, tools, ctx } = setup({ deps: { create_history: () => history } });
-		await tools.get("memory_search")!.execute("call-h1", { query: "部署 端口" }, undefined, undefined, ctx);
+		const rendered = await tools.get("memory_search")!.execute("call-h1", { query: "部署 端口" }, undefined, undefined, ctx);
 		expect(searches).toBe(1);
+		// The layer fetched the body; the tool text must carry it, or the agent has
+		// to spend a second call on memory_resolve to read what was already paid for.
+		expect(rendered.content[0]!.text).toContain("history snippets (1):");
+		expect(rendered.content[0]!.text).toContain("十周年的部署端口最后定成了 8080");
 		await tools.get("memory_search")!.execute("call-h2", { query: "部署 端口", include_history: false }, undefined, undefined, ctx);
 		expect(searches).toBe(1);
 		store.close();

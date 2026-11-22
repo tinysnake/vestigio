@@ -612,6 +612,19 @@ async function publishSavedResult(input: {
 	}
 }
 
+const SEARCH_SNIPPET_LIMIT = 3;
+
+/**
+ * A short, readable pointer. Obelisk message ids already begin with their
+ * session id, so printing both would repeat it twice on every line.
+ */
+function snippetRef(ref: { session_id: string; message_id: string }): string {
+	const prefix = `${ref.session_id}:`;
+	const suffix = ref.message_id.startsWith(prefix) ? ref.message_id.slice(prefix.length) : ref.message_id;
+	const short = suffix.length > 32 ? `${suffix.slice(0, 32)}…` : suffix;
+	return `${ref.session_id.slice(0, 24)}…/${short}`;
+}
+
 export function renderSearch(
 	query: string,
 	projectId: string,
@@ -638,6 +651,17 @@ export function renderSearch(
 		const marker = staleMarker(card.freshness);
 		if (marker !== null) lines.push(`   ${marker}`);
 	});
+	const shown = outcome.history.slice(0, SEARCH_SNIPPET_LIMIT);
+	if (shown.length > 0) {
+		lines.push(`history snippets (${outcome.history.length}):`);
+		for (const excerpt of shown) {
+			lines.push(
+				`  ${snippetRef(excerpt.source_ref)}: ${excerpt.excerpt}${excerpt.truncated ? " …" : ""}`,
+			);
+		}
+		const rest = outcome.history.length - shown.length;
+		if (rest > 0) lines.push(`  … ${rest} more snippet(s); memory_resolve reads the full window`);
+	}
 	lines.push(`layers: ${outcome.layers.map((layer) => `${layer.layer}=${layer.status}(${layer.emitted}/${layer.candidates})`).join(" ")}`);
 	if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);
 	if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);
