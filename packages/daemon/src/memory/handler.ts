@@ -78,7 +78,9 @@ async function schedule(
   for (const request of requests) {
     const kind = kindOfOp(request.op);
     if (control !== undefined) {
-      const child = await control.defer(kind, request.input, request.key === undefined ? {} : { key: request.key });
+      const options: { key?: string; mandatory?: boolean } = { mandatory: request.mandatory };
+      if (request.key !== undefined) options.key = request.key;
+      const child = await control.defer(kind, request.input, options);
       scheduled.push(deferredRef(request, "enqueued", child.jobId, kind));
       continue;
     }

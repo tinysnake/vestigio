@@ -104,7 +104,7 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
           input_id,
           hits: result.result.cards.map((card) => ({ memory_id: card.memory_id, revision: card.revision })),
         },
-        { inline: false, key: `usage.search_hits:${input_id}` },
+        { inline: false, mandatory: false, key: `usage.search_hits:${input_id}` },
       ),
     );
   }
@@ -169,7 +169,7 @@ function read(input: MemoryJobInput, ctx: OpContext): OpOutcome {
           memory_id: ids.memoryId,
           revision: memory_revision,
         },
-        { inline: false, key: `usage.memory_read:${input_id}` },
+        { inline: false, mandatory: false, key: `usage.memory_read:${input_id}` },
       ),
     );
   }
@@ -221,7 +221,10 @@ async function resolve(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome
   const deferred: DependencyRequest[] = [];
   const session_id = optionalString(input, "session_id");
   const input_id = optionalString(input, "input_id");
-  if (session_id !== undefined && input_id !== undefined) {
+  // A hit list is what the accounting child records: with no cards there is
+  // nothing to record, and `usage.search_hits` rejects an empty array. Deferring
+  // an empty list fails the child and, through it, the answer.
+  if (session_id !== undefined && input_id !== undefined && result.result.cards.length > 0) {
     deferred.push(
       dependency(
         "usage.search_hits",
@@ -231,7 +234,7 @@ async function resolve(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome
           input_id,
           hits: result.result.cards.map((card) => ({ memory_id: card.memory_id, revision: card.revision })),
         },
-        { inline: false, key: `usage.search_hits:${input_id}` },
+        { inline: false, mandatory: false, key: `usage.search_hits:${input_id}` },
       ),
     );
   }

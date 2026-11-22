@@ -100,7 +100,7 @@ export type MemoryJobHandler = (
  * can enqueue it or observe that it was not scheduled.
  */
 export type MemoryJobControl = {
-  defer(kind: Kind, input: MemoryJobInput, options?: { key?: string }): Promise<DeferredMemoryJob>;
+  defer(kind: Kind, input: MemoryJobInput, options?: { key?: string; mandatory?: boolean }): Promise<DeferredMemoryJob>;
 };
 
 export type DeferredStatus =
@@ -118,6 +118,8 @@ export type DeferredMemoryJob = {
   status: DeferredStatus;
   jobId: string | null;
   input: MemoryJobInput;
+  /** False when the parent's answer does not depend on this write succeeding. */
+  mandatory: boolean;
 };
 
 export type MemoryJobResult = {

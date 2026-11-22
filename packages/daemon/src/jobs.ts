@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS job_dependencies (
   parent_id TEXT NOT NULL REFERENCES jobs(job_id),
   child_id TEXT NOT NULL REFERENCES jobs(job_id),
   outcome_json TEXT,
+  mandatory INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (parent_id, child_id)
 );
 CREATE INDEX IF NOT EXISTS job_dependencies_child ON job_dependencies (child_id);
@@ -428,6 +429,7 @@ export class JobStore {
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(SCHEMA);
+    this.ensureMandatoryColumn();
   }
 
   /** Raw handle for a caller that needs its own read transaction. */
@@ -525,7 +527,11 @@ export class JobStore {
     return jobIdFor(parent.session_ref, `@child:${jobId}:${key}`);
   }
 
-  waitForChildren(job: Claim, outcome: FinishOutcome, children: readonly { key: string; kind: Kind; input: unknown }[]): boolean {
+  waitForChildren(
+    job: Claim,
+    outcome: FinishOutcome,
+    children: readonly { key: string; kind: Kind; input: unknown; mandatory?: boolean }[],
+  ): boolean {
     return this.transaction(() => {
       const at = this.now();
       const updated = this.db.prepare(`UPDATE jobs SET state = 'waiting', input_json = ?, attempt_id = NULL,
@@ -534,10 +540,23 @@ export class JobStore {
       if (!updated.changes) return false;
       for (const child of children) {
         const { jobId } = this.insertJob(job.session, `@child:${job.jobId}:${child.key}`, child.kind, child.input);
-        this.db.prepare("INSERT INTO job_dependencies(parent_id, child_id) VALUES (?, ?)").run(job.jobId, jobId);
+        this.db.prepare("INSERT INTO job_dependencies(parent_id, child_id, mandatory) VALUES (?, ?, ?)")
+          .run(job.jobId, jobId, child.mandatory === false ? 0 : 1);
       }
       return true;
     });
+  }
+
+  /**
+   * `mandatory` arrived after the first job schema, so a store that predates it
+   * needs the column added. The default keeps every edge it already holds
+   * required, which is exactly the old behavior; the column check makes this
+   * safe to run on every open.
+   */
+  private ensureMandatoryColumn(): void {
+    const columns = this.db.prepare("PRAGMA table_info(job_dependencies)").all();
+    if (columns.some((column) => asString(column, "name") === "mandatory")) return;
+    this.db.exec("ALTER TABLE job_dependencies ADD COLUMN mandatory INTEGER NOT NULL DEFAULT 1");
   }
 
   private advanceParent(childId: string, outcome: FinishOutcome, at: number): void {
@@ -545,13 +564,19 @@ export class JobStore {
     if (!edge) return;
     const parentId = asString(edge, "parent_id");
     this.db.prepare("UPDATE job_dependencies SET outcome_json = ? WHERE child_id = ?").run(canonicalJson(outcome), childId);
-    const dependencies = this.db.prepare("SELECT child_id, outcome_json FROM job_dependencies WHERE parent_id = ? ORDER BY rowid").all(parentId);
+    const dependencies = this.db.prepare("SELECT child_id, outcome_json, mandatory FROM job_dependencies WHERE parent_id = ? ORDER BY rowid").all(parentId);
     if (dependencies.some((item) => item.outcome_json === null)) return;
     const parent = this.readJobRow(parentId);
     if (!parent || parent.state !== "waiting") throw new Error("Missing waiting parent");
     const original = parseJson(parent.input_json) as FinishOutcome;
-    const children = dependencies.map((item) => ({ jobId: asString(item, "child_id"), ...parseJson(asString(item, "outcome_json")) as FinishOutcome }));
-    const failed = children.some((item) => item.status !== "succeeded");
+    const children = dependencies.map((item) => ({
+      jobId: asString(item, "child_id"),
+      ...parseJson(asString(item, "outcome_json")) as FinishOutcome,
+      mandatory: asInt(item, "mandatory") !== 0,
+    }));
+    // Only a required child decides the parent. An accounting edge that failed
+    // is reported in `children` but cannot invalidate an answer already built.
+    const failed = children.some((item) => item.mandatory && item.status !== "succeeded");
     const final: FinishOutcome = {
       status: failed ? "failed" : original.status,
       resultCode: failed ? "dependency_failed" : original.resultCode,

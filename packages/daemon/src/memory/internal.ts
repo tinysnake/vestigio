@@ -20,6 +20,12 @@ export type DependencyRequest = {
   op: MemoryOp;
   input: MemoryJobInput;
   inline: boolean;
+  /**
+   * False for a write whose failure cannot invalidate the answer the parent
+   * already produced, such as usage accounting. The child still runs and its
+   * failure is still reported, but the parent keeps its own outcome.
+   */
+  mandatory: boolean;
   key?: string | undefined;
 };
 
@@ -51,9 +57,9 @@ export function outcome(partial: Partial<OpOutcome> = {}): OpOutcome {
 export function dependency(
   op: MemoryOp,
   input: MemoryJobInput,
-  options: { inline: boolean; key?: string | undefined },
+  options: { inline: boolean; mandatory?: boolean; key?: string | undefined },
 ): DependencyRequest {
-  const request: DependencyRequest = { op, input, inline: options.inline };
+  const request: DependencyRequest = { op, input, inline: options.inline, mandatory: options.mandatory !== false };
   if (options.key !== undefined) request.key = options.key;
   return request;
 }
@@ -63,8 +69,24 @@ export function deferredRef(
   status: DeferredStatus,
   jobId: string | null,
   kind: Kind,
-): { key: string; kind: Kind; op: MemoryOp; status: DeferredStatus; jobId: string | null; input: MemoryJobInput } {
-  return { key: request.key ?? request.op, kind, op: request.op, status, jobId, input: request.input };
+): {
+  key: string;
+  kind: Kind;
+  op: MemoryOp;
+  status: DeferredStatus;
+  jobId: string | null;
+  input: MemoryJobInput;
+  mandatory: boolean;
+} {
+  return {
+    key: request.key ?? request.op,
+    kind,
+    op: request.op,
+    status,
+    jobId,
+    input: request.input,
+    mandatory: request.mandatory,
+  };
 }
 
 /** Validate a wire `SourceRef`; every anchor a stale event stores must be real. */

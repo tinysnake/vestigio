@@ -56,15 +56,16 @@ export class JobService {
 
 	private async execute(job: Job, controller: AbortController): Promise<void> {
 		let outcome: Parameters<JobStore["finish"]>[2];
-		const children = new Map<string, { key: string; kind: Kind; input: MemoryJobInput }>();
+		const children = new Map<string, { key: string; kind: Kind; input: MemoryJobInput; mandatory: boolean }>();
 		try {
 			const result = await this.handler(job, controller.signal, {
 				defer: async (kind, input, options) => {
 					controller.signal.throwIfAborted();
 					const key = options?.key ?? String(children.size);
 					if (children.has(key)) throw new Error(`Duplicate child key ${key}`);
-					children.set(key, { key, kind, input });
-					return { key, kind, op: input.op, status: "enqueued", jobId: this.store.childId(job.jobId, key), input };
+					const mandatory = options?.mandatory !== false;
+					children.set(key, { key, kind, input, mandatory });
+					return { key, kind, op: input.op, status: "enqueued", jobId: this.store.childId(job.jobId, key), input, mandatory };
 				},
 			});
 			outcome = { status: "succeeded", resultCode: "ok", result: result ?? null };

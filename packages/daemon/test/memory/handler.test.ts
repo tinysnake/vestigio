@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Kind } from "../../src/protocol.js";
 import { JobStore } from "../../src/jobs.js";
-import { JobService } from "../../src/service.js";
+import { JobService, type Handler } from "../../src/service.js";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import type { ModelPort } from "@vestigio/core/resolver";
 import type { Memory, MemoryId, MemoryUri, SourceRef } from "@vestigio/core";
@@ -90,6 +90,7 @@ function captureControl(): CapturedControl {
 				status: "enqueued",
 				jobId: `child-${calls.length}`,
 				input,
+				mandatory: options?.mandatory !== false,
 			} satisfies DeferredMemoryJob;
 		},
 	};
@@ -272,6 +273,62 @@ test("a search job hands its usage write to the maintenance slot and the parent 
 		jobs.close();
 		runtime.close();
 		store.close();
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("a resolve that matched no card does not defer an empty usage write", async () => {
+	await harness(async (store, handler) => {
+		seed(store);
+		const control = captureControl();
+		const result = await call(
+			handler,
+			"search",
+			{ op: "memory.resolve", question: "量子纠缠的退相干时间", session_id: "s-1", input_id: "in-9" },
+			control,
+		);
+		const body = result.result as { status: string; cards: unknown[] };
+		expect(body.cards).toEqual([]);
+		// `usage.search_hits` rejects an empty hit list, so a resolve with no card
+		// must not defer it: the child failure used to fail the whole answer.
+		expect(control.calls).toHaveLength(0);
+		expect(result.deferred).toEqual([]);
+	});
+});
+
+test("a failed accounting child no longer fails the answer its parent produced", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "vestigio-memory-"));
+	const jobs = new JobStore(join(directory, "jobs.sqlite"));
+	const handler: Handler = async (job, _signal, control) => {
+		if (job.kind === "maintenance") throw new Error("hits must be a non-empty array of at most 256 objects");
+		const mandatory = (job.input as { mandatory_child?: boolean }).mandatory_child === true;
+		await control?.defer(
+			"maintenance",
+			{ op: "usage.search_hits", session_id: "s-1", input_id: "in-1", hits: [] },
+			{ key: "usage", ...(mandatory ? {} : { mandatory: false }) },
+		);
+		return { op: "memory.search", kind: "search", result: { status: "not_found", cards: [] }, text: null, deferred: [], notes: [] };
+	};
+	const service = new JobService(jobs, handler);
+	try {
+		const optional = jobs.submit(SESSION, "req-optional", "search", { op: "memory.search", query: "x" });
+		const required = jobs.submit(SESSION, "req-required", "search", { op: "memory.search", query: "y", mandatory_child: true });
+		service.pump();
+		await expect.poll(() => jobs.get(optional.jobId)?.state, { timeout: 4_000 }).toBe("succeeded");
+		await expect.poll(() => jobs.get(required.jobId)?.state, { timeout: 4_000 }).toBe("failed");
+
+		const optionalRecord = jobs.get(optional.jobId) as { result: { children: Array<Record<string, unknown>> } };
+		expect(optionalRecord).toMatchObject({ visibility: "full", resultCode: "ok" });
+		expect(optionalRecord.result.children).toMatchObject([{ mandatory: false, status: "failed" }]);
+		// The child's reason survives beside the answer instead of replacing it.
+		expect(JSON.stringify(optionalRecord.result.children)).toContain("non-empty array");
+
+		const requiredRecord = jobs.get(required.jobId) as { result: { children: Array<Record<string, unknown>> } };
+		expect(requiredRecord).toMatchObject({ resultCode: "dependency_failed" });
+		expect(requiredRecord.result.children).toMatchObject([{ mandatory: true, status: "failed" }]);
+	} finally {
+		service.stop();
+		jobs.close();
 		await rm(directory, { recursive: true, force: true });
 	}
 });
