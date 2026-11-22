@@ -6,6 +6,31 @@ export function sessionOf(ctx: ExtensionContext): SessionKey {
 	return { source: "pi", sessionId: ctx.sessionManager.getSessionId() };
 }
 
+/**
+ * The text a failed call shows the agent. A dependency failure carries the
+ * parent's result code, while the reason lives in the child outcomes; naming
+ * them keeps the failure actionable instead of returning a bare code.
+ */
+export function failureMessage(result: unknown, resultCode: string): string {
+	if (typeof result !== "object" || result === null) return resultCode;
+	const record = result as Record<string, unknown>;
+	if ("error" in record) return String(record.error);
+	const children = Array.isArray(record.children) ? record.children : [];
+	const reasons: string[] = [];
+	for (const child of children) {
+		if (typeof child !== "object" || child === null) continue;
+		const entry = child as Record<string, unknown>;
+		if (entry.status === "succeeded") continue;
+		const inner = entry.result;
+		const detail =
+			typeof inner === "object" && inner !== null && "error" in inner
+				? String((inner as Record<string, unknown>).error)
+				: String(entry.resultCode ?? entry.status ?? "failed");
+		reasons.push(`${String(entry.jobId ?? "child")}: ${detail}`);
+	}
+	return reasons.length > 0 ? `${resultCode}: ${reasons.join("; ")}` : resultCode;
+}
+
 export class PiDaemon {
 	private readonly client: VestigioClient;
 	private subscription: AbortController | undefined;
@@ -88,8 +113,7 @@ export class PiDaemon {
 					}
 				}
 				if (job.state !== "succeeded") {
-					const message = typeof result === "object" && result !== null && "error" in result ? String(result.error) : String(job.resultCode);
-					throw new Error(message);
+					throw new Error(failureMessage(result, String(job.resultCode)));
 				}
 				if (result === undefined) throw new Error("The detailed job result has already been delivered");
 				return result;
