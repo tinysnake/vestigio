@@ -439,9 +439,9 @@ node --import ../pi/hook.mjs ./resolution.mjs   # 7 cases, writes out/resolution
 | case | asserts |
 | --- | --- |
 | `res-accept-first-gather` | an accepting judge resolves on the first gather and stops there |
-| `res-refuse-without-followup` | evidence judged insufficient with no `next_queries` stops after one call, `missing` = `evidence_insufficient` |
+| `res-refuse-without-followup` | evidence judged insufficient with no `next_queries` stops after one call, `missing` = `evidence_insufficient; judge_declined` |
 | `res-requery-recovers` | a refusal that names a rewrite term re-gathers, and the second judge call resolves |
-| `res-empty-gather-not-found` | every layer empty with a model present still spends one judge call, and `missing` carries both the verdict and `no_candidates_gathered` |
+| `res-empty-gather-not-found` | every layer empty with a model present still spends one judge call, and `missing` carries the verdict, `judge_declined` and `no_candidates_gathered` |
 | `res-zero-llm-no-candidates` | no model configured: zero calls, `missing` = `model_not_configured` |
 | `res-zero-llm-with-candidates` | same degradation with a candidate hit: status stays `partial` |
 | `res-malformed-judge` | an unparseable judge reply is retried once, then `missing` starts with `model_malformed_output` |
@@ -457,6 +457,16 @@ first so `missing[0]` (what the extension reports as `degraded_reason`) is
 unchanged and the agent sees `missing: evidence_insufficient;
 no_candidates_gathered` — which is the difference between "the index never
 reached this memory" and "the model would not accept what it read".
+
+A second pass split what that left: `evidence_insufficient` still covered both
+"the judge read the candidates and declined" and "the judge accepted and the
+resolver could not hand back the evidence it cited", and only the first is the
+model's decision. `stopAssembly` now takes a `detail` and appends one of
+`judge_declined` (the last verdict was a refusal and the walk had nowhere left
+to go) or `cited_evidence_unavailable` (a positive verdict whose cited ids
+produced no collectable evidence) right after the reason, so `missing[0]` keeps
+its meaning and a caller can tell the model's conservatism from a resolver side
+failure.
 
 Honest limit: because the judge is scripted, a case pins the resolver's own
 behaviour, not the model's. The re-query case is the clearest example — mutating

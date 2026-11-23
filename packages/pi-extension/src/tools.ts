@@ -751,8 +751,10 @@ export function renderResolve(
 				: `nav pending: ${publication.reason ?? "nav_not_published"} (not findable by memory_search yet)`,
 		);
 	}
-	if (result.answer !== null) lines.push(`answer: ${result.answer}`);
 	if (result.conflicts.length > 0) lines.push(`conflicts: ${result.conflicts.join("; ")}`);
+	if (result.answer !== null) {
+		lines.push(result.conflicts.length > 0 ? `answer (unresolved): ${result.answer}` : `answer: ${result.answer}`);
+	}
 	if (result.missing.length > 0) lines.push(`missing: ${result.missing.join("; ")}`);
 	if (result.next_action !== null) lines.push(`next: ${result.next_action}`);
 	if (historyNote !== null) lines.push(`history: skipped (${historyNote})`);

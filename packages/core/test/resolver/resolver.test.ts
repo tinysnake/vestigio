@@ -417,7 +417,30 @@ describe("memory.resolve: descent and sufficiency", () => {
     const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
 
     expect(outcome.result.missing).toContain("evidence_insufficient");
+    expect(outcome.result.missing).toContain("judge_declined");
     expect(outcome.result.missing).not.toContain("no_candidates_gathered");
+  });
+
+  it("does not blame the judge when no judge could accept anything", async () => {
+    const store = newStore();
+    const model = makeModel([{ text: judgeJson({}) }]);
+
+    const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
+
+    expect(outcome.result.status).toBe("not_found");
+    expect(outcome.result.missing).toContain("no_candidates_gathered");
+    expect(outcome.result.missing).not.toContain("judge_declined");
+  });
+
+  it("keeps the reason ahead of the refusal marker the degraded reason reads", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const model = makeModel([{ text: judgeJson({ descend: false }) }]);
+
+    const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
+
+    expect(outcome.result.missing[0]).toBe("evidence_insufficient");
+    expect(outcome.result.missing[1]).toBe("judge_declined");
   });
 
   it("keeps the caller's question when the model expands the query", async () => {
@@ -576,6 +599,8 @@ describe("memory.resolve: budgets", () => {
     expect(outcome.result.status).toBe("partial");
     expect(outcome.result.answer).toBeNull();
     expect(outcome.result.missing).toContain("evidence_insufficient");
+    expect(outcome.result.missing).toContain("cited_evidence_unavailable");
+    expect(outcome.result.missing).not.toContain("judge_declined");
     expect(outcome.measured.evidence_messages).toBe(0);
   });
 
@@ -606,7 +631,7 @@ describe("memory.resolve: insufficient evidence stays insufficient", () => {
     expect(outcome.result.cards.length).toBeGreaterThan(0);
   });
 
-  it("records a divergence as conflicted, not as a resolved answer", async () => {
+  it("records a divergence as conflicted and still carries the composed answer", async () => {
     const store = newStore();
     seedMemory(store, { memory_id: "mem-a", title: "port agreement", keywords: ["port"], nav_text: "port agreement says 8080" });
     seedMemory(store, { memory_id: "mem-b", title: "port agreement", keywords: ["port"], nav_text: "port agreement says 9090" });
@@ -624,7 +649,7 @@ describe("memory.resolve: insufficient evidence stays insufficient", () => {
     const outcome = await resolve({ store, question: "port agreement", scope: projectA, model: model.port });
 
     expect(outcome.result.status).toBe("conflicted");
-    expect(outcome.result.answer).toBeNull();
+    expect(outcome.result.answer).toBe("Ports differ.");
     expect(outcome.result.conflicts).toContain("8080 vs 9090");
   });
 
@@ -639,7 +664,7 @@ describe("memory.resolve: insufficient evidence stays insufficient", () => {
     const outcome = await resolve({ store, question: "端口", scope: projectA, model: model.port });
 
     expect(outcome.result.status).toBe("conflicted");
-    expect(outcome.result.answer).toBeNull();
+    expect(outcome.result.answer).toBe("默认端口是 8080。");
     expect(outcome.result.conflicts).toContain("mem-a");
     expect(outcome.result.conflicts).toContain("mem-b");
   });

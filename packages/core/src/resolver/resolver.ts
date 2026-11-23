@@ -715,12 +715,14 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     };
   }
 
-  function stopAssembly(reason: string, current: Bundle): Assembly {
+  function stopAssembly(reason: string, current: Bundle, detail: string | null = null): Assembly {
     const hasCandidates = current.cards.length > 0 || current.excerpts.length > 0;
     // A walk that never had a candidate is a different failure from one whose
     // candidates the judge rejected: the first says the index could not reach
     // the memory, the second says the model would not accept what it read.
     // `reason` alone reports the second for both, so record the first as well.
+    // `detail` narrows the second further and goes right after the reason so
+    // `missing[0]` keeps the meaning the degraded reason reads it for.
     const nothingGathered = !hasCandidates;
     const conflicts = current.missing
       .filter((entry) => entry.startsWith("conflict:"))
@@ -734,6 +736,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       evidence: status === "not_found" ? [] : current.sources,
       missing: [
         ...(reason.length === 0 ? [] : [reason]),
+        ...(detail === null ? [] : [detail]),
         ...(nothingGathered ? ["no_candidates_gathered"] : []),
         ...current.missing,
       ],
@@ -850,6 +853,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
 
   let querySet: string[] = [question];
   let stopReason = "";
+  let stopDetail: string | null = null;
   let lastDecision: JudgeDecision | null = null;
   let judgedAny = false;
   // Per-layer gather bookkeeping. `gathered` alone only remembers *that* a layer
@@ -907,6 +911,14 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     return true;
   }
 
+  // The judge's refusal is the gap this resolver can name from its own state:
+  // the last verdict says whether the model read the candidates and declined.
+  // A positive verdict whose evidence the resolver could not collect is a
+  // resolver side failure, and it reports its own marker instead.
+  function declineDetail(): string | null {
+    return lastDecision !== null && !lastDecision.sufficient ? "judge_declined" : null;
+  }
+
   while (layerIndex < LAYER_ORDER.length) {
     const layer = LAYER_ORDER[layerIndex] as LayerName;
     if (!bundle.gathered.has(layer)) await gatherLayer(layer);
@@ -939,6 +951,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     if (empty_here && ledger.model_calls + 1 + historyReserve() > options.max_model_calls) {
       if (layerIndex + 1 >= LAYER_ORDER.length) {
         stopReason = judgedAny ? "evidence_insufficient" : "no_candidates";
+        stopDetail = declineDetail();
         break;
       }
       layerIndex += 1;
@@ -964,13 +977,19 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       ];
       if (evidence.length === 0) {
         stopReason = "evidence_insufficient";
+        stopDetail = "cited_evidence_unavailable";
         break;
       }
       if (conflicts.length > 0) {
         currentLayers = bundle.layers;
+        // The judge composed this answer from the same evidence the conflicts
+        // cite, and dropping it left the caller with a contradiction and no
+        // content. It is still not a resolution, so the answer travels with
+        // the conflict list and the renderers mark it unresolved.
+        const text = lastDecision.answer?.trim() ?? "";
         const assembled = assemble({
           status: "conflicted",
-          answer: null,
+          answer: text.length > 0 ? text : null,
           cards: bundle.cards,
           evidence,
           missing: bundle.missing,
@@ -1093,6 +1112,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     }
     if (layerIndex + 1 >= LAYER_ORDER.length) {
       stopReason = "evidence_insufficient";
+      stopDetail = declineDetail();
       break;
     }
     // History is the fallback, not a layer the judge has to ask for. When the
@@ -1101,6 +1121,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     const history_pending = !bundle.gathered.has("history") && input.history != null && scope.kind === "project";
     if (!lastDecision.descend && !history_pending) {
       stopReason = "evidence_insufficient";
+      stopDetail = declineDetail();
       break;
     }
     if (ledger.stopReason() !== null) {
@@ -1111,8 +1132,16 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
   }
 
   if (stopReason.length === 0 && ledger.stopReason() !== null) stopReason = ledger.stopReason() ?? "model_call_cap";
-  if (stopReason.length === 0) stopReason = judgedAny ? "evidence_insufficient" : "no_candidates";
-  return finish(stopAssembly(stopReason, bundle), continuationFor(bundle, lastLayerOf(bundle)), false, bundle.excerpts);
+  if (stopReason.length === 0) {
+    stopReason = judgedAny ? "evidence_insufficient" : "no_candidates";
+    stopDetail = declineDetail();
+  }
+  return finish(
+    stopAssembly(stopReason, bundle, stopDetail),
+    continuationFor(bundle, lastLayerOf(bundle)),
+    false,
+    bundle.excerpts,
+  );
 
   function readBody(uri: string, current: Bundle): void {
     const card = current.cards.find((entry) => entry.uri === uri);

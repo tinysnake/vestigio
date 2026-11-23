@@ -429,4 +429,28 @@ describe("memory_resolve", () => {
 		expect(store.countUsageEvents()).toBe(1);
 		store.close();
 	});
+
+	it("keeps the composed answer but marks it unresolved when the candidates diverge", async () => {
+		const model = fakeModel([
+			decision({
+				sufficient: true,
+				answer: "端口是 18080，但记忆里还写着 8080。",
+				evidence_ids: ["mem-deploy"],
+				conflicts: ["8080 vs 18080"],
+			}),
+		]);
+		const { store, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-r4", { question: "部署 端口" }, undefined, undefined, ctx);
+		const text = result.content[0]!.text;
+		expect(result.details.status).toBe("conflicted");
+		expect(text).toContain("conflicts: 8080 vs 18080");
+		expect(text).toContain("answer (unresolved): 端口是 18080，但记忆里还写着 8080。");
+		expect(store.countUsageEvents()).toBe(1);
+		store.close();
+	});
 });

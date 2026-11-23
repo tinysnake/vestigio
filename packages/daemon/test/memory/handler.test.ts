@@ -340,6 +340,48 @@ test("a resolve that matched no card does not defer an empty usage write", async
 	});
 });
 
+test("a conflicted resolve still prints the answer the judge composed", async () => {
+	const model: ModelPort = {
+		complete: async () => ({
+			ok: true,
+			value: {
+				text: JSON.stringify({
+					sufficient: true,
+					answer: "端口是 18080，但记忆里还写着 8080。",
+					evidence_ids: ["mem-1"],
+					read_uris: [],
+					next_queries: [],
+					conflicts: ["8080 vs 18080"],
+					descend: false,
+				}),
+				usage: { tokens_in: 12, tokens_out: 8, cost_usd: null },
+				model: "fake",
+				finish_reason: "stop",
+			},
+		}),
+	};
+	await harness(
+		async (store, handler) => {
+			seed(store);
+			const result = await call(handler, "search", {
+				op: "memory.resolve",
+				project_id: PROJECT,
+				question: "部署 端口",
+				session_id: "s-1",
+				input_id: "in-10",
+			});
+			const body = result.result as { status: string; answer?: string | null };
+			expect(body.status).toBe("conflicted");
+			expect(body.answer).toBeUndefined();
+			// The daemon payload carries no answer field; the rendered text is the
+			// surface the extension and the CLI show, and it keeps the body.
+			expect(result.text).toContain("conflicts: 8080 vs 18080");
+			expect(result.text).toContain("answer (unresolved): 端口是 18080，但记忆里还写着 8080。");
+		},
+		{ model },
+	);
+});
+
 test("a failed accounting child no longer fails the answer its parent produced", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "vestigio-memory-"));
 	const jobs = new JobStore(join(directory, "jobs.sqlite"));

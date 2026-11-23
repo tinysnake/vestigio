@@ -107,9 +107,9 @@ const CASES = [
 		replies: [refuse()],
 		expected_status: "partial",
 		expected_judge_calls: 1,
-		expected_missing: ["evidence_insufficient"],
-		forbidden_missing: ["no_candidates_gathered"],
-		note: "裁判判证据不足又没给 next_queries，走一次裁判就停，不重复 gather；候选不空，因此不该出现 no_candidates_gathered",
+		expected_missing: ["evidence_insufficient", "judge_declined"],
+		forbidden_missing: ["no_candidates_gathered", "cited_evidence_unavailable"],
+		note: "裁判判证据不足又没给 next_queries，走一次裁判就停，不重复 gather；候选不空，因此不该出现 no_candidates_gathered；missing 在结论后紧跟 judge_declined，把「模型不肯下结论」和「检索没拿到证据」分开",
 		max_judge_calls: 1,
 	},
 	{
@@ -128,8 +128,8 @@ const CASES = [
 		replies: [refuse()],
 		expected_status: "not_found",
 		expected_judge_calls: 1,
-		expected_missing: ["evidence_insufficient", "no_candidates_gathered"],
-		note: "所有层都空时仍会调用裁判一次：missing 先记裁判的结论，再记 no_candidates_gathered，后者让「库里没有」和「库里有但没匹配上」可以分开",
+		expected_missing: ["evidence_insufficient", "judge_declined", "no_candidates_gathered"],
+		note: "所有层都空时仍会调用裁判一次：missing 先记裁判的结论，再记 judge_declined 和 no_candidates_gathered，后者让「库里没有」和「库里有但没匹配上」可以分开",
 		max_judge_calls: 1,
 	},
 	{
