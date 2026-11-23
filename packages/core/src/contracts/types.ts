@@ -26,6 +26,13 @@ export type Scope =
       project_id: string;
       /** Read-side aliases: sibling worktree ids of the same repository. Never persisted. */
       project_ids?: readonly string[];
+      /**
+       * Read-side directory the history source indexed this session under. The
+       * store scopes by `project_id`, but the history index records the
+       * directory a session actually ran in, which differs inside a worktree.
+       * Never persisted.
+       */
+      history_path?: string;
     }
   | { kind: "global" };
 

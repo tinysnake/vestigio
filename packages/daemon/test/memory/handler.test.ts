@@ -321,6 +321,53 @@ test("a search prints the raw-history snippets it already fetched", async () => 
 	}, { history });
 });
 
+test("a search asks the index for the session path and scopes cards by the project id", async () => {
+	let requested: { text: string; project_path: string; limit: number } | null = null;
+	const history: HistoryPort = {
+		async probe() {
+			return { available: true, reason: null };
+		},
+		async search(input) {
+			requested = input;
+			return {
+				ok: true,
+				value: {
+					hits: [
+						{
+							source_ref: sourceRef({ session_id: "s-wt", message_id: "m-wt", content_hash: "hash-wt" }),
+							text: "worktree 里的部署端口是 8080。",
+							timestamp: "2026-11-10T09:00:00Z",
+							role: "user",
+							evidence_complete: true,
+							project_resolved: true,
+						},
+					],
+					evidence: "resolved",
+					elapsed_ms: 1,
+				},
+			};
+		},
+		async readByAnchor() {
+			return { ok: false, status: "failed", reason: "not used by search" };
+		},
+	};
+	await harness(async (_store, handler) => {
+		const result = await call(handler, "search", {
+			op: "memory.search",
+			project_id: PROJECT,
+			project_path: "/worktrees/vestigio-wt",
+			query: "部署 端口",
+			include_history: true,
+			session_id: "s-1",
+			input_id: "in-1",
+		});
+		// The index keys sessions by the directory the agent ran in, while the card
+		// scope stays the repository root. A hit sourced at the root still passes.
+		expect(result.text).toContain("worktree 里的部署端口是 8080");
+	}, { history });
+	expect(requested).toEqual({ text: "部署 端口", project_path: "/worktrees/vestigio-wt", limit: 3 });
+});
+
 test("a resolve that matched no card does not defer an empty usage write", async () => {
 	await harness(async (store, handler) => {
 		seed(store);

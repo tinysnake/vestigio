@@ -63,6 +63,15 @@ function invalid(message: string): never {
   throw new ValidationError("memory", "invalid_type", message);
 }
 
+/**
+ * The directory the history index recorded for this session. A worktree session
+ * scopes memories by the repository root, but the index records the directory
+ * the session ran in, so only the history query uses this value.
+ */
+function historyPath(input: Record<string, unknown>, project_id: string): string {
+  return optionalString(input, "project_path", 4096) ?? project_id;
+}
+
 async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome> {
   const project_id = projectOf(input, ctx);
   const query = requireString(input, "query", 4096);
@@ -75,7 +84,10 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
   const options: LayeredSearchInput = {
     store: ctx.runtime.store,
     query,
-    scope: withProjectAliases({ kind: "project", project_id }, ctx.runtime.store.listProjectIds()),
+    scope: withProjectAliases(
+      { kind: "project", project_id, history_path: historyPath(input, project_id) },
+      ctx.runtime.store.listProjectIds(),
+    ),
     include_history: history !== null,
     ...(history === null ? {} : { history }),
     ...(limit === undefined ? {} : { limit }),
@@ -204,7 +216,10 @@ async function resolve(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome
   const result = await resolveMemory({
     store: ctx.runtime.store,
     question,
-    scope: withProjectAliases({ kind: "project", project_id }, ctx.runtime.store.listProjectIds()),
+    scope: withProjectAliases(
+      { kind: "project", project_id, history_path: historyPath(input, project_id) },
+      ctx.runtime.store.listProjectIds(),
+    ),
     model,
     history,
     signal: ctx.signal,

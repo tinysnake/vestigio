@@ -27,6 +27,7 @@ function capture(ctx: ExtensionContext, config: VestigioConfig) {
 		session_id: sessionOf(ctx).sessionId,
 		session_file: session.getSessionFile() ?? null,
 		project_id: resolveProjectId(config.project_id ?? ctx.cwd),
+		project_path: config.project_id ?? ctx.cwd,
 		branch_ref: entries[0]?.id ?? "root",
 		leaf: entries.at(-1)?.id ?? "root",
 	};
@@ -163,7 +164,8 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 				const payload = makeInput(params, context);
 				const inputId = currentInput?.id;
 				const result = await daemon.run(ctx, kind, `tool:${toolCallId}`, {
-					project_id: context.project_id, session_id: context.session_id, input_id: inputId, ...payload,
+					project_id: context.project_id, project_path: context.project_path,
+					session_id: context.session_id, input_id: inputId, ...payload,
 				}, signal) as Result;
 				const uri = typeof payload.uri === "string" ? splitMemoryUri(payload.uri) : null;
 				if (uri?.memoryId) seen.add(uri.memoryId);

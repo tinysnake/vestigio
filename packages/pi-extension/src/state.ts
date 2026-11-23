@@ -149,6 +149,15 @@ export class VestigioState {
 		return resolveProjectId(this.config.project_id ?? cwd);
 	}
 
+	/**
+	 * The directory the history source indexed this session under. Memories scope
+	 * by the repository root, but the history index records the directory a
+	 * session actually ran in, and an explicit project id names that directory.
+	 */
+	historyPath(cwd: string): string {
+		return this.config.project_id ?? cwd;
+	}
+
 	get sessionManagerRef(): SessionLike | null {
 		return this.sessionManager;
 	}

@@ -8,7 +8,8 @@
  * except the host's registration surface.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
@@ -46,6 +47,34 @@ function makeStore() {
 	const path = join(dir, "store.sqlite");
 	cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 	return { path, store: openStore({ path }) };
+}
+
+/**
+ * A linked git worktree, so the session directory differs from the repository
+ * root that scopes the cards.
+ */
+function makeWorktreeSession(): string {
+	const parent = mkdtempSync(join(tmpdir(), "vestigio-worktree-"));
+	cleanups.push(() => rmSync(parent, { recursive: true, force: true }));
+	const repo = join(parent, "repo");
+	const worktree = join(parent, "worktree");
+	const git = (cwd: string, ...args: string[]) =>
+		execFileSync("git", ["-C", cwd, ...args], {
+			stdio: "ignore",
+			env: {
+				...process.env,
+				GIT_AUTHOR_NAME: "vestigio-test",
+				GIT_AUTHOR_EMAIL: "test@vestigio.invalid",
+				GIT_COMMITTER_NAME: "vestigio-test",
+				GIT_COMMITTER_EMAIL: "test@vestigio.invalid",
+			},
+		});
+	execFileSync("git", ["init", "-q", repo], { stdio: "ignore" });
+	writeFileSync(join(repo, "README.md"), "seed\n");
+	git(repo, "add", ".");
+	git(repo, "commit", "-qm", "init");
+	git(repo, "worktree", "add", "-q", worktree);
+	return worktree;
 }
 
 function body(prefix: string): string {
@@ -194,12 +223,14 @@ describe("memory_search", () => {
 
 	it("searches the indexed sessions unless the caller turns the layer off", async () => {
 		let searches = 0;
+		const requested: { text: string; project_path: string; limit: number }[] = [];
 		const history: HistoryPort = {
 			async probe() {
 				return { available: true, reason: null };
 			},
-			async search() {
+			async search(input) {
 				searches += 1;
+				requested.push(input);
 				return {
 					ok: true,
 					value: {
@@ -235,12 +266,39 @@ describe("memory_search", () => {
 		const { store, tools, ctx } = setup({ deps: { create_history: () => history } });
 		const rendered = await tools.get("memory_search")!.execute("call-h1", { query: "部署 端口" }, undefined, undefined, ctx);
 		expect(searches).toBe(1);
+		// An explicit project id is also the path the index was told about.
+		expect(requested[0]?.project_path).toBe(PROJECT);
 		// The layer fetched the body; the tool text must carry it, or the agent has
 		// to spend a second call on memory_resolve to read what was already paid for.
 		expect(rendered.content[0]!.text).toContain("history snippets (1):");
 		expect(rendered.content[0]!.text).toContain("十周年的部署端口最后定成了 8080");
 		await tools.get("memory_search")!.execute("call-h2", { query: "部署 端口", include_history: false }, undefined, undefined, ctx);
 		expect(searches).toBe(1);
+		store.close();
+	});
+
+	it("asks the index for the session directory when no project id is set", async () => {
+		const requested: { text: string; project_path: string; limit: number }[] = [];
+		const history: HistoryPort = {
+			async probe() {
+				return { available: true, reason: null };
+			},
+			async search(input) {
+				requested.push(input);
+				return { ok: true, value: { hits: [], evidence: "resolved", elapsed_ms: 1 } };
+			},
+			async readByAnchor() {
+				return { ok: false, status: "failed", reason: "not used by search" };
+			},
+		};
+		const { store, tools } = setup({ env: { VESTIGIO_PROJECT_ID: undefined }, deps: { create_history: () => history } });
+		const session = makeWorktreeSession();
+		const rendered = await tools.get("memory_search")!.execute("call-h3", { query: "部署 端口" }, undefined, undefined, { cwd: session });
+		// Cards scope by the repository root, but the index records the directory the
+		// session ran in, so the layer must query that directory, not the root.
+		expect(requested[0]?.project_path).toBe(session);
+		expect(requested[0]?.project_path).not.toBe(PROJECT);
+		expect(rendered.content[0]!.text).toContain("(no matching memory)");
 		store.close();
 	});
 

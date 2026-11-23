@@ -311,7 +311,7 @@ function requireScope(parsed: ParsedArgs): Scope {
     if (project.length > 1 && project.endsWith(sep)) {
       throw new UsageError("--project must not end with a path separator");
     }
-    return { kind: "project", project_id: resolveProjectId(project) };
+    return { kind: "project", project_id: resolveProjectId(project), history_path: project };
   }
   if (global) {
     return { kind: "global" };

@@ -279,6 +279,9 @@ async function runHistoryLayer(input: {
     return done(false);
   }
   const projectPath = input.scope.project_id;
+  // A worktree session scopes its memories by the repository root, while the
+  // history index records the directory the session actually ran in.
+  const historyPath = input.scope.history_path ?? projectPath;
 
   try {
     const probe = await input.port.probe();
@@ -341,7 +344,7 @@ async function runHistoryLayer(input: {
   try {
     const found = await input.port.search({
       text: input.query,
-      project_path: projectPath,
+      project_path: historyPath,
       limit: input.limit,
     });
     if (!found.ok) {

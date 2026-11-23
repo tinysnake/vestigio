@@ -52,7 +52,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const outcome = await layeredSearch({
 				store,
 				query: params.query,
-				scope: withProjectAliases({ kind: "project", project_id: projectId }, store.listProjectIds()),
+				scope: withProjectAliases(
+					{ kind: "project", project_id: projectId, history_path: state.historyPath(ctx.cwd) },
+					store.listProjectIds(),
+				),
 				limit: params.limit,
 				include_archived: params.include_archived,
 				include_history: history !== null,
@@ -133,7 +136,10 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const outcome = await resolveMemory({
 				store,
 				question: params.question,
-				scope: withProjectAliases({ kind: "project", project_id: projectId }, store.listProjectIds()),
+				scope: withProjectAliases(
+					{ kind: "project", project_id: projectId, history_path: state.historyPath(ctx.cwd) },
+					store.listProjectIds(),
+				),
 				model,
 				history,
 				signal,

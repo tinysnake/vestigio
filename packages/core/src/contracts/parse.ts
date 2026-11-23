@@ -137,13 +137,21 @@ export function parseScope(value: unknown, path = "$"): Scope {
   }
   const project_id = readNonEmptyString(readField(record, "project_id", path), `${path}.project_id`);
   const rawAliases = record["project_ids"];
-  if (rawAliases === undefined) {
-    return { kind: "project", project_id };
-  }
-  const project_ids = readArray(rawAliases, `${path}.project_ids`).map((alias, index) =>
-    readNonEmptyString(alias, `${path}.project_ids[${index}]`),
-  );
-  return { kind: "project", project_id, project_ids };
+  const project_ids =
+    rawAliases === undefined
+      ? undefined
+      : readArray(rawAliases, `${path}.project_ids`).map((alias, index) =>
+          readNonEmptyString(alias, `${path}.project_ids[${index}]`),
+        );
+  const rawHistoryPath = record["history_path"];
+  const history_path =
+    rawHistoryPath === undefined ? undefined : readNonEmptyString(rawHistoryPath, `${path}.history_path`);
+  return {
+    kind: "project",
+    project_id,
+    ...(project_ids === undefined ? {} : { project_ids }),
+    ...(history_path === undefined ? {} : { history_path }),
+  };
 }
 
 export function parseSourceRef(value: unknown, path = "$"): SourceRef {
