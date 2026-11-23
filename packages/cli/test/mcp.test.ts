@@ -5,6 +5,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Submission } from "@vestigio/client";
 import { createMcpServer, MCP_PROTOCOL_VERSIONS, MCP_TOOLS } from "../src/mcp.js";
 import type { DaemonClient } from "../src/daemon.js";
@@ -93,7 +96,7 @@ describe("server/discover", () => {
 });
 
 describe("tools/list", () => {
-  it("returns the five daemon tools and consumes nothing", async () => {
+  it("returns the daemon tools and the local project_id, consuming nothing", async () => {
     const h = harness();
     await h.call("tools/list", meta());
     const result = h.lastResult();
@@ -103,6 +106,7 @@ describe("tools/list", () => {
       "job_list",
       "job_cancel",
       "events_receive",
+      "project_id",
     ]);
     expect(result["ttlMs"]).toBe(3_600_000);
     expect(result["cacheScope"]).toBe("public");
@@ -110,7 +114,24 @@ describe("tools/list", () => {
   });
 
   it("declares the same names as the exported table", () => {
-    expect(MCP_TOOLS.map((tool) => tool.name)).toHaveLength(5);
+    expect(MCP_TOOLS.map((tool) => tool.name)).toHaveLength(6);
+  });
+});
+
+describe("project_id", () => {
+  it("resolves a directory with no store and no daemon call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vestigio-mcp-project-"));
+    const h = harness(fakeDaemonClient(), null);
+    await h.tool("project_id", { path: dir });
+    expect(textOf(h.last())).toEqual({ path: dir, project_id: dir, repository_root: null });
+    expect(h.client.calls).toHaveLength(0);
+  });
+
+  it("defaults to the server process's working directory", async () => {
+    const h = harness(fakeDaemonClient(), null);
+    await h.tool("project_id", {});
+    expect((textOf(h.last()) as { path: string }).path).toBe(process.cwd());
+    expect(h.client.calls).toHaveLength(0);
   });
 });
 

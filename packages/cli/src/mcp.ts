@@ -4,9 +4,8 @@
  * MCP 2026-07-28 removed the `initialize` handshake: every request carries its
  * protocol version and client capabilities in `_meta`, and a server must treat
  * each request independently. This adapter therefore holds no per-connection
- * state but the process's default store path. It exposes five tools that mirror
- * the daemon's job API and marks a result delivered only after the JSON-RPC
- * response that carries it was accepted by stdout.
+ * state but the process's default store path. It marks a result delivered only
+ * after the JSON-RPC response that carries it was accepted by stdout.
  *
  * Capability surface (see packages/cli/COMPAT.md): tools are supported; this
  * adapter advertises no resources, prompts, or server-initiated subscriptions,
@@ -15,6 +14,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Kind, SessionKey } from "@vestigio/client";
+import { describeProjectIdentity } from "@vestigio/core/project";
 import { DAEMON_KINDS, type DaemonClient, resolveSessionRef } from "./daemon.js";
 
 export const MCP_PROTOCOL_VERSIONS = ["2026-07-28"] as const;
@@ -99,6 +99,22 @@ export const MCP_TOOLS: readonly McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { ...SESSION_IDENTITY, store: STORE_PROPERTY },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_id",
+    title: "Resolve a project id",
+    description:
+      "Resolve the canonical project id for a directory. Pass the printed id verbatim to any call that needs a project id; never construct one by hand. It resolves to the git repository root, so every worktree of one repository shares one id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Directory to resolve. Defaults to the server process's working directory.",
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -209,7 +225,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             supportedVersions: [...MCP_PROTOCOL_VERSIONS],
             capabilities: { tools: {} },
             instructions:
-              "vestigio daemon jobs: submit work, read or list jobs, cancel, and claim terminal results with events_receive. Results are marked delivered only after the claim response is written, so an interrupted caller can retry.",
+              "vestigio daemon jobs: submit work, read or list jobs, cancel, and claim terminal results with events_receive. Results are marked delivered only after the claim response is written, so an interrupted caller can retry. Use project_id to resolve the canonical project id for a directory; pass the printed id verbatim to any call that needs one and never construct one by hand.",
             ttlMs: TOOL_CACHE_TTL_MS,
             cacheScope: "public",
           });
@@ -229,6 +245,10 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   }
 
   async function runTool(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+    if (name === "project_id") {
+      const path = stringArg(args, "path", false) ?? process.cwd();
+      return { text: JSON.stringify(describeProjectIdentity(path), null, 2) };
+    }
     const store = stringArg(args, "store", false) ?? options.defaultStore;
     if (store === undefined) {
       throw new McpToolError(
