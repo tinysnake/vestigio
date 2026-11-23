@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseMemory } from "../../src/contracts/index.js";
 import type { GitRunner } from "../../src/project/identity.js";
 import {
   ProjectSettingsError,
@@ -13,6 +14,7 @@ import {
   scopeProjectIds,
   withProjectAliases,
 } from "../../src/project/identity.js";
+import { bodyWith, openTempStore, storedMemory } from "../storage/support.js";
 
 type FakeRepo = {
   common?: string;
@@ -307,12 +309,59 @@ describe("settings discovery", () => {
 });
 
 describe("projectAliases", () => {
-  it("keeps the id followed by every known id in the same repository", () => {
+  it("aliases a stale worktree id and nothing else", () => {
     const fixture = repoFixture();
     expect(projectAliases(fixture.root, [fixture.root, fixture.worktree, "/other", "/plain"], fixture.git)).toEqual([
       fixture.root,
       fixture.worktree,
     ]);
+  });
+
+  it("keeps a root and a self scope apart in both directions", () => {
+    const fixture = repoFixture();
+    const scoped = join(fixture.root, "packages", "core");
+    mkdirSync(scoped, { recursive: true });
+    fixture.track(scoped);
+    writeSettings(scoped, { project: "self" });
+    const known = [fixture.root, fixture.worktree, scoped];
+    expect(projectAliases(fixture.root, known, fixture.git)).toEqual([fixture.root, fixture.worktree]);
+    expect(projectAliases(scoped, known, fixture.git)).toEqual([scoped]);
+  });
+
+  it("reads a self scope over only its own rows", () => {
+    const fixture = repoFixture();
+    const scoped = join(fixture.root, "packages", "core");
+    mkdirSync(scoped, { recursive: true });
+    fixture.track(scoped);
+    writeSettings(scoped, { project: "self" });
+    const store = openTempStore();
+    store.saveMemory(
+      parseMemory(
+        storedMemory({
+          body: bodyWith("仓库级端口是 8787。"),
+          scope: { kind: "project", project_id: fixture.root },
+        }),
+      ),
+    );
+    store.saveMemory(
+      parseMemory(
+        storedMemory({
+          memory_id: "mem-0002",
+          uri: "memory://vestigio/mem-0002",
+          body: bodyWith("包级端口是 9090。"),
+          scope: { kind: "project", project_id: scoped },
+        }),
+      ),
+    );
+
+    const scope = withProjectAliases(
+      { kind: "project", project_id: scoped },
+      [fixture.root, fixture.worktree, scoped],
+      fixture.git,
+    );
+    expect(scopeProjectIds(scope)).toEqual([scoped]);
+    expect(store.listHeads(scope).map((memory) => memory.uri)).toEqual(["memory://vestigio/mem-0002"]);
+    store.close();
   });
 
   it("does not alias an id that has no repository root", () => {
