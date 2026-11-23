@@ -14,6 +14,7 @@ import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/mo
 import { agentModelSettings } from "@vestigio/config";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
+import { resolveProjectId } from "@vestigio/core/project";
 import type { HistoryPort } from "@vestigio/core/retrieval";
 import type { ModelPort, ModelThinking } from "@vestigio/core/resolver";
 
@@ -101,7 +102,8 @@ export function openMemoryRuntime(storePath: string, options: MemoryRuntimeOptio
   const model = options.model === undefined ? createModelClient(env) : options.model;
   const model_id = options.model_id ?? strOrNull(env[MODEL_ID_ENV]) ?? DEFAULT_MODEL_ID;
   const history = options.history === undefined ? createHistoryPort(env) : options.history;
-  const project_id = options.project_id === undefined ? strOrNull(env[PROJECT_ENV]) : options.project_id;
+  const configuredProject = options.project_id === undefined ? strOrNull(env[PROJECT_ENV]) : options.project_id;
+  const project_id = configuredProject === null ? null : resolveProjectId(configuredProject);
   const now = options.now ?? (() => Date.now());
   const mono = options.mono ?? (() => performance.now());
   return {

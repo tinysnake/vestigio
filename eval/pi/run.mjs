@@ -16,7 +16,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline";
@@ -228,7 +228,7 @@ class PiClient {
 	}
 }
 
-function spawnPi({ name, project = PROJECT, extraExtensions = [], continueSession = false, disableExtension = false, keepSessions = false, env = {} }) {
+function spawnPi({ name, project = PROJECT, cwd = CWD, extraExtensions = [], continueSession = false, disableExtension = false, keepSessions = false, env = {} }) {
 	const sessionDir = join(TMP, "sessions", name);
 	if (!keepSessions) {
 		rmSync(sessionDir, { recursive: true, force: true });
@@ -267,14 +267,15 @@ function spawnPi({ name, project = PROJECT, extraExtensions = [], continueSessio
 		VESTIGIO_MODEL_BASE_URL: `http://127.0.0.1:${mock.port}/v1`,
 		VESTIGIO_MODEL_ID: "mock-1",
 		VESTIGIO_MODEL_API_KEY: "mock",
-		VESTIGIO_PROJECT_ID: project,
+		// `project: null` leaves the id unset so the session cwd decides it.
+		...(project === null ? {} : { VESTIGIO_PROJECT_ID: project }),
 		// Explicit isolated history home: the extension can never fall back to
 		// the operator's real Obelisk index.
 		VESTIGIO_OBELISK_HOME: OBELISK_HOME,
 		VESTIGIO_DECISION_LOG: decisions,
 		...env,
 	};
-	const proc = spawn(PI, args, { cwd: CWD, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
+	const proc = spawn(PI, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
 	return { client: new PiClient(proc), sessionDir, decisions };
 }
 
@@ -441,6 +442,61 @@ async function scenarioSearchRecovery() {
 			await client.close();
 			mock.setResponder(null);
 		}
+	}
+}
+
+async function scenarioWorktree() {
+	// A real repository with a linked worktree. The fixture rows are scoped to the
+	// repository root, and the session runs from the second worktree with no
+	// explicit project id, so a delivered card proves the cwd resolved to the root.
+	const realTmp = realpathSync(TMP);
+	const repo = join(realTmp, "worktree-repo");
+	const worktreeB = join(realTmp, "worktree-b");
+	const storePath = join(realTmp, "worktree.sqlite");
+	usedStores.add(storePath);
+	mkdirSync(repo, { recursive: true });
+	const gitEnv = {
+		...process.env,
+		GIT_AUTHOR_NAME: "vestigio-harness",
+		GIT_AUTHOR_EMAIL: "vestigio-harness@example.com",
+		GIT_COMMITTER_NAME: "vestigio-harness",
+		GIT_COMMITTER_EMAIL: "vestigio-harness@example.com",
+	};
+	execFileSync("git", ["-C", repo, "init", "-q"], { env: gitEnv });
+	writeFileSync(join(repo, "README.md"), "harness\n");
+	execFileSync("git", ["-C", repo, "add", "."], { env: gitEnv });
+	execFileSync("git", ["-C", repo, "commit", "-qm", "init"], { env: gitEnv });
+	execFileSync("git", ["-C", repo, "worktree", "add", "-q", worktreeB], { env: gitEnv });
+
+	const seeded = execFileSync(
+		process.execPath,
+		["--import", join(HERE, "hook.mjs"), join(HERE, "seed.mjs"), storePath, repo, repo],
+		{ encoding: "utf8" },
+	);
+	check("worktree: the fixture store is scoped to the repository root", seeded.includes(repo), seeded.trim());
+
+	runStore = storePath;
+	const { client } = spawnPi({ name: "worktree", project: null, cwd: worktreeB });
+	const wireFrom = mock.requests.length;
+	try {
+		await client.prompt("部署 端口 需要修改", "worktree-1");
+		const first = chatRequests(wireFrom).at(-1);
+		const firstText = first ? lastUserText(first) : "";
+		check("worktree: session cwd resolved to the repository root", firstText.includes("memory://vestigio/mem-deploy-port"), tail(firstText));
+		check("worktree: exactly one block was injected", blockCount(firstText) === 1, `${blockCount(firstText)} block(s)`);
+	} finally {
+		check("worktree: pi exits cleanly", (await client.close()) === 0);
+	}
+
+	const explicit = spawnPi({ name: "worktree-explicit", project: worktreeB, cwd: EMPTY_PROJECT });
+	const explicitFrom = mock.requests.length;
+	try {
+		await explicit.client.prompt("部署 端口 需要修改", "worktree-2");
+		const first = chatRequests(explicitFrom).at(-1);
+		const firstText = first ? lastUserText(first) : "";
+		check("worktree: an explicit project id wins and is canonicalized", firstText.includes("memory://vestigio/mem-deploy-port"), tail(firstText));
+	} finally {
+		check("worktree: explicit session exits cleanly", (await explicit.client.close()) === 0);
 	}
 }
 
@@ -703,6 +759,7 @@ const mock = startMock();
 async function main() {
 	const dumpIndex = process.argv.indexOf("--dump");
 	mkdirSync(CWD, { recursive: true });
+	mkdirSync(EMPTY_PROJECT, { recursive: true });
 	mkdirSync(OBELISK_HOME, { recursive: true });
 	cpSync(join(HERE, "agent"), AGENT_DIR, { recursive: true });
 
@@ -742,7 +799,7 @@ async function main() {
 
 		const onlyIndex = process.argv.indexOf("--only");
 		const only = onlyIndex === -1 ? null : process.argv[onlyIndex + 1];
-		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "request", "search_recovery", "perf"];
+		const scenarios = ["new_session", "continue", "compaction", "prompt-template", "skill-command", "queued", "steer", "handler-error", "stale", "request", "search_recovery", "worktree", "perf"];
 		// `compound` is a measurement of a known limitation, not a regression test; run it explicitly.
 		const measurements = ["compound"];
 		if (only !== null && !scenarios.includes(only) && !measurements.includes(only)) throw new Error(`unknown scenario: ${only}`);
@@ -775,6 +832,7 @@ async function main() {
 			useFreshStore("search-recovery");
 			return scenarioSearchRecovery();
 		});
+		await maybe("worktree", scenarioWorktree);
 		if (only === "compound") {
 			useFreshStore("compound");
 			await scenarioCompound();

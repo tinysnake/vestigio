@@ -12,6 +12,7 @@ import type { HistoryPort } from "@vestigio/core/retrieval";
 import type { ModelPort, ResolveContinuation } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
 import type { MemoryStore } from "@vestigio/core/storage";
+import { resolveProjectId } from "@vestigio/core/project";
 import type { InjectionLedgerDelta } from "@vestigio/core/hotspots";
 import { InjectionLedger } from "@vestigio/core/hotspots";
 import type { VestigioConfig } from "./config.js";
@@ -145,7 +146,7 @@ export class VestigioState {
 	}
 
 	projectId(cwd: string): string {
-		return this.config.project_id ?? cwd;
+		return resolveProjectId(this.config.project_id ?? cwd);
 	}
 
 	get sessionManagerRef(): SessionLike | null {
