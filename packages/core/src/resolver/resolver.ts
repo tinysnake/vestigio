@@ -501,7 +501,12 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     | { kind: "decision"; decision: JudgeDecision }
     | { kind: "stop"; reason: string; retryable: boolean };
 
-  async function judgeLayer(layer: LayerName, current: Bundle, correction?: string): Promise<JudgeResult> {
+  async function judgeLayer(
+    layer: LayerName,
+    current: Bundle,
+    correction?: string,
+    over_budget_retry = false,
+  ): Promise<JudgeResult> {
     const model = input.model;
     if (model === null || model === undefined) return { kind: "stop", reason: "model_unavailable", retryable: false };
     const bounded = boundForModel(
@@ -525,8 +530,14 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       },
     ];
     const estimated = estimateTokens(messages.map((message) => message.content).join("\n"));
-    if (!ledger.canCallModel(estimated)) {
-      return { kind: "stop", reason: ledger.stopReason(estimated) ?? "model_call_cap", retryable: false };
+    const capReason = ledger.stopReason(estimated);
+    // A reply that could not be read is not a judgement, and the ledger would
+    // otherwise refuse to replace it: the retry is the call that makes the
+    // three-call ceiling honest rather than silently empty. Only the retry of
+    // such a stop may run past the count, and only once (`retryUsed`).
+    const overBudget = over_budget_retry && capReason === "model_call_cap";
+    if (capReason !== null && !overBudget) {
+      return { kind: "stop", reason: capReason, retryable: false };
     }
     const local = input.unbounded_time ? controller.signal :
       AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, Math.floor(remaining())))]);
@@ -937,7 +948,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
     let judged = await judgeLayer(layer, bundle);
     if (judged.kind === "stop" && judged.retryable && !retryUsed) {
       retryUsed = true;
-      judged = await judgeLayer(layer, bundle, judged.reason);
+      judged = await judgeLayer(layer, bundle, judged.reason, true);
     }
     if (judged.kind === "stop") {
       stopReason = judged.reason;

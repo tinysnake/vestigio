@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildJudgeUserMessage, judgeAllowList, parseJudgeDecision } from "../../src/resolver/index.js";
+import {
+  JUDGE_SYSTEM_PROMPT,
+  RESOLVE_MAX_MODEL_CALLS,
+  RESOLVE_MAX_OUTPUT_TOKENS,
+  RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL,
+  RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS,
+  buildJudgeUserMessage,
+  judgeAllowList,
+  parseJudgeDecision,
+} from "../../src/resolver/index.js";
 import { makeMemoryCard } from "../support.js";
 
 const allowed = judgeAllowList({
@@ -51,6 +60,20 @@ describe("parseJudgeDecision", () => {
     const parsed = parseJudgeDecision("just prose", allowed);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.reason).toContain("JSON");
+  });
+});
+
+describe("output budget", () => {
+  it("asks for a short answer instead of letting the reply run into the ceiling", () => {
+    expect(JUDGE_SYSTEM_PROMPT).toContain("at most 300 characters");
+  });
+
+  it("leaves every stage room for its own ceiling inside the request total", () => {
+    // The extra per-call slice is the one retry an unreadable judge reply may
+    // run past the call ceiling.
+    expect(RESOLVE_MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(
+      (RESOLVE_MAX_MODEL_CALLS + 1) * RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL + RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS,
+    );
   });
 });
 

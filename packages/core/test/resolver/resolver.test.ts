@@ -22,7 +22,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseBudgetUsed, parseRetrievalResult } from "../../src/contracts/index.js";
 import type { HistoryHit, HistoryPort } from "../../src/retrieval/index.js";
 import type { ModelPort, ModelRequest, ModelResult, ResolveInput } from "../../src/resolver/index.js";
-import { resolveMemory } from "../../src/resolver/index.js";
+import { resolveMemory, RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL } from "../../src/resolver/index.js";
 import type { MemoryStore } from "../../src/storage/index.js";
 import { PROJECT_A, PROJECT_B, historyHit, makeHistoryPort, openTempStore, seedMemory } from "../retrieval/support.js";
 
@@ -281,6 +281,66 @@ describe("memory.resolve: descent and sufficiency", () => {
     expect(outcome.calls.map((call) => call.layer)).toEqual(["history"]);
   });
 
+  it("retries an unreadable answer instead of leaving the last layer unjudged", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const hit = historyHit("the raw decision was to keep port 8787");
+    const history = makeTimedHistoryPort(1, [hit]);
+    const model = makeModel([
+      { text: judgeJson({ descend: true, next_queries: ["部署", "并发"] }) },
+      { text: judgeJson({ descend: true }) },
+      // A long reply cut off at the token ceiling. The ledger is now at its
+      // three-call limit, and this is exactly the case where the retry used to
+      // be refused before it could replace a judgement that never happened.
+      { text: '{"sufficient": true, "answer": "the port is 87' },
+      { text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: [hit.source_ref.message_id] }) },
+    ]);
+
+    const outcome = await resolve({
+      store,
+      question: "端口",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      defer_persistence: true,
+    });
+
+    expect(outcome.calls.map((call) => `${call.layer}/${call.outcome}`)).toEqual([
+      "active/ok",
+      "active/ok",
+      "history/malformed",
+      "history/ok",
+    ]);
+    expect(model.calls).toBe(4);
+    expect(outcome.result.status).toBe("resolved");
+    expect(outcome.result.answer).toBe("8787");
+  });
+
+  it("retries an unreadable answer once, never twice", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
+    const model = makeModel([
+      { text: judgeJson({ descend: true }) },
+      { text: judgeJson({ descend: true }) },
+      { text: '{"sufficient": true, "answer": "cut' },
+      { text: '{"sufficient": true, "answer": "cut ag' },
+      { text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: ["h-1"] }) },
+    ]);
+    const history = makeTimedHistoryPort(1, [historyHit("the raw decision was to keep port 8787")]);
+
+    const outcome = await resolve({
+      store,
+      question: "端口",
+      scope: projectA,
+      model: model.port,
+      history: history.port,
+      defer_persistence: true,
+    });
+
+    expect(model.calls).toBe(4);
+    expect(outcome.calls.map((call) => call.outcome)).toEqual(["ok", "ok", "malformed", "malformed"]);
+  });
+
   it("reaches raw history when the judge stops descending at a stored layer", async () => {
     const store = newStore();
     seedMemory(store, { memory_id: "mem-active", nav_text: "部署配置与默认端口，改端口前值得读取。" });
@@ -467,6 +527,20 @@ describe("memory.resolve: budgets", () => {
     expect(model.calls).toBe(0);
     expect(outcome.result.budget_used.model_calls).toBe(0);
     expect(outcome.result.missing).toContain("input_token_cap");
+  });
+
+  it("asks the judgement call for room above the ceiling that used to truncate it", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-active", nav_text: "deploy default port is 8787" });
+    const model = makeModel([{ text: judgeJson({ sufficient: true, answer: "8787", evidence_ids: ["mem-active"] }) }]);
+
+    await resolve({ store, question: "端口", scope: projectA, model: model.port });
+
+    // The per-call cap, not the request total: the first call gets room for a short
+    // answer plus the reasoning this backend emits before it. 1200 is the ceiling
+    // where judge replies were measured to be cut mid-JSON.
+    expect(RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL).toBeGreaterThan(1200);
+    expect(model.requests[0]?.max_output_tokens).toBe(RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL);
   });
 
   it("stops when accumulated output tokens reach the ceiling", async () => {

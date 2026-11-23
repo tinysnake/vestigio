@@ -27,6 +27,7 @@ export const JUDGE_SYSTEM_PROMPT = [
   "Reply with exactly one JSON object and nothing else:",
   '{"sufficient": boolean, "answer": string|null, "evidence_ids": string[], "read_uris": string[], "next_queries": string[], "conflicts": string[], "descend": boolean}',
   "Rules:",
+  "- Keep the answer field short: at most 300 characters, only the facts the question asks for, no preamble and no restating of the candidates.",
   "- sufficient=true needs a non-empty answer and at least one evidence_id.",
   "- evidence_ids must be ids or anchors copied from the candidates, never new values.",
   "- read_uris must be uris copied from the candidates; list a uri only when you need its full body before deciding.",

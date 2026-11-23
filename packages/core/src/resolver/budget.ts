@@ -39,9 +39,27 @@ export const RESOLVE_SUMMARY_MODEL_CALLS = 1;
 export const RESOLVE_SUMMARY_MAX_OUTPUT_TOKENS = 4000;
 /** Stage-2 navigation call: a short JSON object, never a full summary. */
 export const RESOLVE_NAV_MAX_OUTPUT_TOKENS = 400;
-export const RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL = 1200;
+/**
+ * Output ceiling for one judge call. The judge is asked to keep its answer to
+ * 300 characters; this ceiling leaves room for the ~1900 output tokens this
+ * backend spends on internal reasoning before it emits any body.
+ *
+ * Measured on the configured gateway (`auto/deepseek-v4.1-flash`) with the real
+ * judge prompt: at 1200, 7 of 82 replies were cut mid-JSON, and every cut reply
+ * had spent its whole ceiling (tokens_out == 1200). With the brevity rule the
+ * observed use was 389 tokens at p50 and 1294 at the maximum over 40 samples
+ * (ceilings 1800 and 2400), with no cut. The structure stays bounded; the
+ * numbers are what this backend needs.
+ */
+export const RESOLVE_MAX_OUTPUT_TOKENS_PER_CALL = 2000;
 export const RESOLVE_MAX_INPUT_TOKENS = 20_000;
-export const RESOLVE_MAX_OUTPUT_TOKENS = 6000;
+/**
+ * Total output ceiling for one resolve, sized so every stage can reach its own
+ * ceiling instead of one stage eating another's: the three judge calls at 2000,
+ * the one extra call an unreadable reply may retry into, plus the 4000-token
+ * summary. Measured use is far below it (p50 ~500 per call).
+ */
+export const RESOLVE_MAX_OUTPUT_TOKENS = 12_000;
 export const RESOLVE_MAX_EVIDENCE_BYTES = 24 * 1024;
 export const RESOLVE_MAX_EVIDENCE_MESSAGES = 6;
 export const RESOLVE_MAX_SESSION_RESOLVES = 40;
