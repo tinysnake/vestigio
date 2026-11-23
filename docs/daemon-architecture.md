@@ -143,7 +143,7 @@ CLI 和 MCP 面向不支持 extensions 的 agent，提供显式操作能力，�
 
 ## MCP 协议适配
 
-MCP 工具提供 job_submit、job_get、job_list、job_cancel、events_receive。job_submit 立即返回 jobId；events_receive 按 session 有界批量返回完整通知和结果，成功发送后清理，无待发项立即返回。job_get 是查询，不触发投递清理。不要求 invoker ACK。
+MCP 工具提供 job_submit、job_get、job_list、job_cancel、events_receive，以及本地工具 project_id（解析某目录的规范 project id，不依赖 store 或 daemon，同一仓库的每个 worktree 共享同一 id）。job_submit 立即返回 jobId；events_receive 按 session 有界批量返回完整通知和结果，成功发送后清理，无待发项立即返回。job_get 是查询，不触发投递清理。不要求 invoker ACK。
 
 MCP 2026-07-28 是无状态协议，每次请求携带所需元数据和业务标识，不依赖初始化握手、协议 session 或复用同一连接。跨调用的 jobId 和业务 requestId 显式传入。pi extension 不使用这些 MCP 工具。
 

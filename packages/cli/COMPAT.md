@@ -21,6 +21,7 @@ so a call made from pi is recorded as pi, not as `cli` or `mcp`.
 | `watch` | supported | Polls relay claims until `--count` is reached or the process is signalled. Never uses the SSE stream (see "Delivery" below). |
 | `stop` | supported | Graceful daemon shutdown; the state directory survives. |
 | `search` / `read` / `probe` / `resolve` | unchanged | Direct store reads. They do not write, so they did not need to move. |
+| `projects id` | local | Resolves the canonical project id for one directory (`<path>` or `--dir`, default cwd) through `@vestigio/core/project`. Needs no store and no daemon. An id printed here is the only id a store call may use; never construct one from a path. |
 | `jobs run` | daemon maintenance | Submits `nav.run` and waits for its result. Model configuration belongs to the daemon. |
 
 ## MCP (`vestigio-mcp`, stdio)
@@ -31,10 +32,11 @@ table because not every host can receive pushed results.
 | MCP feature | Status | Notes |
 | --- | --- | --- |
 | `server/discover` | supported | One fixed result: `supportedVersions: ["2026-07-28"]`, `capabilities.tools`, `ttlMs`, `cacheScope`. |
-| `tools/list` | supported | The five tools below. A listing alone never consumes a notification. |
+| `tools/list` | supported | The six tools below. A listing alone never consumes a notification. |
 | `tools/call` | supported | `isError: true` for tool-level failures; JSON-RPC codes only for protocol failures. |
 | `job_submit` / `job_get` / `job_list` / `job_cancel` | supported | Mirror the CLI commands, including the `requestId` idempotency key. |
 | `events_receive` | supported | Relay claim. The response carries the full results; the daemon marks them delivered only after the response is written, so an interrupted caller retries the same claim. |
+| `project_id` | supported | Local, store-independent. Resolves the canonical project id for a directory (optional `path`, default the process cwd); every worktree of one repository shares one id. |
 | resources, prompts, completion | not supported | No such capability is advertised. |
 | server-initiated push (`subscriptions/listen`) | not implemented | Clients claim with `events_receive`. No push-only host compatibility is claimed. |
 | sampling, elicitation, roots | not supported | No such capability is advertised. |
@@ -53,7 +55,10 @@ Tool schema notes:
 - `job_list` and `events_receive` take `--session-ref`-style `sessionRef` **or**
   `source`/`sessionId`, never both.
 - Every tool takes an optional `store`; otherwise the adapter uses its own
-  `--db`/`--store`/`VESTIGIO_DB`.
+  `--db`/`--store`/`VESTIGIO_DB`. `project_id` is the exception: it takes an
+  optional `path` and needs no store or daemon.
+- Pass the id `project_id` prints verbatim to any call that needs a project id;
+  never construct one from a path.
 
 ## Delivery and failure semantics
 
@@ -87,3 +92,6 @@ All of these already exist on `@vestigio/client`; no adapter needs a new method.
 | `client.receive(ref, true)` | `GET /v1/sessions/:ref/events?relay` |
 | `client.relayed(ref, ids)` | `POST /v1/sessions/:ref/delivered` |
 | `client.stop()` | `POST /v1/stop` |
+
+`project_id` is local: it resolves the directory with `@vestigio/core/project`
+and makes no wire call.

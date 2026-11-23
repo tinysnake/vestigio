@@ -15,7 +15,7 @@ the pi extension that injects a reminder and exposes the memory tools.
 packages/core/                 store, layered search, hotspots, stale events, resolver
 packages/daemon/               job scheduler, memory handlers, process lifecycle
 packages/client/               daemon client: lazy start, health, jobs, events
-packages/cli/                  vestigio search/read/resolve/jobs + daemon adapters
+packages/cli/                  vestigio search/read/projects/resolve/jobs + daemon adapters
 packages/pi-extension/         pi tools, injection, lifecycle hooks
 eval/fixtures/                 synthetic retrieval corpus (JSONL)
 eval/baseline/                 no-memory vs Obelisk resource ledger
