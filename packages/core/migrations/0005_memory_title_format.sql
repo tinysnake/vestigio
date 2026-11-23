@@ -1,0 +1,10 @@
+-- 0005: memory title format.
+--
+-- Titles written before the English-only prompt rewrite read `关于「…」的记忆`;
+-- they now read `Memory about "…"`.
+--
+-- The rewrite is a data step, so it lives in `rewriteMemoryTitles`
+-- (src/storage/migrations.ts) and runs inside this migration's transaction: the
+-- FTS `title` column mirrors `normalizeForIndex(title)`, which SQL cannot
+-- compute, and a stale index text fails the store's integrity check. This file
+-- exists so the numbered list stays readable end to end.

@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { normalizeForIndex } from "./tokenize.js";
 
 export type Migration = {
   version: number;
   name: string;
   sql: string;
+  /** Data step for migrations that must derive values in TypeScript. Runs in the `sql` transaction. */
+  run?: (db: DatabaseSync) => void;
 };
 
 export type AppliedMigration = {
@@ -39,7 +42,71 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "memory_requests",
     sql: readFileSync(new URL("../../migrations/0004_memory_requests.sql", import.meta.url), "utf8"),
   },
+  {
+    version: 5,
+    name: "memory_title_format",
+    sql: readFileSync(new URL("../../migrations/0005_memory_title_format.sql", import.meta.url), "utf8"),
+    run: rewriteMemoryTitles,
+  },
 ];
+
+/**
+ * The title formats on either side of the English-only prompt rewrite. The new
+ * side is written here as a literal rather than imported from `buildTitle`:
+ * a migration is a frozen snapshot, so a later format change gets its own
+ * migration instead of silently rewriting older rows. The store test
+ * `test/storage/title-migration.test.ts` pins the two to the same string.
+ */
+const LEGACY_TITLE_PREFIX = "关于「";
+const LEGACY_TITLE_SUFFIX = "」的记忆";
+
+function migratedTitle(title: string): string {
+  const inner = title.slice(LEGACY_TITLE_PREFIX.length, title.length - LEGACY_TITLE_SUFFIX.length);
+  return `Memory about "${inner}"`;
+}
+
+/**
+ * 0005 data step. `memories` holds one row per revision, so every matching
+ * revision is rewritten, and `memory_requests` holds the operator-visible
+ * pending title. The FTS `title` column mirrors `normalizeForIndex(title)`, so
+ * it is refreshed for the head revision only; the other FTS tables hold one row
+ * per memory, and a title left behind there fails the store integrity check.
+ */
+function rewriteMemoryTitles(db: DatabaseSync): void {
+  const pattern = `${LEGACY_TITLE_PREFIX}%${LEGACY_TITLE_SUFFIX}`;
+  const revisions = db
+    .prepare(
+      `SELECT m.memory_id AS memory_id, m.revision AS revision, m.title AS title,
+              h.revision AS head_revision
+         FROM memories AS m
+         LEFT JOIN memory_heads AS h ON h.memory_id = m.memory_id
+        WHERE m.title LIKE ?`,
+    )
+    .all(pattern);
+  const setRevision = db.prepare("UPDATE memories SET title = ? WHERE memory_id = ? AND revision = ?");
+  const setIndexTitle = {
+    active: db.prepare("UPDATE memory_fts_active SET title = ? WHERE memory_id = ?"),
+    archived: db.prepare("UPDATE memory_fts_archived SET title = ? WHERE memory_id = ?"),
+  };
+  for (const row of revisions) {
+    const memoryId = String(row["memory_id"]);
+    const revision = Number(row["revision"]);
+    const title = migratedTitle(String(row["title"]));
+    setRevision.run(title, memoryId, revision);
+    const head = row["head_revision"];
+    if (head === null || Number(head) !== revision) {
+      continue;
+    }
+    const indexed = normalizeForIndex(title).join(" ");
+    setIndexTitle.active.run(indexed, memoryId);
+    setIndexTitle.archived.run(indexed, memoryId);
+  }
+  const requests = db.prepare("SELECT request_id, title FROM memory_requests WHERE title LIKE ?").all(pattern);
+  const setRequest = db.prepare("UPDATE memory_requests SET title = ? WHERE request_id = ?");
+  for (const row of requests) {
+    setRequest.run(migratedTitle(String(row["title"])), String(row["request_id"]));
+  }
+}
 
 export function listAppliedMigrations(db: DatabaseSync): AppliedMigration[] {
   return db
@@ -79,6 +146,7 @@ export function applyMigrations(db: DatabaseSync, at: string): AppliedMigration[
     db.exec("BEGIN IMMEDIATE");
     try {
       db.exec(migration.sql);
+      migration.run?.(db);
       record.run(migration.version, migration.name, at);
       db.exec("COMMIT");
     } catch (error) {

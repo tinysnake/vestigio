@@ -55,7 +55,7 @@ describe("stale events: durability and identity", () => {
 
     const store = openStore({ path });
     try {
-      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4]);
+      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
       const memory = storedMemory({ body: repairableBody("旧库迁移", anchor()) });
       store.saveMemory(memory);
       const marked = store.markStale({
