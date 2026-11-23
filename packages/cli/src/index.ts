@@ -21,6 +21,7 @@ import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/cor
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
+import { resolveProjectId, withProjectAliases } from "@vestigio/core/project";
 import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
 import { agentModelSettings } from "@vestigio/config";
 import { formatFreshnessLines, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
@@ -103,10 +104,10 @@ Daemon jobs (compatibility adapters; the daemon owns scheduling and delivery):
   --session-ref is the numeric ref from a previous submit/get; --source and
   --session-id reopen the same session by its stable identity instead.
 
---project must be a normalised absolute path: it is used verbatim as the store
-scope and as Obelisk's project_path, so a typo is a different project, not a
-convenience. When --db is omitted, VESTIGIO_DB or VESTIGIO_STORE names the
-store; both are filled from ~/.vestigio/config.json.`;
+--project must be a normalised absolute path: its git repository root (falling
+back to the path itself outside a repository) is the store scope, and the path
+itself is used as Obelisk's project_path. When --db is omitted, VESTIGIO_DB or
+VESTIGIO_STORE names the store; both are filled from ~/.vestigio/config.json.`;
 
 export type CliIo = {
   out(text: string): void;
@@ -310,7 +311,7 @@ function requireScope(parsed: ParsedArgs): Scope {
     if (project.length > 1 && project.endsWith(sep)) {
       throw new UsageError("--project must not end with a path separator");
     }
-    return { kind: "project", project_id: project };
+    return { kind: "project", project_id: resolveProjectId(project) };
   }
   if (global) {
     return { kind: "global" };
@@ -384,7 +385,7 @@ async function runSearch(context: CommandContext): Promise<number> {
     const outcome = await layeredSearch({
       store,
       query,
-      scope,
+      scope: withProjectAliases(scope, store.listProjectIds()),
       limit: integerFlag(context.parsed, "limit", 1, 10),
       offset: integerFlag(context.parsed, "offset", 0, 1_000_000),
       include_archived: context.parsed.flags.get("archived") === true,
@@ -772,7 +773,7 @@ async function runResolve(context: CommandContext): Promise<number> {
             cli_path: stringFlag(context.parsed, "obelisk-cli"),
             source_instance: stringFlag(context.parsed, "source-instance"),
           });
-    const outcome = await resolveMemory({ store, question, scope, model, history, defer_persistence: true });
+    const outcome = await resolveMemory({ store, question, scope: withProjectAliases(scope, store.listProjectIds()), model, history, defer_persistence: true });
     const modelInfo = {
       ...wiring.info,
       degraded: outcome.measured.degraded,

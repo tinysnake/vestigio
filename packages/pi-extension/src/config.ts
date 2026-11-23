@@ -5,9 +5,10 @@
  * only variable a deployment must set is `VESTIGIO_STORE`. Without a store path
  * the extension is inert: it registers no tools and never rewrites input.
  *
- * `VESTIGIO_PROJECT_ID` defaults to the session cwd, which is the same project
- * identity the Obelisk adapter writes into `SourceRef.project_id` (the absolute
- * project path), so hotspot scoping and history scoping agree by construction.
+ * `VESTIGIO_PROJECT_ID` defaults to the session cwd's git repository root, so
+ * every worktree of one repository shares a project id. This is the same
+ * identity the Obelisk adapter writes into `SourceRef.project_id`, so hotspot
+ * scoping and history scoping agree by construction.
  */
 
 import {

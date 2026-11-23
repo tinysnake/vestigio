@@ -20,6 +20,7 @@ import { ValidationError, splitMemoryUri } from "@vestigio/core";
 import type { Freshness, FreshnessBrief, MemoryUri, RetrievalResult, SourceRef, StaleEventSummary } from "@vestigio/core";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import { layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
+import { withProjectAliases } from "@vestigio/core/project";
 import type { ResolveOutcome, ModelPort, PersistenceOutcome } from "@vestigio/core/resolver";
 import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/resolver";
 import type { MemoryStore } from "@vestigio/core/storage";
@@ -51,7 +52,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const outcome = await layeredSearch({
 				store,
 				query: params.query,
-				scope: { kind: "project", project_id: projectId },
+				scope: withProjectAliases({ kind: "project", project_id: projectId }, store.listProjectIds()),
 				limit: params.limit,
 				include_archived: params.include_archived,
 				include_history: history !== null,
@@ -132,7 +133,7 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const outcome = await resolveMemory({
 				store,
 				question: params.question,
-				scope: { kind: "project", project_id: projectId },
+				scope: withProjectAliases({ kind: "project", project_id: projectId }, store.listProjectIds()),
 				model,
 				history,
 				signal,

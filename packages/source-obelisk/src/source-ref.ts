@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import type { SourceRef } from "@vestigio/core";
 import { parseSourceRef } from "@vestigio/core";
+import { resolveProjectId } from "@vestigio/core/project";
 import { obeliskError } from "./errors.js";
 import type { CliMessage, CliSession } from "./parse.js";
 
@@ -23,13 +24,17 @@ export function contentHash(text: string): string {
 }
 
 /**
- * The project identity is the absolute project path, not the derived slug: the
- * slug collapses `/a/b` and `/a-b`-style separators, and exact project scoping
- * is the property this adapter is here to keep. The slug is available on the
- * session for display.
+ * The project identity is the absolute project path's git repository root, so
+ * every worktree of one repository names the same project; outside a repository
+ * it is the path itself, and a row that carries only the derived slug keeps
+ * that slug. The slug collapses `/a/b` and `/a-b`-style separators, and exact
+ * project scoping is the property this adapter is here to keep. The slug is
+ * available on the session for display.
  */
 export function projectIdFor(session: CliSession, project_hint: string | null = null): string {
-  return project_hint ?? session.project_path ?? session.project ?? UNSCOPED_PROJECT;
+  const path = project_hint ?? session.project_path;
+  if (path === null || path === undefined) return session.project ?? UNSCOPED_PROJECT;
+  return resolveProjectId(path);
 }
 
 export function locatorFor(jsonl_path: string | null, message_id: string): string | null {

@@ -9,6 +9,7 @@ import { ValidationError, splitMemoryUri, type MemoryUri } from "@vestigio/core"
 import { InjectionLedger, planInjection } from "@vestigio/core/hotspots";
 import type { MemoryRequest } from "@vestigio/core/requests";
 import { layeredSearch, readMemoryResult, type LayeredSearchInput } from "@vestigio/core/retrieval";
+import { withProjectAliases } from "@vestigio/core/project";
 import { resolveMemory, searchWithRecovery } from "@vestigio/core/resolver";
 import {
   optionalBoolean,
@@ -74,7 +75,7 @@ async function search(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome>
   const options: LayeredSearchInput = {
     store: ctx.runtime.store,
     query,
-    scope: { kind: "project", project_id },
+    scope: withProjectAliases({ kind: "project", project_id }, ctx.runtime.store.listProjectIds()),
     include_history: history !== null,
     ...(history === null ? {} : { history }),
     ...(limit === undefined ? {} : { limit }),
@@ -203,7 +204,7 @@ async function resolve(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome
   const result = await resolveMemory({
     store: ctx.runtime.store,
     question,
-    scope: { kind: "project", project_id },
+    scope: withProjectAliases({ kind: "project", project_id }, ctx.runtime.store.listProjectIds()),
     model,
     history,
     signal: ctx.signal,

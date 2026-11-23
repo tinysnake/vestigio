@@ -4,6 +4,7 @@ import type { TSchema, Static } from "typebox";
 import type { Kind } from "@vestigio/client";
 import { saveActivity } from "@vestigio/config";
 import { splitMemoryUri } from "@vestigio/core";
+import { resolveProjectId } from "@vestigio/core/project";
 import { requestTitle } from "@vestigio/core/requests";
 import { ActivityPanel, clip, formatInjection, formatJobEvent, formatNotInjected, formatToolEvent, line } from "./activity.js";
 import { ACTIVITY_ENV, type VestigioConfig } from "./config.js";
@@ -25,7 +26,7 @@ function capture(ctx: ExtensionContext, config: VestigioConfig) {
 		entries,
 		session_id: sessionOf(ctx).sessionId,
 		session_file: session.getSessionFile() ?? null,
-		project_id: config.project_id ?? ctx.cwd,
+		project_id: resolveProjectId(config.project_id ?? ctx.cwd),
 		branch_ref: entries[0]?.id ?? "root",
 		leaf: entries.at(-1)?.id ?? "root",
 	};
