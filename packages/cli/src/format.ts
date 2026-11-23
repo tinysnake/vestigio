@@ -175,3 +175,41 @@ export function formatJobsHuman(
   }
   return `${lines.join("\n")}\n`;
 }
+
+/** One stored project id, its head count, and the root it should be scoped to. */
+export type ProjectListing = {
+  project_id: string;
+  memories: number;
+  repository_root: string;
+};
+
+export function formatProjectsHuman(projects: readonly ProjectListing[]): string {
+  if (projects.length === 0) {
+    return "no project-scoped memories\n";
+  }
+  const rows = projects.map((project) => ({
+    label: `${project.memories} ${project.memories === 1 ? "memory" : "memories"}`,
+    project,
+  }));
+  const width = Math.max(...rows.map((row) => row.label.length));
+  return rows
+    .map((row) => {
+      const head = `${row.label.padEnd(width)}  ${row.project.project_id}`;
+      return row.project.repository_root === row.project.project_id
+        ? `${head}\n`
+        : `${head}\n${" ".repeat(width + 2)}-> ${row.project.repository_root}\n`;
+    })
+    .join("");
+}
+
+export function formatReassignmentHuman(report: import("@vestigio/core/storage").ProjectReassignment): string {
+  const parts = [`${report.revisions} revisions`, `${report.sources} sources`, `${report.memberships} hotspot rows`];
+  if (report.activity) {
+    parts.push("activity");
+  }
+  if (report.revisions === 0 && report.sources === 0 && report.memberships === 0 && !report.activity) {
+    return `nothing in the store carries ${report.from}; ${report.to} is unchanged\n`;
+  }
+  const count = report.memory_ids.length;
+  return `moved ${count} ${count === 1 ? "memory" : "memories"} (${parts.join(", ")}) from ${report.from} to ${report.to}\n`;
+}
