@@ -33,6 +33,10 @@ export type StateDeps = {
 	create_history?: () => HistoryPort;
 };
 
+export function sessionProjectId(config: VestigioConfig, dir: string): string {
+	return resolveProjectId(config.project_id ?? dir);
+}
+
 export class VestigioState {
 	readonly config: VestigioConfig;
 	readonly log: DecisionLog;
@@ -146,7 +150,7 @@ export class VestigioState {
 	}
 
 	projectId(cwd: string): string {
-		return resolveProjectId(this.config.project_id ?? cwd);
+		return sessionProjectId(this.config, cwd);
 	}
 
 	/**
