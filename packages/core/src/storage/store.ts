@@ -36,6 +36,7 @@ import {
   type StaleProducer,
   type UsageEvent,
 } from "../contracts/index.js";
+import { scopeProjectIds } from "../project/identity.js";
 import { enqueueSummaryJob, type SummaryJob } from "../jobs/queue.js";
 import {
   attachMemoryRequestTarget,
@@ -490,15 +491,17 @@ export class MemoryStore {
         .all()
         .map((row) => this.rowToMemory(row));
     }
+    const projectIds = scopeProjectIds(scope);
+    const placeholders = projectIds.map(() => "?").join(", ");
     return this.db
       .prepare(
         `SELECT memories.* FROM memories
            JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
                            AND memory_heads.revision = memories.revision
-          WHERE memories.scope_kind = 'project' AND memories.project_id = ?
+          WHERE memories.scope_kind = 'project' AND memories.project_id IN (${placeholders})
           ORDER BY memories.memory_id ASC`,
       )
-      .all(scope.project_id)
+      .all(...projectIds)
       .map((row) => this.rowToMemory(row));
   }
 
@@ -530,27 +533,46 @@ export class MemoryStore {
    */
   hasMemories(scope?: Scope): boolean {
     this.assertOpen();
-    const row =
-      scope === undefined
-        ? this.db.prepare("SELECT 1 AS present FROM memory_heads LIMIT 1").get()
-        : scope.kind === "global"
-          ? this.db
-              .prepare(
-                `SELECT 1 AS present FROM memories
-                   JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
-                                   AND memory_heads.revision = memories.revision
-                  WHERE memories.scope_kind = 'global' LIMIT 1`,
-              )
-              .get()
-          : this.db
-              .prepare(
-                `SELECT 1 AS present FROM memories
-                   JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
-                                   AND memory_heads.revision = memories.revision
-                  WHERE memories.scope_kind = 'project' AND memories.project_id = ? LIMIT 1`,
-              )
-              .get(scope.project_id);
-    return row !== undefined;
+    if (scope === undefined) {
+      return this.db.prepare("SELECT 1 AS present FROM memory_heads LIMIT 1").get() !== undefined;
+    }
+    if (scope.kind === "global") {
+      return (
+        this.db
+          .prepare(
+            `SELECT 1 AS present FROM memories
+               JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                               AND memory_heads.revision = memories.revision
+              WHERE memories.scope_kind = 'global' LIMIT 1`,
+          )
+          .get() !== undefined
+      );
+    }
+    const projectIds = scopeProjectIds(scope);
+    const placeholders = projectIds.map(() => "?").join(", ");
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 AS present FROM memories
+             JOIN memory_heads ON memory_heads.memory_id = memories.memory_id
+                             AND memory_heads.revision = memories.revision
+            WHERE memories.scope_kind = 'project' AND memories.project_id IN (${placeholders}) LIMIT 1`,
+        )
+        .get(...projectIds) !== undefined
+    );
+  }
+
+  /**
+   * Every project id that owns at least one stored revision. Read-side callers
+   * use it to build a scope's sibling-worktree aliases without knowing the
+   * directories themselves.
+   */
+  listProjectIds(): string[] {
+    this.assertOpen();
+    return this.db
+      .prepare("SELECT DISTINCT project_id FROM memories WHERE scope_kind = 'project' ORDER BY project_id ASC")
+      .all()
+      .map((row) => str(row, "project_id"));
   }
 
   countMemories(state?: MemoryState): number {
@@ -1489,8 +1511,10 @@ export class MemoryStore {
     const parameters: SQLOutputValue[] = [match];
     if (options.scope !== undefined) {
       if (options.scope.kind === "project") {
-        scopeSql = "AND memories.scope_kind = 'project' AND memories.project_id = ?";
-        parameters.push(options.scope.project_id);
+        const projectIds = scopeProjectIds(options.scope);
+        const placeholders = projectIds.map(() => "?").join(", ");
+        scopeSql = `AND memories.scope_kind = 'project' AND memories.project_id IN (${placeholders})`;
+        parameters.push(...projectIds);
       } else {
         scopeSql = "AND memories.scope_kind = 'global'";
       }

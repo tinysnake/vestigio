@@ -256,6 +256,11 @@ function dedupeEvidence(evidence: readonly MemoryRequestEvidence[]): MemoryReque
   return out;
 }
 
+/** The persisted scope shape: read-side project aliases are dropped on the way in. */
+function serializableScope(scope: Scope): Scope {
+  return scope.kind === "project" ? { kind: "project", project_id: scope.project_id } : scope;
+}
+
 export function insertMemoryRequest(
   db: DatabaseSync,
   input: EnqueueMemoryRequestInput,
@@ -287,7 +292,7 @@ export function insertMemoryRequest(
     .run(
       requestId,
       dedupKey,
-      JSON.stringify(input.scope),
+      JSON.stringify(serializableScope(input.scope)),
       input.project_id,
       input.session_id,
       input.branch_ref,

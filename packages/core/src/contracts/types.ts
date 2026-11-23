@@ -20,7 +20,14 @@ export type MemoryId = string;
 export type MemoryUri = `memory://${StoreId}/${MemoryId}`;
 export type Revision = number;
 
-export type Scope = { kind: "project"; project_id: string } | { kind: "global" };
+export type Scope =
+  | {
+      kind: "project";
+      project_id: string;
+      /** Read-side aliases: sibling worktree ids of the same repository. Never persisted. */
+      project_ids?: readonly string[];
+    }
+  | { kind: "global" };
 
 export type SourceRef = {
   provider: string;

@@ -82,6 +82,33 @@ describe("memory request queue", () => {
     expect(store.countMemoryRequests()).toBe(3);
   });
 
+  it("keys a request identically with and without read-only project aliases", () => {
+    const base = memoryRequestDedupKey(input());
+    const aliased = memoryRequestDedupKey(
+      input({
+        scope: { kind: "project", project_id: "p-vestigio", project_ids: ["/repo", "/repo-wt"] },
+      }),
+    );
+    expect(aliased).toBe(base);
+  });
+
+  it("never persists read-only project aliases, and a global scope is unchanged", () => {
+    const store = newStore();
+    store.enqueueMemoryRequest(
+      input({
+        scope: { kind: "project", project_id: "p-vestigio", project_ids: ["/repo", "/repo-wt"] },
+      }),
+    );
+    store.enqueueMemoryRequest(input({ scope: { kind: "global" }, intent: "全局约定" }));
+    const rows = store.database().prepare("SELECT scope_json FROM memory_requests ORDER BY rowid").all() as Array<{
+      scope_json: string;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.scope_json).toBe(JSON.stringify({ kind: "project", project_id: "p-vestigio" }));
+    expect(rows[1]!.scope_json).toBe(JSON.stringify({ kind: "global" }));
+    expect(rows.some((row) => row.scope_json.includes("project_ids"))).toBe(false);
+  });
+
   it("trims, bounds, and dedupes evidence by source identity", () => {
     const store = newStore();
     const source = makeSourceRef({ message_id: "m-11" });

@@ -136,7 +136,14 @@ export function parseScope(value: unknown, path = "$"): Scope {
     return { kind: "global" };
   }
   const project_id = readNonEmptyString(readField(record, "project_id", path), `${path}.project_id`);
-  return { kind: "project", project_id };
+  const rawAliases = record["project_ids"];
+  if (rawAliases === undefined) {
+    return { kind: "project", project_id };
+  }
+  const project_ids = readArray(rawAliases, `${path}.project_ids`).map((alias, index) =>
+    readNonEmptyString(alias, `${path}.project_ids[${index}]`),
+  );
+  return { kind: "project", project_id, project_ids };
 }
 
 export function parseSourceRef(value: unknown, path = "$"): SourceRef {

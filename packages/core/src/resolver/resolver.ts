@@ -38,6 +38,7 @@ import {
   type Scope,
   type SourceRef,
 } from "../contracts/index.js";
+import { scopeProjectIds } from "../project/identity.js";
 import { hasRawHistoryEvidence, persistResolvedMemory, replaySavedRequest } from "./persist.js";
 import {
   layeredSearch,
@@ -167,10 +168,11 @@ function excerptKey(excerpt: HistoryExcerpt): string {
   return `${excerpt.source_ref.message_id}|${excerpt.source_ref.content_hash}`;
 }
 
-function scopeEqual(left: Scope, right: Scope): boolean {
+export function scopeEqual(left: Scope, right: Scope): boolean {
   if (left.kind === "global" && right.kind === "global") return true;
-  if (left.kind === "project" && right.kind === "project") return left.project_id === right.project_id;
-  return false;
+  if (left.kind !== "project" || right.kind !== "project") return false;
+  const rightIds = scopeProjectIds(right);
+  return scopeProjectIds(left).some((id) => rightIds.includes(id));
 }
 
 function scopeLabel(scope: Scope): string {

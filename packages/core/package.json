@@ -16,7 +16,8 @@
     "./stale": "./src/stale/index.ts",
     "./jobs": "./src/jobs/index.ts",
     "./storage": "./src/storage/index.ts",
-    "./requests": "./src/requests/index.ts"
+    "./requests": "./src/requests/index.ts",
+    "./project": "./src/project/identity.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -1,0 +1,133 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { GitRunner } from "../../src/project/identity.js";
+import {
+  gitRepositoryRoot,
+  projectAliases,
+  resolveProjectId,
+  scopeProjectIds,
+  withProjectAliases,
+} from "../../src/project/identity.js";
+
+function runnerFor(outputs: Record<string, string | null>): GitRunner {
+  return (dir) => outputs[dir] ?? null;
+}
+
+function runGit(dir: string, args: string[]): string {
+  return execFileSync("git", ["-C", dir, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "vestigio-test",
+      GIT_AUTHOR_EMAIL: "vestigio-test@example.com",
+      GIT_COMMITTER_NAME: "vestigio-test",
+      GIT_COMMITTER_EMAIL: "vestigio-test@example.com",
+    },
+  });
+}
+
+describe("gitRepositoryRoot", () => {
+  it("drops a trailing .git segment so a checkout reports its root", () => {
+    const git = runnerFor({ "/repo/sub": "/repo/.git\n" });
+    expect(gitRepositoryRoot("/repo/sub", git)).toBe("/repo");
+  });
+
+  it("keeps a bare repository's own directory", () => {
+    const git = runnerFor({ "/srv/repo.git": "/srv/repo.git\n" });
+    expect(gitRepositoryRoot("/srv/repo.git", git)).toBe("/srv/repo.git");
+  });
+
+  it("returns null when git fails or prints nothing", () => {
+    expect(gitRepositoryRoot("/plain", () => null)).toBeNull();
+    expect(gitRepositoryRoot("/plain", runnerFor({ "/plain": "" }))).toBeNull();
+    expect(gitRepositoryRoot("/plain", runnerFor({ "/plain": "  \n" }))).toBeNull();
+  });
+});
+
+describe("resolveProjectId", () => {
+  it("uses the repository root when there is one", () => {
+    const git = runnerFor({ "/repo/sub": "/repo/.git" });
+    expect(resolveProjectId("/repo/sub", git)).toBe("/repo");
+  });
+
+  it("falls back to the absolute directory outside a repository", () => {
+    expect(resolveProjectId("/plain", () => null)).toBe(resolve("/plain"));
+  });
+
+  it("keeps an explicit opaque id that is not an absolute path", () => {
+    expect(resolveProjectId("p-vestigio", () => null)).toBe("p-vestigio");
+    expect(resolveProjectId("p-vestigio")).toBe("p-vestigio");
+  });
+});
+
+describe("projectAliases", () => {
+  const git = runnerFor({
+    "/repo": "/repo/.git",
+    "/repo-wt": "/repo/.git",
+    "/other": "/other/.git",
+    "/plain": null,
+  });
+
+  it("keeps the id followed by every known id in the same repository", () => {
+    expect(projectAliases("/repo", ["/repo", "/repo-wt", "/other", "/plain"], git)).toEqual(["/repo", "/repo-wt"]);
+  });
+
+  it("does not alias an id that has no repository root", () => {
+    expect(projectAliases("/plain", ["/repo", "/plain"], git)).toEqual(["/plain"]);
+  });
+});
+
+describe("scopeProjectIds", () => {
+  it("reads a global scope over no project ids", () => {
+    expect(scopeProjectIds({ kind: "global" })).toEqual([]);
+  });
+
+  it("deduplicates the canonical id with its aliases", () => {
+    const scope = { kind: "project", project_id: "/repo", project_ids: ["/repo", "/repo-wt"] } as const;
+    expect(scopeProjectIds(scope)).toEqual(["/repo", "/repo-wt"]);
+  });
+});
+
+describe("withProjectAliases", () => {
+  it("passes a global scope through unchanged", () => {
+    const scope = { kind: "global" } as const;
+    expect(withProjectAliases(scope, ["/repo"])).toBe(scope);
+  });
+
+  it("attaches aliases without moving the canonical id", () => {
+    const git = runnerFor({ "/repo": "/repo/.git", "/repo-wt": "/repo/.git" });
+    const scope = withProjectAliases({ kind: "project", project_id: "/repo" }, ["/repo", "/repo-wt"], git);
+    expect(scope).toEqual({ kind: "project", project_id: "/repo", project_ids: ["/repo", "/repo-wt"] });
+  });
+});
+
+describe("real repositories", () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-project-")));
+  const root = join(parent, "repo");
+  const subdir = join(root, "packages", "core");
+  const worktree = join(parent, "worktree");
+  const plain = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-plain-")));
+
+  mkdirSync(subdir, { recursive: true });
+  runGit(root, ["init", "-q"]);
+  writeFileSync(join(root, "README.md"), "seed\n");
+  runGit(root, ["add", "."]);
+  runGit(root, ["commit", "-qm", "init"]);
+  runGit(root, ["worktree", "add", "-q", worktree]);
+
+  it("resolves a checkout, a subdirectory and a linked worktree to one id", () => {
+    expect(gitRepositoryRoot(root)).toBe(root);
+    expect(gitRepositoryRoot(subdir)).toBe(root);
+    expect(gitRepositoryRoot(worktree)).toBe(root);
+    expect(resolveProjectId(worktree)).toBe(root);
+    expect(resolveProjectId(root)).toBe(resolveProjectId(worktree));
+  });
+
+  it("keeps a non-git directory as its own absolute path", () => {
+    expect(gitRepositoryRoot(plain)).toBeNull();
+    expect(resolveProjectId(plain)).toBe(resolve(plain));
+  });
+});
