@@ -13,10 +13,14 @@ function legacyTitle(inner: string): string {
   return `关于「${inner}」的记忆`;
 }
 
-/** Forget migration 5, so the next open sees a store written by the old code. */
+/**
+ * Forget the title and hash migrations, so the next open rewrites the titles a
+ * store written by the old code held and then reseals their hashes, exactly as
+ * a store that ran 5 before 6 existed is repaired.
+ */
 function forgetTitleMigration(path: string): void {
   const db = new DatabaseSync(path);
-  db.exec("DELETE FROM schema_migrations WHERE version = 5");
+  db.exec("DELETE FROM schema_migrations WHERE version >= 5");
   db.close();
 }
 
@@ -41,7 +45,7 @@ describe("memory title migration", () => {
 
     const store = openStore({ path });
     try {
-      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
+      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6]);
       expect(store.readMemory(legacy.uri)?.title).toBe(buildTitle(inner));
       expect(store.readMemory(current.uri)?.title).toBe(buildTitle("新格式标题"));
       expect(store.integrityCheck()).toEqual({
@@ -123,6 +127,31 @@ describe("memory title migration", () => {
       expect(second.integrityCheck().problems).toEqual([]);
     } finally {
       second.close();
+    }
+  });
+
+  it("reseals the hash so a rewritten title still saves as a no-op", () => {
+    const path = tempDbPath("title-hash");
+    const inner = "端口 8787";
+    const memory = parseMemory(
+      storedMemory({ body: bodyWith("迁移标题之后仍可重复写入。"), title: legacyTitle(inner) }),
+    );
+
+    const old = openStore({ path });
+    old.saveMemory(memory);
+    old.close();
+    forgetTitleMigration(path);
+
+    const store = openStore({ path });
+    try {
+      const migrated = store.readMemory(memory.uri);
+      expect(migrated?.title).toBe(buildTitle(inner));
+      // Without the reseal this throws `uri_content_changed`, because the stored
+      // hash still covers the legacy title the row no longer carries.
+      expect(store.saveMemory(migrated!)).toEqual({ memory_id: memory.memory_id, revision: 1, inserted: false });
+      expect(store.integrityCheck().problems).toEqual([]);
+    } finally {
+      store.close();
     }
   });
 

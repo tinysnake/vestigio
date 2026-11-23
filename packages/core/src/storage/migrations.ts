@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { resealContentHashes } from "./rows.js";
 import { normalizeForIndex } from "./tokenize.js";
 
 export type Migration = {
@@ -47,6 +48,12 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "memory_title_format",
     sql: readFileSync(new URL("../../migrations/0005_memory_title_format.sql", import.meta.url), "utf8"),
     run: rewriteMemoryTitles,
+  },
+  {
+    version: 6,
+    name: "memory_content_hash",
+    sql: readFileSync(new URL("../../migrations/0006_memory_content_hash.sql", import.meta.url), "utf8"),
+    run: resealContentHashes,
   },
 ];
 

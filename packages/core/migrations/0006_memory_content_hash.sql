@@ -1,0 +1,11 @@
+-- 0006: reseal memory content hashes.
+--
+-- `memories.content_hash` covers a revision's scope and title. Migration 5
+-- rewrote titles without recomputing it, so on any store where 0005 already ran
+-- the next save of an affected revision fails as `uri_content_changed` instead
+-- of landing as an idempotent no-op.
+--
+-- The reseal is a data step, so it lives in `resealContentHashes`
+-- (src/storage/rows.ts) and runs inside this migration's transaction: the hash
+-- is derived from the stored row through the same mapping the read path uses.
+-- This file exists so the numbered list stays readable end to end.
