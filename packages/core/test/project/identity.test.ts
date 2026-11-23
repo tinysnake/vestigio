@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { GitRunner } from "../../src/project/identity.js";
 import {
+  describeProjectIdentity,
   gitRepositoryRoot,
   projectAliases,
   resolveProjectId,
@@ -60,6 +61,32 @@ describe("resolveProjectId", () => {
   it("keeps an explicit opaque id that is not an absolute path", () => {
     expect(resolveProjectId("p-vestigio", () => null)).toBe("p-vestigio");
     expect(resolveProjectId("p-vestigio")).toBe("p-vestigio");
+  });
+});
+
+describe("describeProjectIdentity", () => {
+  it("reports the id, path and repository root for a directory inside a repository", () => {
+    expect(describeProjectIdentity("/repo/sub", runnerFor({ "/repo/sub": "/repo/.git" }))).toEqual({
+      path: "/repo/sub",
+      project_id: "/repo",
+      repository_root: "/repo",
+    });
+  });
+
+  it("keeps a path outside any repository as its own id with no root", () => {
+    expect(describeProjectIdentity("/plain", () => null)).toEqual({
+      path: "/plain",
+      project_id: "/plain",
+      repository_root: null,
+    });
+  });
+
+  it("resolves a relative path against the cwd", () => {
+    expect(describeProjectIdentity("sub", () => null)).toEqual({
+      path: resolve("sub"),
+      project_id: resolve("sub"),
+      repository_root: null,
+    });
   });
 });
 
@@ -167,5 +194,19 @@ describe("real repositories", () => {
     expect(resolveProjectId(cloneA)).toBe(cloneA);
     expect(resolveProjectId(cloneB)).toBe(cloneB);
     expect(resolveProjectId(cloneA)).not.toBe(resolveProjectId(cloneB));
+  });
+
+  it("describes a linked worktree with the shared id and its own path", () => {
+    expect(describeProjectIdentity(root)).toEqual({ path: root, project_id: root, repository_root: root });
+    expect(describeProjectIdentity(worktree)).toEqual({
+      path: worktree,
+      project_id: root,
+      repository_root: root,
+    });
+    expect(describeProjectIdentity(subdir).project_id).toBe(root);
+  });
+
+  it("describes a non-git directory as its own id with no repository root", () => {
+    expect(describeProjectIdentity(plain)).toEqual({ path: plain, project_id: plain, repository_root: null });
   });
 });
