@@ -506,7 +506,7 @@ describe("cli projects id", () => {
 	git(repo, ["commit", "-qm", "init"]);
 	git(repo, ["worktree", "add", "-q", worktree]);
 
-	type Identity = { path: string; project_id: string; repository_root: string | null };
+	type Identity = { path: string; project_id: string; repository_root: string | null; source: string };
 
 	it("prints only the id", async () => {
 		const result = await run(["projects", "id", "--dir", repo]);
@@ -514,10 +514,15 @@ describe("cli projects id", () => {
 		expect(result.out).toBe(`${repo}\n`);
 	});
 
-	it("--json carries path, project_id and repository_root", async () => {
+	it("--json carries path, project_id, repository_root and source", async () => {
 		const result = await run(["projects", "id", "--dir", repo, "--json"]);
 		expect(result.code).toBe(0);
-		expect(parseJson<Identity>(result.out)).toEqual({ path: repo, project_id: repo, repository_root: repo });
+		expect(parseJson<Identity>(result.out)).toEqual({
+			path: repo,
+			project_id: repo,
+			repository_root: repo,
+			source: "repository",
+		});
 	});
 
 	it("returns one id for the checkout and a linked worktree while path differs", async () => {
@@ -534,6 +539,7 @@ describe("cli projects id", () => {
 			path: outside,
 			project_id: outside,
 			repository_root: null,
+			source: "path",
 		});
 	});
 
@@ -556,5 +562,99 @@ describe("cli projects id", () => {
 		const extra = await run(["projects", "id", repo, worktree]);
 		expect(extra.code).toBe(2);
 		expect(extra.err).toContain("projects id takes at most one directory");
+	});
+});
+
+describe("cli projects id with settings and a submodule", () => {
+	const parent = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-settings-")));
+	const superproject = join(parent, "superproject");
+	const worktree = join(parent, "super-worktree");
+	const submoduleSource = join(parent, "submodule-source");
+	const vendored = join(superproject, "vendor", "lib");
+	const worktreeVendored = join(worktree, "vendor", "lib");
+	const shared = join(superproject, "shared");
+	const relativeDir = join(superproject, "packages", "core");
+	const selfDir = join(superproject, "packages", "self");
+	const plainDir = join(superproject, "packages", "plain");
+	const brokenDir = join(superproject, "packages", "broken");
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-outside-")));
+
+	function settings(dir: string, project: Record<string, unknown> | string): void {
+		mkdirSync(join(dir, ".vestigio"), { recursive: true });
+		writeFileSync(
+			join(dir, ".vestigio", "settings.json"),
+			typeof project === "string" ? project : JSON.stringify(project),
+		);
+	}
+
+	type Identity = { path: string; project_id: string; repository_root: string | null; source: string };
+
+	mkdirSync(submoduleSource, { recursive: true });
+	git(submoduleSource, ["init", "-q"]);
+	writeFileSync(join(submoduleSource, "index.js"), "export const lib = 1;\n");
+	git(submoduleSource, ["add", "."]);
+	git(submoduleSource, ["commit", "-qm", "init"]);
+
+	mkdirSync(superproject, { recursive: true });
+	git(superproject, ["init", "-q"]);
+	writeFileSync(join(superproject, "README.md"), "super\n");
+	mkdirSync(shared);
+	writeFileSync(join(shared, "README.md"), "shared\n");
+	mkdirSync(plainDir, { recursive: true });
+	git(superproject, ["add", "."]);
+	git(superproject, ["commit", "-qm", "init"]);
+	git(superproject, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", submoduleSource, "vendor/lib"]);
+	settings(superproject, { project: "repo" });
+	settings(relativeDir, { project: "../../shared" });
+	settings(selfDir, { project: "self" });
+	settings(brokenDir, { project: "repo", scope: "x" });
+	git(superproject, ["add", "."]);
+	git(superproject, ["commit", "-qm", "settings"]);
+	git(superproject, ["worktree", "add", "-q", worktree]);
+	git(worktree, ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q"]);
+
+	it("uses a repo declaration from the root and a nested directory", async () => {
+		expect((await run(["projects", "id", "--dir", superproject])).out).toBe(`${superproject}\n`);
+		expect((await run(["projects", "id", "--dir", plainDir])).out).toBe(`${superproject}\n`);
+	});
+
+	it("uses self and a relative path from the settings file", async () => {
+		expect((await run(["projects", "id", "--dir", selfDir])).out).toBe(`${selfDir}\n`);
+		expect((await run(["projects", "id", "--dir", relativeDir])).out).toBe(`${shared}\n`);
+	});
+
+	it("names the submodule under its superproject from the main checkout and a superproject worktree", async () => {
+		const main = parseJson<Identity>((await run(["projects", "id", "--dir", vendored, "--json"])).out);
+		const linked = parseJson<Identity>((await run(["projects", "id", "--dir", worktreeVendored, "--json"])).out);
+		expect(main.project_id).toBe(join(superproject, "vendor", "lib"));
+		expect(main.source).toBe("submodule");
+		expect(linked.project_id).toBe(main.project_id);
+		expect(linked.source).toBe("submodule");
+		expect(main.project_id).not.toContain("/.git/");
+	});
+
+	it("keeps a superproject worktree on the shared repository root", async () => {
+		const linked = parseJson<Identity>((await run(["projects", "id", "--dir", worktree, "--json"])).out);
+		expect(linked.project_id).toBe(superproject);
+		expect(linked.path).toBe(worktree);
+		expect(linked.source).toBe("repository");
+	});
+
+	it("keeps a directory outside any repository as its own id", async () => {
+		const result = await run(["projects", "id", "--dir", outside, "--json"]);
+		expect(parseJson<Identity>(result.out)).toEqual({
+			path: outside,
+			project_id: outside,
+			repository_root: null,
+			source: "path",
+		});
+	});
+
+	it("fails on a broken settings file instead of printing another id", async () => {
+		const result = await run(["projects", "id", "--dir", brokenDir]);
+		expect(result.code).toBe(1);
+		expect(result.out).toBe("");
+		expect(result.err).toContain(join(brokenDir, ".vestigio", "settings.json"));
+		expect(result.err).not.toContain("Usage:");
 	});
 });
