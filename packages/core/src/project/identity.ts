@@ -313,16 +313,24 @@ export function describeProjectIdentity(dir: string, git: GitRunner = runGit): P
 }
 
 /**
- * The canonical id followed by every known id that shares its repository root.
- * Known ids outside a repository, or from another repository, are not aliases.
+ * The canonical id followed by the known ids that are stale for it: an id that
+ * no longer resolves to itself and now resolves to `projectId`. Two current ids
+ * of one repository are not aliases of each other, so a settings scope of the
+ * directory (`self`) stays a real boundary. A known id whose settings file is
+ * broken is left out rather than failing the read.
  */
 export function projectAliases(projectId: string, known: readonly string[], git: GitRunner = runGit): string[] {
-	const root = gitRepositoryRoot(projectId, git);
 	const aliases = [projectId];
-	if (root === null) return aliases;
 	for (const id of known) {
-		if (id === projectId) continue;
-		if (gitRepositoryRoot(id, git) === root) aliases.push(id);
+		if (id === projectId || !isAbsolute(id)) continue;
+		let current: string;
+		try {
+			current = resolveProjectId(id, git);
+		} catch (error) {
+			if (error instanceof ProjectSettingsError) continue;
+			throw error;
+		}
+		if (current !== id && current === projectId) aliases.push(id);
 	}
 	return aliases;
 }
