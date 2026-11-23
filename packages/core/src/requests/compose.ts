@@ -163,7 +163,7 @@ function correctionMessage(input: {
   over: number | null;
   under: number | null;
 }): string {
-  const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain Chinese prose`;
+  const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain prose`;
   const size =
     input.over !== null
       ? `Your body was ${input.over} non-whitespace Unicode code points, over the ${MEDIUM_BODY_MAX} ceiling. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`
@@ -174,7 +174,7 @@ function correctionMessage(input: {
     `Your previous reply was not usable: ${input.reason ?? "unreadable"}.`,
     'Reply with exactly one JSON object {"body": "..."} and nothing else.',
     size,
-    `It must cite at least one of these approved evidence ids with [来源:<id>]: ${input.mustCite.join(", ")}. No other id may appear.`,
+    `It must cite at least one of these approved evidence ids with [source:<id>]: ${input.mustCite.join(", ")}. No other id may appear.`,
   ].join("\n");
 }
 
@@ -184,7 +184,7 @@ function guidance(targetKind: "new" | "existing", pendingCount: number): string 
       "This writes one new memory from evidence the operator explicitly approved saving.",
       "Capture the durable decision, convention or exception the evidence supports, plus the facts needed to apply it later.",
       "Do not claim any action was taken, do not invent facts, and do not add a rule the evidence does not state.",
-      `Aim for ${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace code points, in Chinese.`,
+      `Aim for ${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace code points.`,
     ].join(" ");
   }
   return [

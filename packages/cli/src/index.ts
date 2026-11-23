@@ -750,7 +750,7 @@ function wireModel(context: CommandContext): ModelWiring {
       model_id: agents.resolver?.model ?? modelId,
       thinking,
       cost_table: cost,
-      skip_reason: baseUrl === null ? "未配置 --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,
+      skip_reason: baseUrl === null ? "not configured: --model-base-url / VESTIGIO_MODEL_BASE_URL" : null,
     },
   };
 }

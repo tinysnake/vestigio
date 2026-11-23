@@ -137,7 +137,7 @@ function repairModel(cited: () => string | null, mode: ModelMode = "ok") {
 	const port: ModelPort = {
 		async complete(request): Promise<ModelResult> {
 			const system = request.messages[0]?.content ?? "";
-			if (system.includes("导航短摘要")) {
+			if (system.includes("You write a navigation summary")) {
 				counters.nav_calls += 1;
 				if (mode === "nav_bad") {
 					return { ok: true, value: { text: "不是 JSON", model: "scripted", finish_reason: "stop", usage: { tokens_in: 10, tokens_out: 10, cost_usd: 0 } } };

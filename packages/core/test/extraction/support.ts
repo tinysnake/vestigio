@@ -57,7 +57,7 @@ export function makeScriptedModel(
       async complete(request: ModelRequest): Promise<ModelResult> {
         state.requests.push(request);
         const system = request.messages[0]?.content ?? "";
-        const kind = system.includes("中期摘要") ? "summary" : system.includes("导航短摘要") ? "nav" : "judge";
+        const kind = system.includes("You write one medium summary") ? "summary" : system.includes("You write a navigation summary") ? "nav" : "judge";
         const index =
           kind === "summary" ? state.summary_calls : kind === "nav" ? state.nav_calls : state.judge_calls;
         if (kind === "summary") state.summary_calls += 1;

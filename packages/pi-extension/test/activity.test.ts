@@ -57,22 +57,22 @@ describe("formatInjection", () => {
 			budget: { used_bytes: 520 },
 			elapsed_ms: 9,
 		});
-		expect(lines[0]).toEqual(line("info", "注入 2/3 · 520B · 9ms"));
+		expect(lines[0]).toEqual(line("info", "injected 2/3 · 520B · 9ms"));
 		expect(lines[1]).toEqual(line("note", "部署脚本默认端口"));
-		expect(lines[2]).toEqual(line("warn", "接口约定（过期）"));
+		expect(lines[2]).toEqual(line("warn", "接口约定 (stale)"));
 	});
 
 	it("uses kilobytes once the block passes 1024 bytes", () => {
 		const lines = formatInjection({ injected: [], matched: [], budget: { used_bytes: 2048 }, elapsed_ms: 1 });
-		expect(lines[0]?.text).toBe("注入 0/0 · 2.0KB · 1ms");
+		expect(lines[0]?.text).toBe("injected 0/0 · 2.0KB · 1ms");
 	});
 });
 
 describe("formatNotInjected", () => {
 	it("names the common reasons in words", () => {
-		expect(formatNotInjected("no_match")).toEqual(line("info", "未注入 · 无匹配"));
-		expect(formatNotInjected("all_deduped")).toEqual(line("info", "未注入 · 本会话已给过"));
-		expect(formatNotInjected("store_error")).toEqual(line("warn", "未注入 · 记忆库出错"));
+		expect(formatNotInjected("no_match")).toEqual(line("info", "not injected · no match"));
+		expect(formatNotInjected("all_deduped")).toEqual(line("info", "not injected · already given this session"));
+		expect(formatNotInjected("store_error")).toEqual(line("warn", "not injected · memory store error"));
 	});
 
 	it("says nothing about input memory never saw", () => {
@@ -82,7 +82,7 @@ describe("formatNotInjected", () => {
 	});
 
 	it("passes an unknown reason through instead of hiding it", () => {
-		expect(formatNotInjected("weird")).toEqual(line("info", "未注入 · weird"));
+		expect(formatNotInjected("weird")).toEqual(line("info", "not injected · weird"));
 	});
 });
 
@@ -90,30 +90,30 @@ describe("formatToolEvent", () => {
 	it("reports a read with its revision and freshness", () => {
 		const payload = { op: "memory.read", uri: "memory://vestigio/mem-a" };
 		expect(formatToolEvent("memory.read", payload, { status: "resolved", revision: 3, freshness: fresh })).toEqual([
-			line("info", "读取 mem-a · r3"),
+			line("info", "read mem-a · r3"),
 		]);
 		expect(formatToolEvent("memory.read", payload, { status: "resolved", revision: 4, freshness: stale })).toEqual([
-			line("warn", "读取 mem-a · r4 · 过期"),
+			line("warn", "read mem-a · r4 · stale"),
 		]);
-		expect(formatToolEvent("memory.read", payload, { status: "not_found" })).toEqual([line("warn", "读取 mem-a · not_found")]);
+		expect(formatToolEvent("memory.read", payload, { status: "not_found" })).toEqual([line("warn", "read mem-a · not_found")]);
 	});
 
 	it("reports how many cards a search or resolve returned", () => {
 		expect(formatToolEvent("memory.search", { query: "部署 端口" }, { status: "ok", cards: [{}, {}] })).toEqual([
-			line("info", "检索 “部署 端口” → 2 条"),
+			line("info", "search “部署 端口” → 2 hit(s)"),
 		]);
 		expect(formatToolEvent("memory.resolve", { question: "端口是多少" }, { status: "resolved", cards: [{}] })).toEqual([
-			line("info", "解析 “端口是多少” → resolved · 1 条"),
+			line("info", "resolve “端口是多少” → resolved · 1 hit(s)"),
 		]);
 	});
 
 	it("reports a stale mark as recorded or refused", () => {
 		const payload = { uri: "memory://vestigio/mem-a" };
 		expect(formatToolEvent("stale.publish", payload, { status: "ok", inserted: 1, events: [{ recorded: true }] })).toEqual([
-			line("warn", "标记过期 mem-a · 已记录"),
+			line("warn", "marked stale mem-a · recorded"),
 		]);
 		expect(formatToolEvent("stale.publish", payload, { status: "ok", inserted: 0, events: [{ recorded: false }] })).toEqual([
-			line("error", "标记过期 mem-a · 未记录 · 1 条被拒"),
+			line("error", "marked stale mem-a · not recorded · 1 refused"),
 		]);
 	});
 });
@@ -122,19 +122,19 @@ describe("formatJobEvent", () => {
 	it("shows a detector finding and stays quiet on a clean turn", () => {
 		expect(formatJobEvent("detector.run", "succeeded", { detected: 0 })).toEqual([]);
 		expect(formatJobEvent("detector.run", "succeeded", { detected: 1, publish_pending: 1 })).toEqual([
-			line("warn", "检测到 1 处变更 · 1 条待标记"),
+			line("warn", "detected 1 change(s) · 1 to mark"),
 		]);
 	});
 
 	it("shows repairs and saves only when something landed", () => {
 		expect(formatJobEvent("repair.memories", "succeeded", { repaired: 0 })).toEqual([]);
-		expect(formatJobEvent("repair.memories", "succeeded", { repaired: 2 })).toEqual([line("info", "已修复 2 条记忆")]);
-		expect(formatJobEvent("request.process", "succeeded", { saved: 1, merged: 1 })).toEqual([line("info", "保存 2 条记忆")]);
+		expect(formatJobEvent("repair.memories", "succeeded", { repaired: 2 })).toEqual([line("info", "repaired 2 memory(ies)")]);
+		expect(formatJobEvent("request.process", "succeeded", { saved: 1, merged: 1 })).toEqual([line("info", "saved 2 memory(ies)")]);
 	});
 
 	it("reports a failed job by name", () => {
-		expect(formatJobEvent("repair.memories", "failed", {})).toEqual([line("error", "记忆修复 失败 · failed")]);
-		expect(formatJobEvent("unknown.op", "cancelled", {})).toEqual([line("error", "unknown.op 失败 · cancelled")]);
+		expect(formatJobEvent("repair.memories", "failed", {})).toEqual([line("error", "memory repair failed · failed")]);
+		expect(formatJobEvent("unknown.op", "cancelled", {})).toEqual([line("error", "unknown.op failed · cancelled")]);
 	});
 });
 

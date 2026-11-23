@@ -56,8 +56,8 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			}
 			const repaired = Number(detail.result?.repaired ?? 0);
 			const saved = Number(detail.result?.saved ?? 0) + Number(detail.result?.merged ?? 0);
-			if (repaired > 0) ctx.ui.notify(`Vestigio 已修复 ${repaired} 条记忆`, "info");
-			if (saved > 0) ctx.ui.notify(`Vestigio 已处理 ${saved} 条记忆保存请求`, "info");
+			if (repaired > 0) ctx.ui.notify(`Vestigio repaired ${repaired} memory(ies)`, "info");
+			if (saved > 0) ctx.ui.notify(`Vestigio processed ${saved} memory save request(s)`, "info");
 		});
 	};
 	pi.on("session_start", (_event, ctx) => {
@@ -117,7 +117,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			return text === undefined ? { action: "continue" } : { action: "transform", text };
 		} catch (error) {
 			log.write({ ...base, status: "not_injected", reason: "store_error", error: String(error) });
-			panel.push(ctx, line("error", "注入失败 · 记忆库不可用"));
+			panel.push(ctx, line("error", "injection failed · memory store unavailable"));
 			report(error);
 			return { action: "continue" };
 		}
@@ -193,7 +193,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 				panel.pushAll(ctx, formatToolEvent(String(payload["op"]), payload, result.result));
 				return { content: [{ type: "text", text: result.text ?? JSON.stringify(result.result) }], details: result.result };
 			} catch (error) {
-				panel.push(ctx, line("error", `${name} 失败 · ${clip(error instanceof Error ? error.message : String(error), 48)}`));
+				panel.push(ctx, line("error", `${name} failed · ${clip(error instanceof Error ? error.message : String(error), 48)}`));
 				return { content: [{ type: "text", text: `${name}: ${error instanceof Error ? error.message : String(error)}` }], details: { status: "unavailable" } };
 			}
 		} });
@@ -227,21 +227,21 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			reason: params.reason, excerpt: params.excerpt, sources, producer: "agent", branch_ref: context.branch_ref }] };
 	});
 	pi.registerCommand("vestigio-log", {
-		description: "记忆活动面板：on 打开，off 关闭，clear 清空",
+		description: "Memory activity panel: on shows it, off hides it, clear empties it",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const action = args.trim().toLowerCase();
 			if (action === "off" || action === "on") {
 				const enabled = action === "on";
 				panel.setEnabled(enabled, ctx);
-				ctx.ui.notify(`记忆活动面板已${enabled ? "打开" : "关闭"}${persistenceNote(enabled)}`, "info");
+				ctx.ui.notify(`Memory activity panel ${enabled ? "shown" : "hidden"}${persistenceNote(enabled)}`, "info");
 				return;
 			}
 			if (action === "" || action === "clear") {
 				panel.clear(ctx);
-				ctx.ui.notify("记忆活动面板已清空", "info");
+				ctx.ui.notify("Memory activity panel cleared", "info");
 				return;
 			}
-			ctx.ui.notify("用法：/vestigio-log on | off | clear", "warning");
+			ctx.ui.notify("Usage: /vestigio-log on | off | clear", "warning");
 		},
 	});
 }
@@ -254,10 +254,10 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 function persistenceNote(next: boolean): string {
 	const override = process.env[ACTIVITY_ENV];
 	if (override !== undefined && override.trim().length > 0) {
-		return "，仅本次会话（环境变量 VESTIGIO_ACTIVITY 优先）";
+		return ", this session only (VESTIGIO_ACTIVITY takes priority)";
 	}
 	const saved = saveActivity(next);
-	if (saved.status === "saved") return "，已写入配置";
-	if (saved.status === "no_file") return "，仅本次会话（没有配置文件）";
-	return `，本次会话生效（配置写入失败：${clip(saved.message, 60)}）`;
+	if (saved.status === "saved") return ", saved to config";
+	if (saved.status === "no_file") return ", this session only (no config file)";
+	return `, effective this session (config write failed: ${clip(saved.message, 60)})`;
 }

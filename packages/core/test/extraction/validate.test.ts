@@ -100,6 +100,13 @@ describe("medium body citations", () => {
     if (!validation.ok) expect(validation.failure).toEqual({ kind: "foreign_source", ids: ["made-up"] });
   });
 
+  it("accepts the [source:id] spelling and the legacy Chinese one", () => {
+    const body = `${bodyOfLength(520, "h-1").replace("[来源:", "[source:")}【来源：h-2】`;
+    const validation = validateMediumBody(body, allowed);
+    expect(validation.ok).toBe(true);
+    if (validation.ok) expect(validation.cited_ids.sort()).toEqual(["h-1", "h-2"]);
+  });
+
   it("accepts both bracket styles and returns the cited ids once", () => {
     const body = `${bodyOfLength(520, "h-1")}【来源：h-2】[来源:h-1]`;
     const validation = validateMediumBody(body, allowed);
@@ -111,6 +118,13 @@ describe("medium body citations", () => {
 describe("medium body action claims", () => {
   it("rejects a claim that the summarizer performed the action", () => {
     const body = `${bodyOfLength(520)}我已保存了这条记忆。`;
+    const validation = validateMediumBody(body, allowed);
+    expect(validation.ok).toBe(false);
+    if (!validation.ok) expect(validation.failure.kind).toBe("action_claim");
+  });
+
+  it("rejects that claim written in English too", () => {
+    const body = `${bodyOfLength(520)}I have already saved this memory.`;
     const validation = validateMediumBody(body, allowed);
     expect(validation.ok).toBe(false);
     if (!validation.ok) expect(validation.failure.kind).toBe("action_claim");

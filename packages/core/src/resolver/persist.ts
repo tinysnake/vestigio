@@ -167,7 +167,7 @@ export const MEMORY_KEYWORDS_MAX = 8;
 
 export function buildTitle(question: string): string {
   const cleaned = question.replace(/\s+/gu, " ").trim();
-  return `关于「${clip(cleaned, 48)}」的记忆`;
+  return `Memory about "${clip(cleaned, 48)}"`;
 }
 
 export function buildKeywords(question: string): string[] {

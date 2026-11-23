@@ -315,7 +315,7 @@ function correctionMessage(
 ): string {
   const ids = pending.map((event) => event.event_id).join(", ");
   const measured = over ?? measuredBodyCount(extraction);
-  const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain Chinese prose`;
+  const band = `${MEDIUM_BODY_TARGET_MIN}-${MEDIUM_BODY_TARGET_MAX} non-whitespace Unicode code points of plain prose`;
   const size = measured === null
     ? `The body must be ${band}.`
     : `Your body was ${measured} non-whitespace Unicode code points${measured > MEDIUM_BODY_MAX ? `, over the ${MEDIUM_BODY_MAX} ceiling` : ""}. Rewrite it to ${band}: keep every fact and citation, drop padding and repeated phrasing.`;
@@ -323,7 +323,7 @@ function correctionMessage(
     `Your previous reply was not usable: ${extraction.reason ?? "unreadable"}.`,
     `Reply with exactly one JSON object {"body": "..."} and nothing else.`,
     size,
-    `It must cite at least one of these pending event ids with [来源:<id>]: ${ids}. No other id may appear.`,
+    `It must cite at least one of these pending event ids with [source:<id>]: ${ids}. No other id may appear.`,
   ].join("\n");
 }
 
@@ -337,7 +337,7 @@ function repairGuidance(pendingCount: number): string {
     `This rewrite folds ${pendingCount} pending change(s) into an existing summary.`,
     "Write the resulting state only, as if nothing had ever been pending: never mention a previous summary, a gap, a correction, a confirmation or a pending event.",
     "This replaces the general instruction to describe the discussion: do not say what was discussed or what was tried, and do not call a settled value uncertain.",
-    "Cite [来源:<id>] for each pending event you fold in, and state the resulting values once, in the conclusion, without enumerating the changes.",
+    "Cite [source:<id>] for each pending event you fold in, and state the resulting values once, in the conclusion, without enumerating the changes.",
     "A superseded value may appear only where it is explicitly marked as replaced; never open with the old one.",
     "When the pending changes move the same fact more than once and the evidence orders them, only the last effective change is current: state that value and mark the earlier moves as replaced.",
     "When two pending events claim different current values for the same setting and the evidence does not order them, state both with their sources and say the value is unresolved; never choose one and never invent a resolution.",
