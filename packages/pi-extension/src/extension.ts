@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readConfig } from "./config.js";
 import { resolveEnv } from "@vestigio/config";
 import { connectPi } from "./daemon-adapter.js";
+import { sessionProjectId } from "./state.js";
 
 export const STALE_MAINTENANCE_INSTRUCTIONS = [
 	"Vestigio memory maintenance:",
@@ -22,13 +23,22 @@ export const RECALL_INSTRUCTIONS = [
 	"- Read raw transcripts or logs only after both tools return nothing, and say which memory or session an answer came from.",
 ].join("\n");
 
+export const PROJECT_ID_INSTRUCTIONS = (projectId: string): string => [
+	"Vestigio project identity:",
+	`- Your canonical project id for this session is \`${projectId}\`. Pass it verbatim whenever a store or daemon call needs one.`,
+	"- Never invent, guess, or derive a project id from a path yourself. To identify another directory, run `vestigio projects id --dir <path>` or call the `project_id` MCP tool, and use the id it prints.",
+].join("\n");
+
 export default function vestigio(pi: ExtensionAPI): void {
 	const config = readConfig(resolveEnv());
 	if (!config.enabled) return;
 
 	if (config.store_path === null) return;
 	connectPi(pi, config, config.store_path);
-	pi.on("before_agent_start", (event) => ({
-		systemPrompt: `${event.systemPrompt}\n\n${STALE_MAINTENANCE_INSTRUCTIONS}\n\n${RECALL_INSTRUCTIONS}`,
-	}));
+	pi.on("before_agent_start", (event, ctx) => {
+		const cwd = typeof ctx?.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
+		return {
+			systemPrompt: `${event.systemPrompt}\n\n${STALE_MAINTENANCE_INSTRUCTIONS}\n\n${RECALL_INSTRUCTIONS}\n\n${PROJECT_ID_INSTRUCTIONS(sessionProjectId(config, cwd))}`,
+		};
+	});
 }

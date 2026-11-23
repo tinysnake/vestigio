@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiDaemon } from "../src/daemon-client.js";
-import vestigio, { RECALL_INSTRUCTIONS, STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
+import vestigio, { PROJECT_ID_INSTRUCTIONS, RECALL_INSTRUCTIONS, STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -82,12 +82,15 @@ describe("vestigio extension", () => {
 		expect(handlers.has("input")).toBe(true);
 		expect(tools).toContain("memory_mark_stale");
 		expect(tools).not.toContain("memory_update");
-		const result = handlers.get("before_agent_start")!({ systemPrompt: "HOST PROMPT" }, {}) as {
+		const result = handlers.get("before_agent_start")!({ systemPrompt: "HOST PROMPT" }, { cwd: dir }) as {
 			systemPrompt: string;
 		};
 		expect(result.systemPrompt.startsWith("HOST PROMPT\n\n")).toBe(true);
 		expect(result.systemPrompt).toContain(STALE_MAINTENANCE_INSTRUCTIONS);
 		expect(result.systemPrompt).toContain(RECALL_INSTRUCTIONS);
+		expect(result.systemPrompt).toContain(PROJECT_ID_INSTRUCTIONS(dir));
+		expect(PROJECT_ID_INSTRUCTIONS(dir)).toContain(`Your canonical project id for this session is \`${dir}\``);
+		expect(PROJECT_ID_INSTRUCTIONS(dir)).not.toMatch(/[\u4e00-\u9fff]/u);
 		expect(RECALL_INSTRUCTIONS).toContain("call `memory_search` once");
 		expect(RECALL_INSTRUCTIONS).toContain("only after both tools return nothing");
 	});
