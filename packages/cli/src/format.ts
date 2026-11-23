@@ -1,4 +1,5 @@
 import type { Freshness, FreshnessBrief } from "@vestigio/core";
+import type { ProjectIdentity } from "@vestigio/core/project";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 
 function clip(text: string, max: number): string {
@@ -200,6 +201,10 @@ export function formatProjectsHuman(projects: readonly ProjectListing[]): string
         : `${head}\n${" ".repeat(width + 2)}-> ${row.project.repository_root}\n`;
     })
     .join("");
+}
+
+export function formatProjectIdentityHuman(identity: ProjectIdentity): string {
+  return `${identity.project_id}\n`;
 }
 
 export function formatReassignmentHuman(report: import("@vestigio/core/storage").ProjectReassignment): string {

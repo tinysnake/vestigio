@@ -21,10 +21,10 @@ import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/cor
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
-import { resolveProjectId, withProjectAliases } from "@vestigio/core/project";
+import { describeProjectIdentity, resolveProjectId, withProjectAliases } from "@vestigio/core/project";
 import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
 import { agentModelSettings } from "@vestigio/config";
-import { formatFreshnessLines, formatProjectsHuman, formatReadHuman, formatReassignmentHuman, formatSearchHuman, staleCardLine } from "./format.js";
+import { formatFreshnessLines, formatProjectIdentityHuman, formatProjectsHuman, formatReadHuman, formatReassignmentHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 import { VestigioClient } from "@vestigio/client";
 import {
@@ -50,6 +50,7 @@ Usage:
   vestigio read   [--db <path>] --uri <memory://store/id> [--revision <n>] [--json]
   vestigio probe  [--db <path>] --obelisk-home <dir> [--json]
   vestigio projects [--db <path>] [--json]
+  vestigio projects id [<path>] [--dir <path>] [--json]
   vestigio projects move <from> <to> [--db <path>] [--json]
   vestigio resolve [--db <path>] (--project <abs path> | --global) --question <text> [options]
   vestigio jobs run [--db <path>] [--limit <1..20>] [options]
@@ -73,10 +74,16 @@ Search options:
 
 Projects options:
   With no subcommand, lists every project id the store holds with its memory
-  count and the repository root it should be scoped to. "projects move" rewrites
-  every trace of one id (memories, sources, hotspot rows, activity) onto another
-  in one transaction. It is the repair path for a store written before the
-  repository root became the identity; swap the ids before you run it.
+  count and the repository root it should be scoped to. "projects id" prints the
+  canonical id for one directory without opening the store. "projects move"
+  rewrites every trace of one id (memories, sources, hotspot rows, activity) onto
+  another in one transaction. It is the repair path for a store written before
+  the repository root became the identity; swap the ids before you run it.
+  --dir <path>             Directory "projects id" resolves; the positional <path>
+                           means the same, and one directory at most (default: the cwd).
+
+  An id printed here is the only id a store call may use; never construct one
+  from a path.
 
 Resolve options:
   --model-base-url <url>   OpenAI-compatible base URL (default: VESTIGIO_MODEL_BASE_URL).
@@ -163,6 +170,7 @@ class UsageError extends Error {
 
 const VALUE_FLAGS = new Set([
   "db",
+  "dir",
   "query",
   "project",
   "limit",
@@ -329,8 +337,9 @@ function requireScope(parsed: ParsedArgs): Scope {
 }
 
 function noExtraPositionals(parsed: ParsedArgs, command: string): void {
-  if (parsed.positionals.length > 0) {
-    throw new UsageError(`${command} takes no positional arguments (got ${parsed.positionals.join(" ")})`);
+  const extra = parsed.positionals;
+  if (extra.length > 0) {
+    throw new UsageError(`${command} takes no positional arguments (got ${extra.join(" ")})`);
   }
 }
 
@@ -426,6 +435,19 @@ async function runSearch(context: CommandContext): Promise<number> {
  */
 function runProjects(context: CommandContext): number {
   const sub = context.parsed.positionals[0];
+  if (sub === "id") {
+    const [path, ...extra] = context.parsed.positionals.slice(1);
+    if (extra.length > 0) {
+      throw new UsageError("projects id takes at most one directory");
+    }
+    const flag = stringFlag(context.parsed, "dir");
+    if (path !== undefined && flag !== undefined) {
+      throw new UsageError("give the directory once: <path> or --dir <path>");
+    }
+    const identity = describeProjectIdentity(path ?? flag ?? process.cwd());
+    emit(context.io, context.parsed, identity, formatProjectIdentityHuman(identity));
+    return 0;
+  }
   const store = openDatabase(context);
   try {
     if (sub === undefined) {
@@ -438,7 +460,7 @@ function runProjects(context: CommandContext): number {
     }
     if (sub !== "move") {
       throw new UsageError(
-        `unknown projects subcommand ${JSON.stringify(sub)}: use "projects" or "projects move <from> <to>"`,
+        `unknown projects subcommand ${JSON.stringify(sub)}: use "projects", "projects id [<path>]" or "projects move <from> <to>"`,
       );
     }
     const [from, to, ...extra] = context.parsed.positionals.slice(1);
