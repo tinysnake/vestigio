@@ -134,9 +134,9 @@ function scriptedModel(
 			const system = request.messages[0]?.content ?? "";
 			const kind: ScriptedKind = system.includes("Decide whether the candidates")
 				? "judge"
-				: system.includes("中期摘要")
+				: system.includes("You write one medium summary")
 					? "summary"
-					: system.includes("导航短摘要")
+					: system.includes("You write a navigation summary")
 						? "nav"
 						: "other";
 			const index =
@@ -340,7 +340,7 @@ describe("memory_read freshness", () => {
 		const result = await tools
 			.get("memory_search")!
 			.execute("call-search", { query: "部署 端口" }, undefined, undefined, ctx);
-		expect(result.content[0]!.text).toContain("stale: 未吸收 1 条后续证据");
+		expect(result.content[0]!.text).toContain("stale: 1 later evidence item(s) not absorbed");
 		store.close();
 	});
 });

@@ -1022,7 +1022,7 @@ export async function resolveMemory(input: ResolveInput): Promise<ResolveOutcome
       if (citedStale !== null) {
         const staleFreshness = input.store.readFreshness(citedStale.uri, citedStale.revision);
         if (staleFreshness?.revision_mismatch === true) {
-          return finish({ ...assembled, result: parseRetrievalResult({ ...assembled.result, freshness: staleFreshness, next_action: `memory_read(uri=${JSON.stringify(citedStale.uri)}) 当前摘要已更新至 r${staleFreshness.head_revision}` }) }, null, false);
+          return finish({ ...assembled, result: parseRetrievalResult({ ...assembled.result, freshness: staleFreshness, next_action: `memory_read(uri=${JSON.stringify(citedStale.uri)}) - summary updated to r${staleFreshness.head_revision}` }) }, null, false);
         }
       }
       if (input.model !== null && input.model !== undefined && hasRawHistoryEvidence(evidence, bundle.excerpts)) {

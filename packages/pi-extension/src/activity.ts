@@ -53,11 +53,11 @@ export type InjectionPlanLike = {
 
 export function formatInjection(plan: InjectionPlanLike): LogLine[] {
 	const lines: LogLine[] = [
-		line("info", `注入 ${plan.injected.length}/${plan.matched.length} · ${size(plan.budget.used_bytes)} · ${plan.elapsed_ms}ms`),
+		line("info", `injected ${plan.injected.length}/${plan.matched.length} · ${size(plan.budget.used_bytes)} · ${plan.elapsed_ms}ms`),
 	];
 	for (const match of plan.injected) {
 		const stale = match.freshness.is_stale;
-		lines.push(line(stale ? "warn" : "note", `${clip(match.title, TITLE_CHARS)}${stale ? "（过期）" : ""}`));
+		lines.push(line(stale ? "warn" : "note", `${clip(match.title, TITLE_CHARS)}${stale ? " (stale)" : ""}`));
 	}
 	return lines;
 }
@@ -65,20 +65,20 @@ export function formatInjection(plan: InjectionPlanLike): LogLine[] {
 const SKIPPED_REASONS = new Set(["extension_source", "slash_command", "empty_input"]);
 
 const INJECTION_REASONS: Record<string, string> = {
-	no_pool_members: "还没有记忆",
-	no_match: "无匹配",
-	all_deduped: "本会话已给过",
-	over_budget: "超出预算",
-	timeout: "超时",
-	store_unavailable: "记忆库不可用",
-	store_error: "记忆库出错",
+	no_pool_members: "no memories yet",
+	no_match: "no match",
+	all_deduped: "already given this session",
+	over_budget: "over budget",
+	timeout: "timed out",
+	store_unavailable: "memory store unavailable",
+	store_error: "memory store error",
 };
 
 export function formatNotInjected(reason: string | null | undefined): LogLine | null {
 	if (reason !== null && reason !== undefined && SKIPPED_REASONS.has(reason)) return null;
-	const text = (reason !== null && reason !== undefined ? INJECTION_REASONS[reason] : undefined) ?? reason ?? "未知原因";
+	const text = (reason !== null && reason !== undefined ? INJECTION_REASONS[reason] : undefined) ?? reason ?? "unknown reason";
 	const failed = reason === "store_unavailable" || reason === "store_error";
-	return line(failed ? "warn" : "info", `未注入 · ${text}`);
+	return line(failed ? "warn" : "info", `not injected · ${text}`);
 }
 
 /* ------------------------------------------------------------------ tools */
@@ -104,25 +104,25 @@ export function formatToolEvent(op: string, payload: Detail, result: unknown): L
 		case "memory.read": {
 			const label = shortMemory(String(payload["uri"] ?? ""));
 			const status = String(detail["status"] ?? "unknown");
-			if (status !== "resolved") return [line("warn", `读取 ${label} · ${status}`)];
+			if (status !== "resolved") return [line("warn", `read ${label} · ${status}`)];
 			const revision = typeof detail["revision"] === "number" ? ` · r${detail["revision"]}` : "";
 			const stale = freshnessOf(detail)?.is_stale === true;
-			return [line(stale ? "warn" : "info", `读取 ${label}${revision}${stale ? " · 过期" : ""}`)];
+			return [line(stale ? "warn" : "info", `read ${label}${revision}${stale ? " · stale" : ""}`)];
 		}
 		case "memory.search":
-			return [line("info", `检索 “${clip(String(payload["query"] ?? ""), QUERY_CHARS)}” → ${cardsOf(detail).length} 条`)];
+			return [line("info", `search “${clip(String(payload["query"] ?? ""), QUERY_CHARS)}” → ${cardsOf(detail).length} hit(s)`)];
 		case "memory.resolve":
-			return [line("info", `解析 “${clip(String(payload["question"] ?? ""), QUERY_CHARS)}” → ${String(detail["status"] ?? "unknown")} · ${cardsOf(detail).length} 条`)];
+			return [line("info", `resolve “${clip(String(payload["question"] ?? ""), QUERY_CHARS)}” → ${String(detail["status"] ?? "unknown")} · ${cardsOf(detail).length} hit(s)`)];
 		case "stale.publish": {
 			const events = Array.isArray(detail["events"]) ? (detail["events"] as Detail[]) : [];
 			const inserted = typeof detail["inserted"] === "number" ? detail["inserted"] : 0;
 			const refused = events.filter((event) => event["recorded"] !== true).length;
 			const label = shortMemory(String(payload["uri"] ?? ""));
-			const text = inserted > 0 ? `标记过期 ${label} · 已记录` : `标记过期 ${label} · 未记录`;
-			return [line(inserted > 0 ? "warn" : "error", refused > 0 ? `${text} · ${refused} 条被拒` : text)];
+			const text = inserted > 0 ? `marked stale ${label} · recorded` : `marked stale ${label} · not recorded`;
+			return [line(inserted > 0 ? "warn" : "error", refused > 0 ? `${text} · ${refused} refused` : text)];
 		}
 		case "request.write":
-			return [line("info", `保存请求 · ${String(detail["status"] ?? "unknown")}`)];
+			return [line("info", `save request · ${String(detail["status"] ?? "unknown")}`)];
 		default:
 			return [];
 	}
@@ -131,35 +131,35 @@ export function formatToolEvent(op: string, payload: Detail, result: unknown): L
 /* --------------------------------------------------------------- daemon */
 
 const OP_LABELS: Record<string, string> = {
-	"detector.run": "过期检测",
-	"stale.publish": "标记过期",
-	"repair.memories": "记忆修复",
-	"request.process": "保存处理",
+	"detector.run": "stale detector",
+	"stale.publish": "stale marking",
+	"repair.memories": "memory repair",
+	"request.process": "save processing",
 };
 
 export function formatJobEvent(op: string, state: string, result: unknown): LogLine[] {
 	const detail = asDetail(result);
 	if (state === "failed" || state === "cancelled") {
-		return [line("error", `${OP_LABELS[op] ?? op} 失败 · ${state}`)];
+		return [line("error", `${OP_LABELS[op] ?? op} failed · ${state}`)];
 	}
 	switch (op) {
 		case "detector.run": {
 			const detected = Number(detail["detected"] ?? 0);
 			if (detected === 0) return [];
-			return [line("warn", `检测到 ${detected} 处变更 · ${Number(detail["publish_pending"] ?? 0)} 条待标记`)];
+			return [line("warn", `detected ${detected} change(s) · ${Number(detail["publish_pending"] ?? 0)} to mark`)];
 		}
 		case "stale.publish": {
 			const inserted = Number(detail["inserted"] ?? 0);
-			return inserted > 0 ? [line("warn", `标记 ${inserted} 条记忆过期 · 待修复`)] : [];
+			return inserted > 0 ? [line("warn", `marked ${inserted} memory(ies) stale · repair pending`)] : [];
 		}
 		case "repair.memories": {
 			const repaired = Number(detail["repaired"] ?? 0);
 			if (repaired === 0) return [];
-			return [line("info", `已修复 ${repaired} 条记忆`)];
+			return [line("info", `repaired ${repaired} memory(ies)`)];
 		}
 		case "request.process": {
 			const saved = Number(detail["saved"] ?? 0) + Number(detail["merged"] ?? 0);
-			return saved > 0 ? [line("info", `保存 ${saved} 条记忆`)] : [];
+			return saved > 0 ? [line("info", `saved ${saved} memory(ies)`)] : [];
 		}
 		default:
 			return [];

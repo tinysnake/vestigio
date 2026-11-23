@@ -142,11 +142,11 @@ describe("vestigio extension", () => {
 		const command = commands.get("vestigio-log");
 		expect(command).toBeDefined();
 		await command!("on", ctx);
-		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已打开，已写入配置", "info");
+		expect(notify).toHaveBeenLastCalledWith("Memory activity panel shown, saved to config", "info");
 		expect(JSON.parse(readFileSync(configPath, "utf8")).logging).toEqual({ activity: true });
 		await command!("off", ctx);
 		expect(setWidget.mock.lastCall).toEqual(["vestigio-activity", undefined]);
-		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已关闭，已写入配置", "info");
+		expect(notify).toHaveBeenLastCalledWith("Memory activity panel hidden, saved to config", "info");
 		expect(JSON.parse(readFileSync(configPath, "utf8")).logging).toEqual({ activity: false });
 	});
 
@@ -160,7 +160,7 @@ describe("vestigio extension", () => {
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
 		const { notify, ctx } = uiCtx();
 		await commands.get("vestigio-log")!("on", ctx);
-		expect(notify).toHaveBeenLastCalledWith("记忆活动面板已打开，仅本次会话（没有配置文件）", "info");
+		expect(notify).toHaveBeenLastCalledWith("Memory activity panel shown, this session only (no config file)", "info");
 	});
 
 	it("shows a delivered job in the panel", async () => {
@@ -179,7 +179,7 @@ describe("vestigio extension", () => {
 			resultCode: "ok", createdAt: 1, expiresAt: 2,
 			result: { turnLeaf: "turn", op: "repair.memories", result: { repaired: 1 } },
 		} as never);
-		expect(setWidget.mock.lastCall?.[1]).toContain("· 已修复 1 条记忆");
+		expect(setWidget.mock.lastCall?.[1]).toContain("· repaired 1 memory(ies)");
 	});
 
 	it("agent_end skips cleanly when the store has nothing seen", async () => {

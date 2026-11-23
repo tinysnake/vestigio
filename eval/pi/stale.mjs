@@ -107,7 +107,7 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 			}
 			if (system.includes("Decide whether the candidates")) return { content: JSON.stringify({ sufficient: true, answer: "端口需要按后续证据更新。", evidence_ids: ["mem-deploy-port"], read_uris: [], next_queries: [], conflicts: [], descend: false }) };
 			const value = pendingValue();
-			if (system.includes("导航短摘要")) return { content: JSON.stringify({ nav: `部署端口已改为 ${value}，改端口前建议先读本页。` }) };
+			if (system.includes("You write a navigation summary")) return { content: JSON.stringify({ nav: `部署端口已改为 ${value}，改端口前建议先读本页。` }) };
 			const pending = inspect((store) => store.listPendingStaleEvents("mem-deploy-port"));
 			const refs = pending.map((event) => `[来源:${event.event_id}]`).join("");
 			return { content: JSON.stringify({ body: body(`部署端口当前为 ${value}。保留部署步骤和验证方式。${refs}`) }) };
@@ -158,7 +158,7 @@ export async function scenarioStale({ mock, spawnPi, check, storePath, port, cha
 		const readResult = readResults(second.client)[0];
 		check("stale: the deferred read keeps the stored body", (readResult ?? "").includes("6789") && (readResult ?? "").includes("STALE"), readResult ?? "no read result");
 		check("stale: the deferred read does not repair", (readResult ?? "").includes("repair: deferred"), readResult ?? "no read result");
-		check("stale: changed freshness reinjects the note", chatRequests(deferredFrom).some((r) => lastUserText(r).includes("该摘要可能未吸收")));
+		check("stale: changed freshness reinjects the note", chatRequests(deferredFrom).some((r) => lastUserText(r).includes("this summary may not have absorbed")));
 		const repaired = await waitForRevision(4);
 		check("stale: agent_end repairs and publishes the pending event", repaired.revision === 4 && repaired.pending.length === 0 && repaired.state === "published" && repaired.nav_revision === 4, `r${repaired.revision} ${repaired.state} nav=r${repaired.nav_revision} ${repaired.pending.length} pending`);
 		check("stale: the repaired body carries the new value", repaired.body.includes("7890"), repaired.body.slice(0, 80));

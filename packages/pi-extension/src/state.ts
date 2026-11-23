@@ -238,8 +238,8 @@ export class VestigioState {
 	}
 
 	historySkipReason(): string | null {
-		if (this.config.obelisk_home === null) return `未配置 ${"VESTIGIO_OBELISK_HOME"}`;
-		if (this.historyFailure !== null) return `历史层不可用：${this.historyFailure}`;
+		if (this.config.obelisk_home === null) return "VESTIGIO_OBELISK_HOME is not configured";
+		if (this.historyFailure !== null) return `history layer unavailable: ${this.historyFailure}`;
 		return null;
 	}
 
@@ -274,8 +274,8 @@ export class VestigioState {
 	}
 
 	modelSkipReason(): string | null {
-		if (this.config.model_base_url === null) return "未配置 VESTIGIO_MODEL_BASE_URL";
-		if (this.modelFailure !== null) return `模型不可用：${this.modelFailure}`;
+		if (this.config.model_base_url === null) return "VESTIGIO_MODEL_BASE_URL is not configured";
+		if (this.modelFailure !== null) return `model unavailable: ${this.modelFailure}`;
 		return null;
 	}
 

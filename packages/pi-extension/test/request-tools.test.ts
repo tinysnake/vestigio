@@ -66,9 +66,9 @@ function scriptedModel(route: (kind: "summary" | "nav" | "other") => Reply) {
 		async complete(request) {
 			stats.requests.push(request);
 			const system = request.messages[0]?.content ?? "";
-			const kind = system.includes("中期摘要")
+			const kind = system.includes("You write one medium summary")
 				? "summary"
-				: system.includes("导航短摘要")
+				: system.includes("You write a navigation summary")
 					? "nav"
 					: "other";
 			if (kind === "summary") stats.summary_calls += 1;

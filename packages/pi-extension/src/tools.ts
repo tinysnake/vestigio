@@ -325,7 +325,7 @@ function staleCards(result: RetrievalResult): Array<{ memory_id: string; head_re
 
 function staleMarker(brief: FreshnessBrief | undefined): string | null {
 	if (brief === undefined || brief.is_stale !== true) return null;
-	return `stale: 未吸收 ${brief.pending_count} 条后续证据 (head r${brief.head_revision})`;
+	return `stale: ${brief.pending_count} later evidence item(s) not absorbed (head r${brief.head_revision})`;
 }
 
 function sessionFileOf(sessionManager: { getSessionFile(): unknown }): string | null {

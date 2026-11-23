@@ -119,7 +119,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 					}),
 				};
 			}
-			if (system.includes("导航短摘要")) {
+			if (system.includes("You write a navigation summary")) {
 				return { content: JSON.stringify({ nav: "项目约定：使用 pnpm，部署脚本默认端口 18080。" }) };
 			}
 			// Fallback: the compose step. It must quote the evidence ids it was given.
@@ -272,7 +272,7 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 		}
 		const dialogs = uiRequests.filter((event) => ["select", "confirm", "input", "editor"].includes(event.method));
 		check("request: no confirm dialog was ever opened", dialogs.length === 0, JSON.stringify(dialogs));
-		check("request: pi displays a background save notification", uiRequests.some((event) => event.method === "notify" && event.message.includes("条记忆保存请求")));
+		check("request: pi displays a background save notification", uiRequests.some((event) => event.method === "notify" && event.message.includes("memory save request")));
 
 		const statusText = toolResultText(client.client.events);
 		check("request: the write tool reports the accepted request id", statusText.includes("req-"), statusText.slice(-300));

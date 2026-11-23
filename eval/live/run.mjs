@@ -811,7 +811,7 @@ function buildJudgePrompt({ body, oldBody, session2, changes }) {
 		"你是 Vestigio 记忆修复的评审。一个项目记忆在早先的会话里被标记为过时（stale，带有待吸收的后续证据），",
 		"随后在检索时被修复：正文被重写成吸收新证据后的版本。请只评审修复后的正文。",
 		"修复可以保留旧摘要里已有的内容，只应该改掉被取代的值并吸收新证据。",
-		"正文里的 [来源:<id>] 是系统的引用格式（用来标记证据出处），不是正文内容，也不算编造；不要因为它而判 fail。",
+		"正文里的 [source:<id>]（历史正文可能仍是 [来源:<id>]）是系统的引用格式（用来标记证据出处），不是正文内容，也不算编造；不要因为它而判 fail。",
 		"",
 		`当前正确的值（expected）：${JSON.stringify(session2.expected ?? {})}`,
 		`被取代的旧值（superseded，正文只能把它们当历史或错误来源，不能当作当前值）：${JSON.stringify(session2.superseded ?? {})}`,

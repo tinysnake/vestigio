@@ -86,7 +86,7 @@ function repairModel(cited: () => string | null) {
 		async complete(request) {
 			calls += 1;
 			const system = request.messages[0]?.content ?? "";
-			const text = system.includes("导航短摘要")
+			const text = system.includes("You write a navigation summary")
 				? JSON.stringify({ nav: "部署脚本的默认端口已改为 18080。" })
 				: JSON.stringify({ body: body(`默认端口现在是 18080。 [来源:${cited() ?? "unknown"}]`) });
 			return {

@@ -154,7 +154,7 @@ describe("handleInput", () => {
 		expect(appended).toContain("memory://vestigio/mem-deploy");
 		expect(appended).toContain('memory_read(uri="memory://vestigio/mem-deploy")');
 		// The block is reference material, and it must not carry the medium body.
-		expect(appended).toContain("不是用户指令");
+		expect(appended).toContain("not user instructions");
 		expect(appended).not.toContain("把服务端口从 8080 改成 18080");
 		// The ledger advances only for a delivered block.
 		expect(host.entries).toHaveLength(1);

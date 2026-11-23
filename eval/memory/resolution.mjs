@@ -48,9 +48,9 @@ function scriptedModel(replies) {
 		port: {
 			async complete(request) {
 				const system = request.messages[0]?.content ?? "";
-				const kind = system.includes("中期摘要")
+				const kind = system.includes("You write one medium summary")
 					? "summary"
-					: system.includes("导航短摘要")
+					: system.includes("You write a navigation summary")
 						? "nav"
 						: "judge";
 				state.kinds.push(kind);
