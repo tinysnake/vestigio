@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   deserializeSourceRef,
@@ -11,6 +10,7 @@ import {
   parseNavSummary,
   parseProjectActivity,
   parseRevision,
+  parseScope,
   parseSourceRef,
   parseStaleProducer,
   parseStoreId,
@@ -56,12 +56,21 @@ import {
 } from "../requests/queue.js";
 import { StorageError, isUniqueViolation } from "./errors.js";
 import { applyMigrations, listAppliedMigrations, type AppliedMigration } from "./migrations.js";
+import {
+  memoryContentHash,
+  memoryFromRow,
+  num,
+  real,
+  sha256,
+  str,
+  strOrNull,
+  type Row,
+} from "./rows.js";
 import { buildMatchQuery, normalizeForIndex, type MatchMode } from "./tokenize.js";
 
 export const DEFAULT_STORE_ID = "vestigio";
 export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
 
-type Row = Record<string, SQLOutputValue>;
 type IndexName = "active" | "archived";
 
 const FTS_TABLE: Record<IndexName, string> = {
@@ -163,69 +172,6 @@ export type SummaryUpdateOutcome = {
   acknowledged_event_ids?: string[];
 };
 
-function str(row: Row, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new StorageError("row_corrupt", `column ${key} is not text`);
-  }
-  return value;
-}
-
-function strOrNull(row: Row, key: string): string | null {
-  const value = row[key];
-  if (value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    throw new StorageError("row_corrupt", `column ${key} is not text`);
-  }
-  return value;
-}
-
-function num(row: Row, key: string): number {
-  const value = row[key];
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new StorageError("row_corrupt", `column ${key} is not an integer`);
-  }
-  return value;
-}
-
-function real(row: Row, key: string): number {
-  const value = row[key];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new StorageError("row_corrupt", `column ${key} is not a finite number`);
-  }
-  return value;
-}
-
-function sha256(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-/**
- * Canonical hash of a revision's identity and content. Statistics
- * (hit_count/access_count/last_access_at) and state are deliberately excluded,
- * so re-saving the same revision with newer counters is an idempotent no-op
- * while a changed body, keyword, nav or source set is a hard failure.
- */
-function memoryContentHash(memory: Memory): string {
-  return sha256(
-    JSON.stringify([
-      memory.memory_id,
-      memory.uri,
-      memory.scope,
-      memory.title,
-      memory.keywords,
-      memory.revision,
-      memory.medium.body,
-      memory.medium.body_char_count,
-      memory.medium.sources.map((source) => serializeSourceRef(source)),
-      memory.nav,
-      memory.created_at,
-    ]),
-  );
-}
-
 function ftsValues(memory: Memory): { title: string; keywords: string; nav: string; body: string } {
   return {
     title: normalizeForIndex(memory.title).join(" "),
@@ -234,6 +180,35 @@ function ftsValues(memory: Memory): { title: string; keywords: string; nav: stri
     body: normalizeForIndex(memory.medium.body).join(" "),
   };
 }
+
+/** Validate an API project id through the frozen scope boundary parser. */
+function projectIdArgument(value: string, path: string): string {
+  const scope = parseScope({ kind: "project", project_id: value }, path);
+  if (scope.kind !== "project") {
+    throw new StorageError("invariant_violation", `${path} is not a project scope`);
+  }
+  return scope.project_id;
+}
+
+/**
+ * What a project-scope move changed. Returned instead of a boolean so a caller
+ * can report the move and tell "nothing matched" from "already done".
+ */
+export type ProjectReassignment = {
+  from: string;
+  to: string;
+  memory_ids: MemoryId[];
+  revisions: number;
+  sources: number;
+  memberships: number;
+  activity: boolean;
+};
+
+/** One stored project id and how many memories its head revisions own. */
+export type ProjectMemoryCount = {
+  project_id: string;
+  memories: number;
+};
 
 /**
  * One SQLite file, its migrations, and every read/write path over them. No
@@ -582,6 +557,194 @@ export class MemoryStore {
         ? this.db.prepare("SELECT COUNT(*) AS n FROM memory_heads").get()
         : this.db.prepare("SELECT COUNT(*) AS n FROM memory_heads WHERE state = ?").get(state);
     return row === undefined ? 0 : num(row, "n");
+  }
+
+  /**
+   * The heads each project id owns, counted without loading a single body. A
+   * store that predates the repository-root identity holds one id per worktree,
+   * so this is the list a migration starts from.
+   */
+  countMemoriesByProject(): ProjectMemoryCount[] {
+    this.assertOpen();
+    return this.db
+      .prepare(
+        `SELECT memories.project_id AS project_id, COUNT(*) AS memories
+           FROM memory_heads
+           JOIN memories
+             ON memories.memory_id = memory_heads.memory_id
+            AND memories.revision = memory_heads.revision
+          WHERE memories.scope_kind = 'project'
+          GROUP BY memories.project_id
+          ORDER BY memories.project_id ASC`,
+      )
+      .all()
+      .map((row) => ({ project_id: str(row, "project_id"), memories: num(row, "memories") }));
+  }
+
+  /**
+   * Move every trace of one project id onto another, in one transaction. The id
+   * is an absolute path, so one repository used to be several projects (one per
+   * worktree); a store written before the repository-root identity needs this
+   * durable repair rather than an ad-hoc UPDATE. Sources move first, because the
+   * re-hash below reads them back: `memoryContentHash` covers the scope and the
+   * serialized source refs together, and a revision whose hash no longer matches
+   * its row reads as `uri_content_changed` on its next save.
+   */
+  reassignProjectScope(from: string, to: string): ProjectReassignment {
+    this.assertOpen();
+    const source = projectIdArgument(from, "from");
+    const target = projectIdArgument(to, "to");
+    if (source === target) {
+      throw new StorageError("invariant_violation", "reassignProjectScope needs two different project ids");
+    }
+    return this.write(() => {
+      const sources = this.moveSourceProjectIds(source, target);
+      const memoryIds = this.selectProjectMemoryIds(source);
+      if (memoryIds.length > 0) {
+        this.db
+          .prepare("UPDATE memories SET project_id = ? WHERE scope_kind = 'project' AND project_id = ?")
+          .run(target, source);
+      }
+      const revisions = this.rehashProjectRevisions(memoryIds);
+      const memberships = this.moveProjectMemberships(source, target);
+      const activity = this.moveProjectActivity(source, target);
+      return {
+        from: source,
+        to: target,
+        memory_ids: memoryIds,
+        revisions,
+        sources,
+        memberships,
+        activity,
+      };
+    });
+  }
+
+  /** Rewrite one project id's source rows, keeping the column and ref_json in step. */
+  private moveSourceProjectIds(from: string, to: string): number {
+    const rows = this.db
+      .prepare(
+        `SELECT memory_id, revision, ordinal, ref_json FROM sources
+          WHERE project_id = ?
+          ORDER BY memory_id ASC, revision ASC, ordinal ASC`,
+      )
+      .all(from);
+    const update = this.db.prepare(
+      "UPDATE sources SET project_id = ?, ref_json = ? WHERE memory_id = ? AND revision = ? AND ordinal = ?",
+    );
+    for (const row of rows) {
+      const ref = deserializeSourceRef(str(row, "ref_json"));
+      const moved = ref.project_id === from;
+      update.run(
+        moved ? to : ref.project_id,
+        moved ? serializeSourceRef({ ...ref, project_id: to }) : str(row, "ref_json"),
+        str(row, "memory_id"),
+        num(row, "revision"),
+        num(row, "ordinal"),
+      );
+    }
+    return rows.length;
+  }
+
+  private selectProjectMemoryIds(projectId: string): MemoryId[] {
+    return this.db
+      .prepare(
+        `SELECT DISTINCT memory_id FROM memories
+          WHERE scope_kind = 'project' AND project_id = ?
+          ORDER BY memory_id ASC`,
+      )
+      .all(projectId)
+      .map((row) => parseMemoryId(str(row, "memory_id")));
+  }
+
+  /** Recompute `content_hash` for every revision of the memories that moved. */
+  private rehashProjectRevisions(memoryIds: readonly MemoryId[]): number {
+    const selectRevisions = this.db.prepare(
+      "SELECT revision FROM memories WHERE memory_id = ? ORDER BY revision ASC",
+    );
+    const setHash = this.db.prepare(
+      "UPDATE memories SET content_hash = ? WHERE memory_id = ? AND revision = ?",
+    );
+    let revisions = 0;
+    for (const memoryId of memoryIds) {
+      for (const row of selectRevisions.all(memoryId)) {
+        const revision = num(row, "revision");
+        const full = this.selectRevision(memoryId, revision);
+        if (full === undefined) {
+          throw new StorageError(
+            "row_corrupt",
+            `${memoryId} revision ${revision} vanished while its project moved`,
+          );
+        }
+        setHash.run(memoryContentHash(this.rowToMemory(full)), memoryId, revision);
+        revisions += 1;
+      }
+    }
+    return revisions;
+  }
+
+  /** Merge hotspot rows onto the target, keeping the larger of every counter. */
+  private moveProjectMemberships(from: string, to: string): number {
+    const rows = this.db
+      .prepare(
+        `SELECT memory_id, admitted_seq, last_hit_seq, last_access_seq,
+                recent_hit_weight, recent_access_weight
+           FROM hotspot_memberships WHERE project_id = ? ORDER BY memory_id ASC`,
+      )
+      .all(from);
+    const select = this.db.prepare(
+      `SELECT admitted_seq, last_hit_seq, last_access_seq, recent_hit_weight, recent_access_weight
+         FROM hotspot_memberships WHERE project_id = ? AND memory_id = ?`,
+    );
+    const move = this.db.prepare(
+      "UPDATE hotspot_memberships SET project_id = ? WHERE project_id = ? AND memory_id = ?",
+    );
+    const merge = this.db.prepare(
+      `UPDATE hotspot_memberships
+          SET admitted_seq = ?, last_hit_seq = ?, last_access_seq = ?,
+              recent_hit_weight = ?, recent_access_weight = ?
+        WHERE project_id = ? AND memory_id = ?`,
+    );
+    const drop = this.db.prepare("DELETE FROM hotspot_memberships WHERE project_id = ? AND memory_id = ?");
+    for (const row of rows) {
+      const memoryId = str(row, "memory_id");
+      const existing = select.get(to, memoryId);
+      if (existing === undefined) {
+        move.run(to, from, memoryId);
+        continue;
+      }
+      merge.run(
+        Math.max(num(existing, "admitted_seq"), num(row, "admitted_seq")),
+        Math.max(num(existing, "last_hit_seq"), num(row, "last_hit_seq")),
+        Math.max(num(existing, "last_access_seq"), num(row, "last_access_seq")),
+        Math.max(real(existing, "recent_hit_weight"), real(row, "recent_hit_weight")),
+        Math.max(real(existing, "recent_access_weight"), real(row, "recent_access_weight")),
+        to,
+        memoryId,
+      );
+      drop.run(from, memoryId);
+    }
+    return rows.length;
+  }
+
+  /** Merge the source project's logical clock onto the target, keeping the later one. */
+  private moveProjectActivity(from: string, to: string): boolean {
+    const row = this.db
+      .prepare("SELECT activity_seq, last_input_at FROM project_activity WHERE project_id = ?")
+      .get(from);
+    if (row === undefined) {
+      return false;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO project_activity (project_id, activity_seq, last_input_at) VALUES (?, ?, ?)
+           ON CONFLICT(project_id) DO UPDATE SET
+             activity_seq = max(project_activity.activity_seq, excluded.activity_seq),
+             last_input_at = max(project_activity.last_input_at, excluded.last_input_at)`,
+      )
+      .run(to, num(row, "activity_seq"), str(row, "last_input_at"));
+    this.db.prepare("DELETE FROM project_activity WHERE project_id = ?").run(from);
+    return true;
   }
 
   /** Insert a usage event. Returns false when the deterministic event_id was already stored. */
@@ -1350,54 +1513,10 @@ export class MemoryStore {
   private rowToMemory(row: Row): Memory {
     const memoryId = str(row, "memory_id");
     const revision = num(row, "revision");
-    const scopeKind = str(row, "scope_kind");
-    let scope: Scope;
-    if (scopeKind === "project") {
-      const projectId = strOrNull(row, "project_id");
-      if (projectId === null) {
-        throw new StorageError("row_corrupt", `${memoryId}: project scope without project_id`);
-      }
-      scope = { kind: "project", project_id: projectId };
-    } else if (scopeKind === "global") {
-      scope = { kind: "global" };
-    } else {
-      throw new StorageError("row_corrupt", `${memoryId}: unknown scope_kind ${scopeKind}`);
-    }
-
-    const keywords = JSON.parse(str(row, "keywords_json")) as unknown;
-    const navText = strOrNull(row, "nav_text");
-    const nav =
-      navText === null
-        ? null
-        : {
-            text: navText,
-            char_count: num(row, "nav_char_count"),
-            source_revision: num(row, "nav_source_revision"),
-          };
-    const candidate = {
-      memory_id: memoryId,
-      uri: str(row, "uri"),
-      scope,
-      title: str(row, "title"),
-      keywords,
-      revision,
-      state: str(row, "state"),
-      medium: {
-        body: str(row, "medium_body"),
-        body_char_count: num(row, "medium_body_char_count"),
-        sources: this.selectSources(memoryId, revision).map((source) =>
-          deserializeSourceRef(str(source, "ref_json")),
-        ),
-      },
-      nav,
-      hit_count: num(row, "hit_count"),
-      access_count: num(row, "access_count"),
-      last_access_at: strOrNull(row, "last_access_at"),
-      created_at: str(row, "created_at"),
-      updated_at: str(row, "updated_at"),
-    };
-    // Every row read back is re-validated through the frozen boundary parser.
-    return parseMemory(candidate);
+    const sources = this.selectSources(memoryId, revision).map((source) =>
+      deserializeSourceRef(str(source, "ref_json")),
+    );
+    return memoryFromRow(row, sources);
   }
 
   private selectSources(memoryId: MemoryId, revision: Revision): Row[] {

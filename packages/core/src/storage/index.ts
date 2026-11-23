@@ -14,6 +14,8 @@ export type {
   MarkStaleInput,
   MarkStaleResult,
   OpenStoreOptions,
+  ProjectMemoryCount,
+  ProjectReassignment,
   RecordInjectionReceiptOptions,
   SaveMemoryOptions,
   SaveMemoryResult,

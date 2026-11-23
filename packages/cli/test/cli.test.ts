@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import type { ModelPort } from "@vestigio/core/resolver";
-import { openStore, type MemoryStore } from "@vestigio/core/storage";
+import { openStore, type MemoryStore, type ProjectReassignment } from "@vestigio/core/storage";
 import { main } from "../src/index.js";
-import { PROJECT_A, captureIo, historyHit, makeHistoryPort, type FakeHistoryOptions, seed, tempDbPath } from "./support.js";
+import { PROJECT_A, captureIo, historyHit, makeHistoryPort, type FakeHistoryOptions, seed, sourceRef, tempDbPath } from "./support.js";
 
 const stores: MemoryStore[] = [];
 
@@ -407,5 +407,71 @@ describe("cli resolve", () => {
 		const missingScope = await run(["resolve", "--db", path, "--question", "端口"]);
 		expect(missingScope.code).toBe(2);
 		expect(missingScope.err).toContain("--project");
+	});
+});
+
+describe("cli projects", () => {
+	const OLD = "/tmp/proj-old";
+	const NEW = "/tmp/proj-new";
+
+	it("lists each stored project id with its memory count and repository root", async () => {
+		const path = seedStore((store) => {
+			seed(store, { memory_id: "mem-a", scope: { kind: "project", project_id: OLD } });
+			seed(store, {
+				memory_id: "mem-b",
+				scope: { kind: "project", project_id: NEW },
+				sources: [sourceRef({ project_id: NEW })],
+			});
+		});
+
+		const result = await run(["projects", "--db", path, "--json"]);
+		expect(result.code).toBe(0);
+		const listing = parseJson<{
+			projects: { project_id: string; memories: number; repository_root: string }[];
+		}>(result.out);
+		expect(listing.projects).toEqual([
+			{ project_id: NEW, memories: 1, repository_root: NEW },
+			{ project_id: OLD, memories: 1, repository_root: OLD },
+		]);
+	});
+
+	it("moves one project id's whole footprint onto another and reports the counts", async () => {
+		const path = seedStore((store) => {
+			seed(store, {
+				memory_id: "mem-a",
+				scope: { kind: "project", project_id: OLD },
+				sources: [sourceRef({ project_id: OLD })],
+			});
+		});
+
+		const moved = await run(["projects", "move", OLD, NEW, "--db", path, "--json"]);
+		expect(moved.code).toBe(0);
+		expect(parseJson<ProjectReassignment>(moved.out)).toMatchObject({
+			from: OLD,
+			to: NEW,
+			memory_ids: ["mem-a"],
+			revisions: 1,
+			sources: 1,
+		});
+
+		const after = await run(["projects", "--db", path]);
+		expect(after.out).toContain(NEW);
+		expect(after.out).not.toContain(OLD);
+
+		const again = await run(["projects", "move", OLD, NEW, "--db", path]);
+		expect(again.code).toBe(0);
+		expect(again.out).toContain(`nothing in the store carries ${OLD}`);
+	});
+
+	it("rejects a missing target and an unknown subcommand", async () => {
+		const path = seedStore((store) => seed(store, {}));
+
+		const missing = await run(["projects", "move", OLD, "--db", path]);
+		expect(missing.code).toBe(2);
+		expect(missing.err).toContain("<from> <to>");
+
+		const unknown = await run(["projects", "rename", "--db", path]);
+		expect(unknown.code).toBe(2);
+		expect(unknown.err).toContain("unknown projects subcommand");
 	});
 });

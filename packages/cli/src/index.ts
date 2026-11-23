@@ -24,7 +24,7 @@ import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { resolveProjectId, withProjectAliases } from "@vestigio/core/project";
 import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
 import { agentModelSettings } from "@vestigio/config";
-import { formatFreshnessLines, formatReadHuman, formatSearchHuman, staleCardLine } from "./format.js";
+import { formatFreshnessLines, formatProjectsHuman, formatReadHuman, formatReassignmentHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
 import { VestigioClient } from "@vestigio/client";
 import {
@@ -49,6 +49,8 @@ Usage:
   vestigio search [--db <path>] (--project <abs path> | --global) --query <text> [options]
   vestigio read   [--db <path>] --uri <memory://store/id> [--revision <n>] [--json]
   vestigio probe  [--db <path>] --obelisk-home <dir> [--json]
+  vestigio projects [--db <path>] [--json]
+  vestigio projects move <from> <to> [--db <path>] [--json]
   vestigio resolve [--db <path>] (--project <abs path> | --global) --question <text> [options]
   vestigio jobs run [--db <path>] [--limit <1..20>] [options]
   vestigio stop   [--db <path>]
@@ -68,6 +70,13 @@ Search options:
   --obelisk-cli <path>           Pinned CLI entry to run instead of the dependency.
   --source-instance <id>         SourceRef instance label (default "local").
   --json                         Print machine-readable JSON.
+
+Projects options:
+  With no subcommand, lists every project id the store holds with its memory
+  count and the repository root it should be scoped to. "projects move" rewrites
+  every trace of one id (memories, sources, hotspot rows, activity) onto another
+  in one transaction. It is the repair path for a store written before the
+  repository root became the identity; swap the ids before you run it.
 
 Resolve options:
   --model-base-url <url>   OpenAI-compatible base URL (default: VESTIGIO_MODEL_BASE_URL).
@@ -404,6 +413,40 @@ async function runSearch(context: CommandContext): Promise<number> {
         history_index: obelisk === null ? null : historyIndexPath(obelisk.home),
       }),
     );
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Show every project id a store holds with the root it should be scoped to, and
+ * move one id's whole footprint onto another. The move is the one durable repair
+ * path for a store written before the repository root became the identity.
+ */
+function runProjects(context: CommandContext): number {
+  const sub = context.parsed.positionals[0];
+  const store = openDatabase(context);
+  try {
+    if (sub === undefined) {
+      const projects = store.countMemoriesByProject().map((entry) => ({
+        ...entry,
+        repository_root: resolveProjectId(entry.project_id),
+      }));
+      emit(context.io, context.parsed, { projects }, formatProjectsHuman(projects));
+      return 0;
+    }
+    if (sub !== "move") {
+      throw new UsageError(
+        `unknown projects subcommand ${JSON.stringify(sub)}: use "projects" or "projects move <from> <to>"`,
+      );
+    }
+    const [from, to, ...extra] = context.parsed.positionals.slice(1);
+    if (from === undefined || to === undefined || extra.length > 0) {
+      throw new UsageError("projects move takes exactly two project ids: <from> <to>");
+    }
+    const report = store.reassignProjectScope(from, to);
+    emit(context.io, context.parsed, report, formatReassignmentHuman(report));
     return 0;
   } finally {
     store.close();
@@ -857,6 +900,8 @@ export async function main(
         return await runProbe(context);
       case "resolve":
         return await runResolve(context);
+      case "projects":
+        return runProjects(context);
       case "jobs":
         return await runJobs(context);
       case "submit":
