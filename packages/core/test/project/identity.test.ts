@@ -110,6 +110,12 @@ describe("real repositories", () => {
   const subdir = join(root, "packages", "core");
   const worktree = join(parent, "worktree");
   const plain = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-plain-")));
+  const submoduleSource = join(parent, "submodule-source");
+  const superproject = join(parent, "superproject");
+  const vendored = join(superproject, "vendor", "lib");
+  const vendoredWorktree = join(parent, "vendored-worktree");
+  const cloneA = join(parent, "clone-a");
+  const cloneB = join(parent, "clone-b");
 
   mkdirSync(subdir, { recursive: true });
   runGit(root, ["init", "-q"]);
@@ -117,6 +123,24 @@ describe("real repositories", () => {
   runGit(root, ["add", "."]);
   runGit(root, ["commit", "-qm", "init"]);
   runGit(root, ["worktree", "add", "-q", worktree]);
+
+  mkdirSync(submoduleSource, { recursive: true });
+  runGit(submoduleSource, ["init", "-q"]);
+  writeFileSync(join(submoduleSource, "index.js"), "export const lib = 1;\n");
+  runGit(submoduleSource, ["add", "."]);
+  runGit(submoduleSource, ["commit", "-qm", "init"]);
+
+  mkdirSync(superproject, { recursive: true });
+  runGit(superproject, ["init", "-q"]);
+  writeFileSync(join(superproject, "README.md"), "super\n");
+  runGit(superproject, ["add", "."]);
+  runGit(superproject, ["commit", "-qm", "init"]);
+  runGit(superproject, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", submoduleSource, "vendor/lib"]);
+  runGit(superproject, ["commit", "-qm", "vendored"]);
+  runGit(vendored, ["worktree", "add", "-q", vendoredWorktree]);
+
+  runGit(parent, ["clone", "-q", submoduleSource, cloneA]);
+  runGit(parent, ["clone", "-q", submoduleSource, cloneB]);
 
   it("resolves a checkout, a subdirectory and a linked worktree to one id", () => {
     expect(gitRepositoryRoot(root)).toBe(root);
@@ -129,5 +153,19 @@ describe("real repositories", () => {
   it("keeps a non-git directory as its own absolute path", () => {
     expect(gitRepositoryRoot(plain)).toBeNull();
     expect(resolveProjectId(plain)).toBe(resolve(plain));
+  });
+
+  it("resolves a submodule to its own checkout, not its git directory", () => {
+    expect(gitRepositoryRoot(vendored)).toBe(vendored);
+    expect(resolveProjectId(vendored)).toBe(vendored);
+    expect(resolveProjectId(vendored)).not.toBe(resolveProjectId(superproject));
+  });
+
+  it("gives a submodule one id across its worktrees and one per clone", () => {
+    expect(gitRepositoryRoot(vendoredWorktree)).toBe(vendored);
+    expect(resolveProjectId(vendoredWorktree)).toBe(resolveProjectId(vendored));
+    expect(resolveProjectId(cloneA)).toBe(cloneA);
+    expect(resolveProjectId(cloneB)).toBe(cloneB);
+    expect(resolveProjectId(cloneA)).not.toBe(resolveProjectId(cloneB));
   });
 });
