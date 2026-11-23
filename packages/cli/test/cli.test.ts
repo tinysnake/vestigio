@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import type { ModelPort } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore, type ProjectReassignment } from "@vestigio/core/storage";
@@ -473,5 +477,84 @@ describe("cli projects", () => {
 		const unknown = await run(["projects", "rename", "--db", path]);
 		expect(unknown.code).toBe(2);
 		expect(unknown.err).toContain("unknown projects subcommand");
+		expect(unknown.err).toContain("projects id");
+	});
+});
+
+function git(dir: string, args: string[]): void {
+	execFileSync("git", ["-C", dir, ...args], {
+		encoding: "utf8",
+		env: {
+			...process.env,
+			GIT_AUTHOR_NAME: "vestigio-test",
+			GIT_AUTHOR_EMAIL: "vestigio-test@example.com",
+			GIT_COMMITTER_NAME: "vestigio-test",
+			GIT_COMMITTER_EMAIL: "vestigio-test@example.com",
+		},
+	});
+}
+
+describe("cli projects id", () => {
+	const parent = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-project-")));
+	const repo = join(parent, "repo");
+	const worktree = join(parent, "worktree");
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-plain-")));
+	mkdirSync(repo, { recursive: true });
+	git(repo, ["init", "-q"]);
+	writeFileSync(join(repo, "README.md"), "seed\n");
+	git(repo, ["add", "."]);
+	git(repo, ["commit", "-qm", "init"]);
+	git(repo, ["worktree", "add", "-q", worktree]);
+
+	type Identity = { path: string; project_id: string; repository_root: string | null };
+
+	it("prints only the id", async () => {
+		const result = await run(["projects", "id", "--dir", repo]);
+		expect(result.code).toBe(0);
+		expect(result.out).toBe(`${repo}\n`);
+	});
+
+	it("--json carries path, project_id and repository_root", async () => {
+		const result = await run(["projects", "id", "--dir", repo, "--json"]);
+		expect(result.code).toBe(0);
+		expect(parseJson<Identity>(result.out)).toEqual({ path: repo, project_id: repo, repository_root: repo });
+	});
+
+	it("returns one id for the checkout and a linked worktree while path differs", async () => {
+		const main = parseJson<Identity>((await run(["projects", "id", "--dir", repo, "--json"])).out);
+		const linked = parseJson<Identity>((await run(["projects", "id", "--dir", worktree, "--json"])).out);
+		expect(linked.project_id).toBe(main.project_id);
+		expect(linked.path).not.toBe(main.path);
+		expect(linked.repository_root).toBe(main.project_id);
+	});
+
+	it("returns the path as the id with a null repository root outside a repository", async () => {
+		const result = await run(["projects", "id", "--dir", outside, "--json"]);
+		expect(parseJson<Identity>(result.out)).toEqual({
+			path: outside,
+			project_id: outside,
+			repository_root: null,
+		});
+	});
+
+	it("accepts a relative --dir", async () => {
+		const result = await run(["projects", "id", "--dir", ".", "--json"]);
+		expect(result.code).toBe(0);
+		expect(parseJson<Identity>(result.out).path).toBe(resolve("."));
+	});
+
+	it("resolves the same identity from a positional path", async () => {
+		const flag = parseJson<Identity>((await run(["projects", "id", "--dir", worktree, "--json"])).out);
+		const positional = parseJson<Identity>((await run(["projects", "id", worktree, "--json"])).out);
+		expect(positional).toEqual(flag);
+	});
+
+	it("rejects more than one directory", async () => {
+		const both = await run(["projects", "id", repo, "--dir", worktree]);
+		expect(both.code).toBe(2);
+		expect(both.err).toContain("give the directory once");
+		const extra = await run(["projects", "id", repo, worktree]);
+		expect(extra.code).toBe(2);
+		expect(extra.err).toContain("projects id takes at most one directory");
 	});
 });
