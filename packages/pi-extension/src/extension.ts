@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ProjectSettingsError } from "@vestigio/core/project";
 import { readConfig } from "./config.js";
 import { resolveEnv } from "@vestigio/config";
 import { connectPi } from "./daemon-adapter.js";
@@ -29,6 +30,12 @@ export const PROJECT_ID_INSTRUCTIONS = (projectId: string): string => [
 	"- Never invent, guess, or derive a project id from a path yourself. To identify another directory, run `vestigio projects id --dir <path>` or call the `project_id` MCP tool, and use the id it prints.",
 ].join("\n");
 
+export const PROJECT_SETTINGS_INSTRUCTIONS = (problem: string): string => [
+	"Vestigio project identity:",
+	`- The project settings file is invalid, and memory tools will fail until it is fixed: ${problem}`,
+	"- Do not substitute a different project id; report the settings file to the operator.",
+].join("\n");
+
 export default function vestigio(pi: ExtensionAPI): void {
 	const config = readConfig(resolveEnv());
 	if (!config.enabled) return;
@@ -37,8 +44,15 @@ export default function vestigio(pi: ExtensionAPI): void {
 	connectPi(pi, config, config.store_path);
 	pi.on("before_agent_start", (event, ctx) => {
 		const cwd = typeof ctx?.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
+		let project: string;
+		try {
+			project = PROJECT_ID_INSTRUCTIONS(sessionProjectId(config, cwd));
+		} catch (error) {
+			if (!(error instanceof ProjectSettingsError)) throw error;
+			project = PROJECT_SETTINGS_INSTRUCTIONS(error.message);
+		}
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${STALE_MAINTENANCE_INSTRUCTIONS}\n\n${RECALL_INSTRUCTIONS}\n\n${PROJECT_ID_INSTRUCTIONS(sessionProjectId(config, cwd))}`,
+			systemPrompt: `${event.systemPrompt}\n\n${STALE_MAINTENANCE_INSTRUCTIONS}\n\n${RECALL_INSTRUCTIONS}\n\n${project}`,
 		};
 	});
 }

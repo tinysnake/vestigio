@@ -79,6 +79,12 @@ Projects options:
   rewrites every trace of one id (memories, sources, hotspot rows, activity) onto
   another in one transaction. It is the repair path for a store written before
   the repository root became the identity; swap the ids before you run it.
+  The nearest committed .vestigio/settings.json below the repository root can
+  declare "project": "repo" for the repository root, "self" for the directory
+  that holds the file, or a path resolved against that file. Otherwise a
+  submodule is named <superproject id>/<path below it>, so every worktree of its
+  superproject prints the same id, a nested repository stays its own scope, and
+  a malformed settings file is an error rather than a fallback.
   --dir <path>             Directory "projects id" resolves; the positional <path>
                            means the same, and one directory at most (default: the cwd).
 

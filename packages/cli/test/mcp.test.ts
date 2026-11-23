@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Submission } from "@vestigio/client";
@@ -120,10 +120,23 @@ describe("tools/list", () => {
 
 describe("project_id", () => {
   it("resolves a directory with no store and no daemon call", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "vestigio-mcp-project-"));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-mcp-project-")));
     const h = harness(fakeDaemonClient(), null);
     await h.tool("project_id", { path: dir });
-    expect(textOf(h.last())).toEqual({ path: dir, project_id: dir, repository_root: null });
+    expect(textOf(h.last())).toEqual({ path: dir, project_id: dir, repository_root: null, source: "path" });
+    expect(h.client.calls).toHaveLength(0);
+  });
+
+  it("reports a broken settings file as a tool error", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-mcp-broken-")));
+    mkdirSync(join(dir, ".vestigio"), { recursive: true });
+    const file = join(dir, ".vestigio", "settings.json");
+    writeFileSync(file, "{");
+    const h = harness(fakeDaemonClient(), null);
+    await h.tool("project_id", { path: dir });
+    const result = h.lastResult();
+    expect(result["isError"]).toBe(true);
+    expect((result["content"] as { text: string }[])[0]?.text).toContain(file);
     expect(h.client.calls).toHaveLength(0);
   });
 

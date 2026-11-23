@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -73,7 +73,7 @@ function withEnv(env: Record<string, string>, fn: () => void): void {
 
 describe("vestigio extension", () => {
 	it("appends the maintenance instruction without replacing the host prompt", () => {
-		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-ext-")));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 		const { pi, handlers, tools } = stubPi();
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
@@ -93,6 +93,23 @@ describe("vestigio extension", () => {
 		expect(PROJECT_ID_INSTRUCTIONS(dir)).not.toMatch(/[\u4e00-\u9fff]/u);
 		expect(RECALL_INSTRUCTIONS).toContain("call `memory_search` once");
 		expect(RECALL_INSTRUCTIONS).toContain("only after both tools return nothing");
+	});
+
+	it("reports an invalid settings file instead of dropping the project block", () => {
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-ext-settings-")));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		mkdirSync(join(dir, ".vestigio"), { recursive: true });
+		const file = join(dir, ".vestigio", "settings.json");
+		writeFileSync(file, "{");
+		const { pi, handlers } = stubPi();
+		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
+		const result = handlers.get("before_agent_start")!({ systemPrompt: "HOST PROMPT" }, { cwd: dir }) as {
+			systemPrompt: string;
+		};
+		expect(result.systemPrompt.startsWith("HOST PROMPT\n\n")).toBe(true);
+		expect(result.systemPrompt).toContain("The project settings file is invalid");
+		expect(result.systemPrompt).toContain(file);
+		expect(result.systemPrompt).not.toContain("Your canonical project id");
 	});
 
 	it("states the one repair path and the answer rule", () => {

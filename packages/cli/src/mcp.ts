@@ -14,7 +14,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Kind, SessionKey } from "@vestigio/client";
-import { describeProjectIdentity } from "@vestigio/core/project";
+import { describeProjectIdentity, ProjectSettingsError } from "@vestigio/core/project";
 import { DAEMON_KINDS, type DaemonClient, resolveSessionRef } from "./daemon.js";
 
 export const MCP_PROTOCOL_VERSIONS = ["2026-07-28"] as const;
@@ -247,7 +247,12 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   async function runTool(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {
     if (name === "project_id") {
       const path = stringArg(args, "path", false) ?? process.cwd();
-      return { text: JSON.stringify(describeProjectIdentity(path), null, 2) };
+      try {
+        return { text: JSON.stringify(describeProjectIdentity(path), null, 2) };
+      } catch (error) {
+        if (error instanceof ProjectSettingsError) throw new McpToolError(error.message);
+        throw error;
+      }
     }
     const store = stringArg(args, "store", false) ?? options.defaultStore;
     if (store === undefined) {
