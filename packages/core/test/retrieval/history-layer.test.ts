@@ -403,3 +403,29 @@ describe("history layer: byte ceiling and the one bounded read", () => {
     expect(outcome.history.length).toBe(1);
   });
 });
+
+describe("history layer: the repository root scopes, the session path queries", () => {
+  it("queries the index with the session path while the store keeps the root", async () => {
+    const store = newStore();
+    seedMemory(store, { memory_id: "mem-port", nav_text: "端口约定：8787。" });
+    const fake = makeHistoryPort({ hits: [hit("zqleak worktree session", "h-1")] });
+
+    const outcome = await layeredSearch({
+      store,
+      query: "端口",
+      scope: { kind: "project", project_id: PROJECT_A, history_path: "/worktrees/projA-wt" },
+      include_history: true,
+      history: fake.port,
+    });
+
+    const history = outcome.layers.find((layer) => layer.layer === "history");
+    expect(history?.status).toBe("matched");
+    expect(fake.calls.last_search).toEqual({
+      text: "端口",
+      project_path: "/worktrees/projA-wt",
+      limit: 3,
+    });
+    expect(outcome.layers.find((layer) => layer.layer === "active")?.status).toBe("matched");
+    expect(outcome.history[0]?.source_ref.project_id).toBe(PROJECT_A);
+  });
+});

@@ -151,6 +151,11 @@ export type WireSourceRef = {
 export type MemorySearchInput = {
   op: "memory.search";
   project_id: string;
+  /**
+   * Directory the history index recorded for this session. The store scopes by
+   * `project_id`; only the history layer reads this, and only inside a worktree.
+   */
+  project_path?: string | undefined;
   query: string;
   /** Opts into miss recovery using the original user question. */
   question?: string | undefined;
@@ -176,6 +181,8 @@ export type MemoryReadInput = {
 export type MemoryResolveInput = {
   op: "memory.resolve";
   project_id: string;
+  /** Directory the history index recorded for this session. History layer only. */
+  project_path?: string | undefined;
   question: string;
   include_history?: boolean | undefined;
   session_id?: string | undefined;
