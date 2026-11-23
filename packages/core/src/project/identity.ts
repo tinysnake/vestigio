@@ -9,7 +9,8 @@
  *
  * The repository root is derived from `git rev-parse --git-common-dir`, which
  * every linked worktree shares, rather than from `--show-toplevel`, which is the
- * worktree's own checkout.
+ * worktree's own checkout. A submodule's common directory lives inside the
+ * parent's `.git/modules`, so its checkout is read back from `core.worktree`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -17,43 +18,64 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { Scope } from "../contracts/types.js";
 
 /** Runs git for a directory and returns its stdout, or null when the command fails. */
-export type GitRunner = (dir: string) => string | null;
+export type GitRunner = (dir: string, args: readonly string[]) => string | null;
+
+const COMMON_DIR_ARGS = ["rev-parse", "--path-format=absolute", "--git-common-dir"] as const;
+const WORKTREE_ARGS = ["config", "--get", "core.worktree"] as const;
 
 /**
- * One spawn per directory per process. The lookup is a synchronous `git` call
- * that measures at about 6 ms here, and the extension asks on every input
- * event, so the answer is memoized: the repository owning a directory does not
- * change while a session runs.
+ * One spawn per directory and argument list per process. The lookup is a
+ * synchronous `git` call that measures at about 6 ms here, and the extension
+ * asks on every input event, so the answer is memoized: the repository owning a
+ * directory does not change while a session runs.
  */
-const commonDirOf = new Map<string, string | null>();
+const gitOutput = new Map<string, string | null>();
 
-function runGit(dir: string): string | null {
-	const cached = commonDirOf.get(dir);
+function runGit(dir: string, args: readonly string[]): string | null {
+	const key = `${dir}\u0000${args.join("\u0000")}`;
+	const cached = gitOutput.get(key);
 	if (cached !== undefined) return cached;
 	let output: string | null;
 	try {
-		output = execFileSync("git", ["-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+		output = execFileSync("git", ["-C", dir, ...args], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 	} catch {
 		output = null;
 	}
-	commonDirOf.set(dir, output);
+	gitOutput.set(key, output);
 	return output;
+}
+
+/**
+ * The checkout a git directory belongs to, for a git directory that is not the
+ * `.git` of its own checkout. A submodule keeps its git directory inside the
+ * parent's `.git/modules` and records its checkout in `core.worktree`, relative
+ * to that directory; every worktree of that submodule shares both. A bare
+ * repository records no worktree and has no checkout.
+ */
+function checkoutOfGitDir(gitDir: string, git: GitRunner): string | null {
+	const raw = git(gitDir, WORKTREE_ARGS);
+	if (raw === null) return null;
+	const value = raw.trim();
+	return value === "" ? null : resolve(gitDir, value);
 }
 
 /**
  * The git repository root that owns `dir`, or null when `dir` is not inside a
  * repository. A checkout and every linked worktree of it report `<root>/.git`,
- * so the root is its parent; a bare repository reports its own directory.
+ * so the root is its parent; a submodule reports a git directory under the
+ * parent's `.git/modules` and resolves to its own checkout, which every worktree
+ * of that submodule shares; a bare repository reports its own directory.
  */
 export function gitRepositoryRoot(dir: string, git: GitRunner = runGit): string | null {
-	const raw = git(dir);
+	const raw = git(dir, COMMON_DIR_ARGS);
 	if (raw === null) return null;
 	const common = raw.trim();
 	if (common === "") return null;
-	return basename(common) === ".git" ? dirname(common) : common;
+	if (basename(common) === ".git") return dirname(common);
+	return checkoutOfGitDir(common, git) ?? common;
 }
 
 /**
@@ -96,5 +118,10 @@ export function scopeProjectIds(scope: Scope): readonly string[] {
  */
 export function withProjectAliases(scope: Scope, known: readonly string[], git: GitRunner = runGit): Scope {
 	if (scope.kind === "global") return scope;
-	return { kind: "project", project_id: scope.project_id, project_ids: projectAliases(scope.project_id, known, git) };
+	return {
+		kind: "project",
+		project_id: scope.project_id,
+		...(scope.history_path === undefined ? {} : { history_path: scope.history_path }),
+		project_ids: projectAliases(scope.project_id, known, git),
+	};
 }
