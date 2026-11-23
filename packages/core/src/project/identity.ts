@@ -88,6 +88,29 @@ export function resolveProjectId(dir: string, git: GitRunner = runGit): string {
 }
 
 /**
+ * The canonical identity of one directory: the id every store call must use,
+ * the directory it was derived from, and its repository root.
+ */
+export type ProjectIdentity = {
+	/** The directory the id was derived from, absolute. */
+	path: string;
+	/** The canonical id every store call must use. */
+	project_id: string;
+	/** The git repository root, or null when path is outside a repository. */
+	repository_root: string | null;
+};
+
+/**
+ * The identity for `dir`: its absolute path, the canonical id resolved from it,
+ * and the repository root (null outside a repository).
+ */
+export function describeProjectIdentity(dir: string, git: GitRunner = runGit): ProjectIdentity {
+	const path = resolve(dir);
+	const repository_root = gitRepositoryRoot(path, git);
+	return { path, project_id: repository_root ?? path, repository_root };
+}
+
+/**
  * The canonical id followed by every known id that shares its repository root.
  * Known ids outside a repository, or from another repository, are not aliases.
  */
