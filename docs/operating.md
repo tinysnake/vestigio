@@ -95,6 +95,24 @@ node scripts/deploy.mjs
 
 Stop the daemon first, or the next client call fails on the protocol version.
 
+## Running from a checkout
+
+This machine runs the CLI and the daemon straight from the checkout:
+`~/.local/bin/vestigio` links to `packages/cli/bin/vestigio`, and the daemon is
+`packages/daemon/src/entry.ts` loading TypeScript from the same tree. A running
+daemon keeps the code it started with, so a merge never reaches it on its own.
+
+`.git/hooks/post-merge` and `.git/hooks/post-checkout` (local, untracked) call
+`scripts/restart-local-vestigio.mjs` whenever `main` moves in this checkout. It
+stops the daemon, starts it again from HEAD, and records the outcome in
+`<store>.daemon/checkout.json` and `<store>.daemon/restart.log`. A second run on
+the same commit does nothing, and a failed restart never fails the git operation.
+
+```sh
+node --import packages/cli/hook.mjs scripts/restart-local-vestigio.mjs            # restart now
+node --import packages/cli/hook.mjs scripts/restart-local-vestigio.mjs --dry-run  # say what it would do
+```
+
 ## Uninstall
 
 1. Remove the extension from pi. `deploy.mjs` installs it with `pi install packages/pi-extension` and records it in `~/.pi/agent/settings.json`. Remove it there, or with pi's own uninstall command.
