@@ -165,7 +165,7 @@ turn_events (
 | OBS-02 | agent 运行摘要（第 3、4 项，含工具与注入分布） | OBS-01 | `packages/pi-extension/src/run-log.ts`、`packages/pi-extension/src/daemon-adapter.ts`、`packages/pi-extension/test/` |
 | OBS-03 | 逐 turn 行与记忆侧统计查询（第 5、6 项，及第 2 项的工具口径） | 无 | `packages/core/migrations/0007_*.sql`、`packages/core/src/storage/`、`packages/core/src/observability/`、`packages/pi-extension/src/input.ts` |
 | OBS-04 | daemon 接口计数与 `GET /v1/stats`（第 2 项的 daemon 口径） | OBS-01 | `packages/daemon/src/service.ts`、`packages/daemon/test/`、`packages/cli/src/` |
-| OBS-05 | 内部模型调用日志（第 1 项，resolver/extraction/detector/nav） | OBS-01 | `packages/model-client/src/`、`packages/core/src/observability/`、`packages/daemon/src/memory/`、`packages/cli/src/index.ts` |
+| OBS-05 | 内部模型调用日志（第 1 项，resolver/extraction/detector/nav） | OBS-01 | `packages/model-client/src/`、`packages/model-client/test/`、`packages/core/src/observability/`、`packages/daemon/src/memory/`、`packages/cli/src/index.ts` |
 | OBS-06 | 审计脚本与端到端验收（六项汇总） | OBS-01..05 | `eval/observability/`、`scripts/`、`docs/` |
 
 OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-05 等 OBS-01，三者之间互不依赖。OBS-06 等前五个。
@@ -218,7 +218,7 @@ OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-0
 - [ ] 可见结果。curl `GET /v1/stats` 看到按路由分组的计数；发一个带错误 Host 的请求后 `403_host` 加一；停 daemon 后 `iface.jsonl` 出现一条快照。
 - [ ] 单元验证。`packages/daemon/test/stats.test.ts`：命中各路由后计数正确；401/403 计入各自原因；`/v1/stats` 自身是否计入在测试里固定一种并断言；路由模板把带 id 的路径归并到同一 key（`/v1/jobs/:key`）。
 - [ ] 真实验证。启动 daemon，用 `scripts/daemon-smoke.mjs` 的既有请求序列跑一轮，读 `GET /v1/stats` 与退出后的快照，断言两次计数的 total 一致。
-- [ ] 性能验证。对照是主干同一请求序列的 p95。要求加计数器后 p95 增幅低于 5%。探针为 `scripts/daemon-smoke.mjs` 的计时，基线在主干先跑。
+- [ ] 性能验证。对照是主干同一请求序列的 p95。要求加计数器后 p95 增幅低于 5%。探针是对 daemon 发一串 keep-alive 请求、按请求计时的 p95（`scripts/daemon-smoke.mjs` 只断言行为，不含计时，不能当探针），基线在主干先跑。
 - [ ] 失败条件。计数器在并发请求下丢更新或错计；`/v1/stats` 泄露 token 或 store 路径。
 - [ ] 合并前审阅。无新交互，但新增了一个端点，接口边界由使用者确认。
 
@@ -230,7 +230,7 @@ OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-0
 - [ ] 可见结果。开开关后跑一次 `memory_resolve`，`context/model/resolver__<id>.jsonl` 里出现一到四条 `model_call`，`round` 为 0..n，`purpose` 与 `layer` 与该次下探一致，`tokens_in`/`tokens_out` 与工具返回里的 `model calls` 行相符。
 - [ ] 单元验证。`packages/model-client/test/call-log.test.ts`：包一层假 port，断言每次 `complete` 产生一条记录且字段完整；失败结果记 `outcome="failed"` 且仍带 `reason`；`onCall` 抛异常时 `complete` 仍返回原结果；未传 `onCall` 时零开销路径不产生记录。
 - [ ] 真实验证。对一次真实 resolve，把日志里的 `tokens_in`/`tokens_out` 与 `ResolveOutcome.calls[]` 的对应值逐条比较，差值应为 0；再对一次 extraction 与一次 detector 各跑一遍，确认三个 agent 的 invocation 各自成文件。
-- [ ] 性能验证。先量对照：主干上一次 resolve 的墙钟与模型调用耗时。再量开日志后同一输入。要求非模型部分的开销增幅低于 3%。探针为 `eval/observability/` 的计时脚本，基线在主干先跑。
+- [ ] 性能验证。先量对照：主干上一次 resolve 的墙钟与模型调用耗时。再量开日志后同一输入。要求非模型部分的开销增幅低于 3%。探针为 `packages/model-client/test/` 里对假 port 的计时断言（量装饰层本身），基线在主干先跑。
 - [ ] 失败条件。日志写入阻塞模型调用或改变超时；日志里的 token 与 `ResolveCallRecord` 不一致；未开开关时仍有文件产生。
 - [ ] 合并前审阅。日志含提示词与记忆候选正文，属外部模型数据边界，需使用者确认默认关闭与保留期。
 
