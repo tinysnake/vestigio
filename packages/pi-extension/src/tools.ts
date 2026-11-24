@@ -28,8 +28,7 @@ import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
 import { hashQuery } from "./decision-log.js";
 import { publishRevision } from "./read-repair.js";
-import { stripInjectedNote } from "./stale-detector.js";
-import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
+import { sessionEntryText, sourceRefForEntry, stripInjectedNote } from "./session-source.js";
 import { markStaleParameters, readParameters, resolveParameters, searchParameters } from "./tool-parameters.js";
 
 export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): void {
