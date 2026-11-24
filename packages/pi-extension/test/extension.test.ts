@@ -2,11 +2,22 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { daemonRunning, VestigioClient } from "@vestigio/client";
 import { PiDaemon } from "../src/daemon-client.js";
 import vestigio, { PROJECT_ID_INSTRUCTIONS, RECALL_INSTRUCTIONS, STALE_MAINTENANCE_INSTRUCTIONS } from "../src/extension.js";
 
 const cleanups: (() => void)[] = [];
-afterEach(() => {
+const daemonStores: string[] = [];
+
+function trackDaemon(dir: string): void {
+	daemonStores.push(join(dir, "store.sqlite"));
+}
+
+afterEach(async () => {
+	for (const store of daemonStores.splice(0)) {
+		await new VestigioClient(store).stop();
+		expect(await daemonRunning(store)).toBe(false);
+	}
 	for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
@@ -75,6 +86,7 @@ describe("vestigio extension", () => {
 	it("appends the maintenance instruction without replacing the host prompt", () => {
 		const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-ext-")));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		const { pi, handlers, tools } = stubPi();
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
 		expect(handlers.has("before_agent_start")).toBe(true);
@@ -98,6 +110,7 @@ describe("vestigio extension", () => {
 	it("reports an invalid settings file instead of dropping the project block", () => {
 		const dir = realpathSync(mkdtempSync(join(tmpdir(), "vestigio-ext-settings-")));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		mkdirSync(join(dir, ".vestigio"), { recursive: true });
 		const file = join(dir, ".vestigio", "settings.json");
 		writeFileSync(file, "{");
@@ -151,6 +164,7 @@ describe("vestigio extension", () => {
 	it("registers the activity panel command and remembers the state in the config file", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		const configPath = join(dir, "config.json");
 		writeFileSync(configPath, JSON.stringify({ version: 1, store: join(dir, "store.sqlite") }));
 		const { pi, commands } = stubPi();
@@ -173,6 +187,7 @@ describe("vestigio extension", () => {
 	it("keeps a toggle for the session when no config file exists", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		const { pi, commands } = stubPi();
 		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
 		cleanups.push(() => bind.mockRestore());
@@ -186,6 +201,7 @@ describe("vestigio extension", () => {
 	it("shows a delivered job in the panel", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		const { pi, handlers, commands } = stubPi();
 		const bind = vi.spyOn(PiDaemon.prototype, "bind").mockImplementation(() => {});
 		cleanups.push(() => bind.mockRestore());
@@ -205,6 +221,7 @@ describe("vestigio extension", () => {
 	it("agent_end skips cleanly when the store has nothing seen", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "vestigio-ext-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		trackDaemon(dir);
 		const { pi, handlers } = stubPi();
 		withEnv({ VESTIGIO_STORE: join(dir, "store.sqlite") }, () => vestigio(pi as never));
 		const sessionManager = {

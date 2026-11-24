@@ -48,6 +48,7 @@ import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
+import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolvePath(HERE, "../..");
@@ -55,6 +56,7 @@ const EXT = join(ROOT, "packages/pi-extension/src/extension.ts");
 const CORPUS_DIR = join(HERE, "corpus");
 const RUNS_DIR = join(HERE, "runs");
 const TMP = "/tmp/vestigio-live";
+const liveStores = new Set();
 const AGENT_SRC = join(homedir(), ".pi/agent");
 const AGENT_HOME = join(TMP, "agent");
 const REAL_OBELISK = join(homedir(), ".obelisk/obelisk.sqlite");
@@ -1090,6 +1092,7 @@ function probeModelPort({ proxyUrl, key, model, thinking }) {
 async function runResolveProbe({ corpus, question, index, repeat, config, key, proxy, scratchRoot, runDir }) {
 	const projectId = join(scratchRoot, `probe-${corpus.name}-r${repeat}-${index}`);
 	const storePath = join(scratchRoot, `${corpus.name}-probe-r${repeat}-${index}.sqlite`);
+	liveStores.add(storePath);
 	mkdirSync(projectId, { recursive: true });
 	seedStore({ storePath, corpus, projectId });
 	const store = openStore({ path: storePath });
@@ -1287,6 +1290,7 @@ async function runSecondSession({ corpus, repeat, config, key, proxy, runDir, st
 async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, scratchRoot }) {
 	const label = `${corpus.name}-r${repeat}`;
 	const storePath = join(scratchRoot, `${label}.sqlite`);
+	liveStores.add(storePath);
 	const projectDir = join(scratchRoot, "project", label);
 	const sessionDir = join(scratchRoot, "sessions", label);
 	const obeliskHome = join(scratchRoot, "obelisk-home", label);
@@ -2119,6 +2123,15 @@ async function run() {
 		code = await main();
 	} catch (error) {
 		console.error("live harness error:", error);
+	}
+	const leakedStores = [];
+	for (const store of liveStores) {
+		await new VestigioClient(store).stop();
+		if (await daemonRunning(store)) leakedStores.push(store);
+	}
+	if (leakedStores.length > 0) {
+		console.error(`leaked daemon(s) for: ${leakedStores.join(", ")}`);
+		code = 1;
 	}
 	process.exit(code);
 }

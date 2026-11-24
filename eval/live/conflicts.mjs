@@ -15,6 +15,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { openStore } from "@vestigio/core/storage";
+import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
 import {
 	PiClient,
 	appendJsonl,
@@ -34,6 +35,7 @@ const ROOT = resolvePath(HERE, "../..");
 const EXT = join(ROOT, "packages/pi-extension/src/extension.ts");
 const RUNS_DIR = join(HERE, "runs");
 const TMP = "/tmp/vestigio-live";
+const conflictStores = new Set();
 const AGENT_SRC = join(homedir(), ".pi/agent");
 let AGENT_HOME = null;
 const REAL_OBELISK = join(homedir(), ".obelisk/obelisk.sqlite");
@@ -482,6 +484,7 @@ async function runScenario({ scenario, repeat, config, key, proxy, budget, runDi
 	const organic = scenario.project_name;
 	const dirLabel = `${organic}-r${repeat}`;
 	const storePath = join(runRoot, "stores", `${dirLabel}.sqlite`);
+	conflictStores.add(storePath);
 	const projectDir = join(runRoot, "projects", organic);
 	const otherProjectDir = join(runRoot, "projects", scenario.other_project_name);
 	const sessionDir = join(runRoot, "sessions", dirLabel);
@@ -587,6 +590,7 @@ function selftest() {
 	try {
 		for (const scenario of scenarios) {
 			const storePath = join(scratchRoot, "stores", `${scenario.key}.sqlite`);
+			conflictStores.add(storePath);
 			seedScenario({
 				storePath,
 				scenario,
@@ -697,6 +701,7 @@ function selftest() {
 		];
 		for (const testCase of cases) {
 			const storePath = join(scratchRoot, "stores", `${testCase.scenario.key}.sqlite`);
+			conflictStores.add(storePath);
 			const realFacts = readStoreFacts(storePath, testCase.scenario.memories.map((spec) => spec.memory_id));
 			const score = scoreScenario(testCase.scenario, {
 				prose: testCase.prose,
@@ -914,6 +919,13 @@ async function run() {
 	} catch (error) {
 		console.error("conflict harness error:", error);
 	} finally {
+		for (const store of conflictStores) {
+			await new VestigioClient(store).stop();
+			if (await daemonRunning(store)) {
+				console.error(`leaked daemon for: ${store}`);
+				code = 1;
+			}
+		}
 		if (AGENT_HOME !== null) rmSync(AGENT_HOME, { recursive: true, force: true });
 	}
 	process.exit(code);
