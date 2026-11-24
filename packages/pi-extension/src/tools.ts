@@ -22,7 +22,7 @@ import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/ret
 import { layeredSearch, readMemoryResult } from "@vestigio/core/retrieval";
 import { withProjectAliases } from "@vestigio/core/project";
 import type { ResolveOutcome, ModelPort, PersistenceOutcome } from "@vestigio/core/resolver";
-import { RESOLVE_MAX_SESSION_RESOLVES, resolveMemory } from "@vestigio/core/resolver";
+import { RESOLVE_MAX_SESSION_RESOLVES, requestKeyOf, resolveMemory } from "@vestigio/core/resolver";
 import type { MemoryStore } from "@vestigio/core/storage";
 import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
@@ -131,19 +131,36 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			const wantHistory = params.include_history !== false;
 			const history = wantHistory ? await state.historyPort() : null;
 			const usedBefore = state.resolveCountUsed();
-			const outcome = await resolveMemory({
-				store,
-				question: params.question,
-				scope: withProjectAliases(
-					{ kind: "project", project_id: projectId, history_path: state.historyPath(ctx.cwd) },
-					store.listProjectIds(),
-				),
-				model,
-				history,
-				signal,
-				session_resolves_used: usedBefore,
-				continuation: state.lastContinuation,
-			});
+			const scope = withProjectAliases(
+				{ kind: "project", project_id: projectId, history_path: state.historyPath(ctx.cwd) },
+				store.listProjectIds(),
+			);
+			const runResolve = () =>
+				resolveMemory({
+					store,
+					question: params.question,
+					scope,
+					model,
+					history,
+					signal,
+					session_resolves_used: usedBefore,
+					continuation: state.lastContinuation,
+				});
+			const recorder = state.modelInvocationRecorder();
+			const outcome =
+				recorder === null
+					? await runResolve()
+					: await recorder.run(
+							{
+								invocation_id: requestKeyOf({ scope, question: params.question }),
+								agent: "resolver",
+								project_id: projectId,
+								session_id: state.currentSessionId,
+								input_id: inputId,
+								question: params.question,
+							},
+							runResolve,
+						);
 			state.noteResolveUsed();
 			state.lastContinuation = outcome.continuation;
 			let recorded = 0;

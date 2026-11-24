@@ -21,6 +21,7 @@ import { loadLedger } from "./ledger-store.js";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
 import { createAgentModelPort, createOpenAiCompatibleClient } from "@vestigio/model-client";
 import type { OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { createModelInvocationRecorder, modelLogFromEnv, type ModelInvocationRecorder } from "@vestigio/core/observability";
 import type { SessionManagerLike, SessionTreeLike } from "./pi-types.js";
 
 export type SessionLike = SessionTreeLike;
@@ -52,6 +53,8 @@ export class VestigioState {
 	private model: ModelPort | null = null;
 	private modelFailure: string | null = null;
 	private modelAttempted = false;
+	private modelRecorder: ModelInvocationRecorder | null = null;
+	private modelRecorderAttempted = false;
 	private resolves = 0;
 	private continuation: ResolveContinuation | null = null;
 	private turn = 0;
@@ -205,10 +208,31 @@ export class VestigioState {
 	}
 
 	/**
+	 * The model-call recorder, created on first use. With `VESTIGIO_MODEL_LOG`
+	 * unset it is null and this state makes no model log at all. A failure to
+	 * build the log turns logging off instead of failing a resolve: observing a
+	 * call must never change its result or its timeout.
+	 */
+	modelInvocationRecorder(): ModelInvocationRecorder | null {
+		if (this.modelRecorderAttempted) return this.modelRecorder;
+		this.modelRecorderAttempted = true;
+		const storePath = this.config.store_path;
+		if (storePath === null) return null;
+		try {
+			const log = modelLogFromEnv(process.env, storePath);
+			this.modelRecorder = log === null ? null : createModelInvocationRecorder(log);
+		} catch {
+			this.modelRecorder = null;
+		}
+		return this.modelRecorder;
+	}
+
+	/**
 	 * The model port, created on first use. Without `VESTIGIO_MODEL_BASE_URL`
 	 * there is no configured backend, and `memory_resolve` degrades to the
 	 * zero-LLM layered search with a stated reason — it never silently picks
-	 * another endpoint.
+	 * another endpoint. The optional observer only records; it never wraps the
+	 * result or the deadline.
 	 */
 	modelPort(): ModelPort | null {
 		if (this.config.model_base_url === null) return null;
@@ -225,6 +249,7 @@ export class VestigioState {
 				},
 				this.config.agent_models,
 				(options) => this.createModel(options),
+				this.modelInvocationRecorder()?.observer,
 			);
 			return this.model;
 		} catch (error) {
