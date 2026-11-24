@@ -17,6 +17,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { processLines } from "./lib/platform.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
@@ -52,9 +53,11 @@ if (selected.some((item) => item.name === "compare") && !selected.some((item) =>
 }
 
 if (selected.some((item) => item.name === "pi")) {
-	const ps = spawnSync("ps", ["-axo", "command="], { encoding: "utf8" });
-	const obelisk = ps.status === 0 && ps.stdout.split("\n").some((line) => /(^|[\s/])obelisk(\s|$)/.test(line) && !/verify-all/.test(line));
-	if (obelisk) {
+	const processes = processLines();
+	if (processes === null) {
+		// The old `ps` pre-check failed open too, so a missing listing must not block the run.
+		console.warn("warn: no process listing on this platform; skipping the obelisk pre-check");
+	} else if (processes.some((line) => /(^|[\s/])obelisk(\s|$)/.test(line) && !/verify-all/.test(line))) {
 		console.error("an obelisk process is running; the pi gate asserts the real index is untouched, so wait for it to exit");
 		process.exit(2);
 	}
