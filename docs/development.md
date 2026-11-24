@@ -21,7 +21,7 @@ docs/             this documentation set
 
 ## Requirements
 
-Node 22.5 or newer and pnpm. Install once from the repository root:
+Node 22.5 or newer and pnpm. Windows, macOS and Linux all work: the scripts choose the platform's CLI invocation and process listing on their own. Install once from the repository root:
 
 ```sh
 pnpm install
@@ -67,6 +67,7 @@ Two standalone checks:
 ```sh
 node scripts/verify-doctor.mjs   # read-only: is this checkout worth driving?
 node scripts/daemon-smoke.mjs    # temp store. start on search, stop removes the endpoint
+node scripts/verify-deploy.mjs   # deploy leaves a runnable command behind (a .cmd shim on Windows)
 ```
 
 For scripted verification of a running app, use [.agents/skills/verify-vestigio/](../.agents/skills/verify-vestigio/SKILL.md). It names the harness for each user-facing feature and what a proof has to capture.

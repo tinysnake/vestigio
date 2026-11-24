@@ -9,13 +9,13 @@ description: Verify Vestigio pi extension lifecycle, memory delivery, stale upda
 
 Run `pnpm install --frozen-lockfile` from the checkout root once. Nothing is built: the CLI, daemon and extension run from source through their hook files.
 
-- CLI: `./packages/cli/bin/vestigio --help`. It is a bash wrapper; do not run it through `node`.
+- CLI: `./packages/cli/bin/vestigio --help` on POSIX. It is a bash wrapper; do not run it through `node`. On Windows run `node --import ./packages/cli/hook.mjs packages/cli/src/entry.ts --help`, which is what `deploy.mjs` writes into the `vestigio.cmd` shim.
 - Daemon: start it through the CLI (`get --job <missing>` is enough); it writes `<store>.daemon/`.
 - pi harness: it starts its own loopback provider and real pi RPC process on an ephemeral port and prints `Pi scratch: <path>`. Two runs can proceed at once; keep them serial only when you compare timings.
 
 ## Doctor
 
-Run `node scripts/verify-doctor.mjs` first whenever anything looks off. It is read-only: node/pnpm versions, CLI `--help`, pi version, `VESTIGIO_STORE`, daemons leaked by earlier checkouts, a leftover `<store>.daemon/endpoint.json`, a running `obelisk`, and worktree dirt. Warnings keep exit 0; missing tools exit 1.
+Run `node scripts/verify-doctor.mjs` first whenever anything looks off. It is read-only: node/pnpm versions, CLI `--help`, pi version, `VESTIGIO_STORE`, daemons leaked by earlier checkouts, a leftover `<store>.daemon/endpoint.json`, a running `obelisk`, and worktree dirt. Warnings keep exit 0; missing tools exit 1. On Windows it reads the process table through `Get-CimInstance Win32_Process`; if that listing is unavailable it warns and the daemon and obelisk scans see nothing.
 
 `obelisk` must not run while a pi harness run is in flight. The harness asserts the real Obelisk index mtime is unchanged, and any other Obelisk command rewrites it. `scripts/verify-all.mjs` refuses to start the pi gate in that case.
 
@@ -39,7 +39,7 @@ For the CLI journey, keep the two `--json` bodies (search and read). Mocking the
 
 ## Cleanup
 
-The pi harness closes its mock server and the pi children it started; confirm its command exited. `scripts/daemon-smoke.mjs` removes its own temp store and stops its daemon. For a daemon you started by hand, run `./packages/cli/bin/vestigio stop --db <store>`.
+The pi harness closes its mock server and the pi children it started; confirm its command exited. `scripts/daemon-smoke.mjs` removes its own temp store and stops its daemon. For a daemon you started by hand, run `./packages/cli/bin/vestigio stop --db <store>`, or on Windows `node --import ./packages/cli/hook.mjs packages/cli/src/entry.ts stop --db <store>`.
 
 Do not kill by process name and do not remove the proof directory. Leaked daemons from earlier checkouts show up in the doctor output; report them instead of managing them. The printed pi scratch directory keeps its stores, decision logs and sessions for inspection; the next run gets a different one. The harness checks the real Obelisk index mtime before and after without opening it.
 
