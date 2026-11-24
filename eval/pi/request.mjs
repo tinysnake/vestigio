@@ -80,6 +80,9 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 	};
 	// The daemon owns the write. The old 5 s window read the row mid-flight under
 	// CI load, so wait long enough for the compose and publish jobs to finish.
+	// The predicate must also identify the row this step is waiting for: an
+	// earlier request that already reached the target status would satisfy a
+	// status-only predicate and return before the new row is claimed.
 	const waitForRequest = async (predicate) => {
 		const end = Date.now() + 30_000;
 		while (!inspect((store) => store.listMemoryRequests().some(predicate)) && Date.now() < end) await delay(25);
@@ -210,7 +213,10 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 		});
 
 		await ask(OVERLAP, "overlap");
-		await waitForRequest((row) => row.status === "merged");
+		// Wait on the overlap request itself. The direct request above is already
+		// merged, so `row.status === "merged"` alone is satisfied before the
+		// overlap row is even claimed.
+		await waitForRequest((row) => row.intent.includes("保持") && row.status === "merged");
 		const merged = inspect((store) => {
 			const memory = store.readMemory(memoryUri);
 			return {
