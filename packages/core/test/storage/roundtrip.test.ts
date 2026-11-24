@@ -71,7 +71,7 @@ describe("storage round-trip", () => {
     const second = openStore({ path });
     expect(second.readMemory(memory.uri)).toEqual(memory);
     expect(second.listRevisions(memory.uri)).toEqual([1]);
-    expect(second.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(second.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     second.close();
   });
 
@@ -81,7 +81,7 @@ describe("storage round-trip", () => {
     first.close();
     const second = openStore({ path });
     expect(second.storeId).toBe("vestigio");
-    expect(second.listMigrations()).toHaveLength(6);
+    expect(second.listMigrations()).toHaveLength(7);
     second.close();
 
     expect(() => openStore({ path, storeId: "elsewhere" })).toThrow(StorageError);

@@ -55,6 +55,11 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: readFileSync(new URL("../../migrations/0006_memory_content_hash.sql", import.meta.url), "utf8"),
     run: resealContentHashes,
   },
+  {
+    version: 7,
+    name: "turn_events",
+    sql: readFileSync(new URL("../../migrations/0007_turn_events.sql", import.meta.url), "utf8"),
+  },
 ];
 
 /**
