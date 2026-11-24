@@ -162,7 +162,7 @@ function containsPhrase(haystack: readonly string[], needle: readonly string[]):
  * Two adjacent CJK bigrams share a character (的默 + 默认 out of 默认), so they
  * are one piece of evidence, not two. A run of three adjacent bigrams is two.
  */
-function independentTokens(matched: readonly string[], inputTokens: readonly string[]): number {
+export function independentTokens(matched: readonly string[], inputTokens: readonly string[]): number {
   const positions = new Map<string, number>();
   for (const [index, token] of inputTokens.entries()) {
     if (!positions.has(token)) positions.set(token, index);

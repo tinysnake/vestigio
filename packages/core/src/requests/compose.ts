@@ -32,6 +32,7 @@ import { extractMediumSummary } from "../extraction/index.js";
 import type { MediumCall, MediumEvidence, MediumExtraction } from "../extraction/index.js";
 import { enqueueSummaryJob } from "../jobs/index.js";
 import { subjectKey, subjectsCollide } from "../retrieval/index.js";
+import { subjectsOverlap } from "../retrieval/conflict.js";
 import { MAX_FRESHNESS_PENDING, type MemoryStore } from "../storage/store.js";
 import type { ModelPort } from "../resolver/types.js";
 import { buildTitle, formationKeywords } from "../resolver/persist.js";
@@ -115,7 +116,9 @@ function findTarget(store: MemoryStore, scope: Scope, title: string, evidence: r
   if (best !== null) return best.memory;
   const subject = subjectKey(title);
   for (const head of heads) {
-    if (subjectsCollide(subjectKey(head.title), subject)) return head;
+    // The request title is framed (`Memory about "…"`), so it never prefix-matches
+    // an unframed head; the lexical overlap catches the paraphrase it is about.
+    if (subjectsCollide(subjectKey(head.title), subject) || subjectsOverlap(head.title, title)) return head;
   }
   return null;
 }
