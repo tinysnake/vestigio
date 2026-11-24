@@ -29,6 +29,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
 import { openStore } from "@vestigio/core/storage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,7 @@ const TMP = "/tmp/vestigio-requests";
 const REAL_OBELISK = join(homedir(), ".obelisk/obelisk.sqlite");
 const AGENT_SRC = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi/agent");
 const AGENT_HOME = join(TMP, "agent");
+const runStores = new Set();
 const TURN_TIMEOUT_MS = 180_000;
 
 const DEFAULTS = {
@@ -293,6 +295,7 @@ async function runCase(testCase, options, model, repeat) {
 	const projectDir = join(TMP, "projects", label);
 	mkdirSync(projectDir, { recursive: true });
 	const storePath = join(runDir, "store.sqlite");
+	runStores.add(storePath);
 	const obeliskHome = join(runDir, "obelisk-home");
 	mkdirSync(obeliskHome, { recursive: true });
 	const seed = seedStore(storePath, projectDir, testCase.seed);
@@ -488,6 +491,13 @@ async function main() {
 	const untouched = realObeliskBefore === realObeliskAfter;
 	console.log(`${untouched ? "PASS" : "FAIL"}  operator Obelisk index untouched`);
 	if (!untouched) failures += 1;
+	for (const store of runStores) {
+		await new VestigioClient(store).stop();
+		if (await daemonRunning(store)) {
+			console.log(`  FAIL  leaked daemon: ${store}`);
+			failures += 1;
+		}
+	}
 	if (!options.keep) rmSync(AGENT_HOME, { recursive: true, force: true });
 	console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 	if (failures > 0) process.exitCode = 1;

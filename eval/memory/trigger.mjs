@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
 import { openStore } from "@vestigio/core/storage";
 import { markTimeoutStaleAgain, PROJECT, seedStore } from "./catalog.mjs";
 import { seedPortConflictSuperseded } from "./catalog.mjs";
@@ -324,6 +325,7 @@ function resolveModelPort() {
 }
 
 const rows = [];
+const turnStores = new Set();
 for (const fixture of SCENARIOS) {
 	if (ONLY_IDS !== null && !ONLY_IDS.has(fixture.id)) continue;
 	const scenario = {
@@ -335,6 +337,7 @@ for (const fixture of SCENARIOS) {
 	};
 	for (let index = 0; index < REPEATS; index += 1) {
 		storePath = join(scratch, `store-${scenario.id}-${index}.sqlite`);
+		turnStores.add(storePath);
 		seedScenarioStore(storePath, scenario.omit ?? []);
 		// Mark before the turn, not at seeding time: after the first turn of a
 		// session the `agent_end` repair pass has already spent every pending
@@ -475,6 +478,21 @@ for (const fixture of SCENARIOS) {
 const shouldRecall = rows.filter((row) => row.expect === "query");
 const shouldStayQuiet = rows.filter((row) => row.expect === "no_query");
 const rate = (count, total) => (total === 0 ? null : count / total);
+
+async function stopRunDaemons(stores) {
+	const leaked = [];
+	for (const store of stores) {
+		await new VestigioClient(store).stop();
+		if (await daemonRunning(store)) leaked.push(store);
+	}
+	return leaked;
+}
+
+const leaked = await stopRunDaemons(turnStores);
+if (leaked.length > 0) {
+	console.error(`leaked daemon(s) for: ${leaked.join(", ")}`);
+	process.exitCode = 1;
+}
 
 // Harm of a false positive, end to end. Counting a leak says retrieval delivered
 // something it should not have; it does not say whether that changed the answer.

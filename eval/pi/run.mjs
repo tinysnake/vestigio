@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarioStale } from "./stale.mjs";
 import { scenarioRequest } from "./request.mjs";
-import { VestigioClient } from "../../packages/client/src/index.ts";
+import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
@@ -862,6 +862,9 @@ async function main() {
 	} finally {
 		try {
 			await Promise.all([...usedStores].map((path) => new VestigioClient(path).stop()));
+			for (const storePath of usedStores) {
+				check(`daemon stopped for ${storePath}`, !(await daemonRunning(storePath)), storePath);
+			}
 		} finally {
 			await mock.close();
 		}
