@@ -153,11 +153,13 @@ turn_events (
 
 轮转实现：写入器按分片追加，分片到 32 MiB 换下一个；一个 run 的文件若自身超过分片大小就续写 `<name>.<n>.jsonl`。删除按分片的修改时间从旧到新，删够为止。对外看是若干条逻辑日志，物理上是若干段，避免为 512 MiB 单文件做整文件重写。
 
+删除是协作式的：目录总量决定何时修剪，但一个写入器实例只删自己打开过的分片。扩展进程写 `agent-runs.jsonl`、daemon 进程写 `iface.jsonl`，两个进程会同时落在同一目录，所以任一进程都不会删掉对方正在写的分片；各自按目录总量修剪自己的那份，总量仍会收敛到上限内。
+
 ## 3. PR 表
 
 | PR | 一项交付 | 依赖 | 允许修改的主要路径 |
 | --- | --- | --- | --- |
-| OBS-01 | 观测日志写入器与记录契约（轮转、上限、删除最旧） | 无 | `packages/core/src/observability/`、`packages/core/test/observability/` |
+| OBS-01 | 观测日志写入器与记录契约（轮转、上限、删除最旧） | 无 | `packages/core/src/observability/`、`packages/core/test/observability/`、`packages/core/package.json`（仅新增 exports 条目） |
 | OBS-02 | agent 运行摘要（第 3、4 项，含工具与注入分布） | OBS-01 | `packages/pi-extension/src/run-log.ts`、`packages/pi-extension/src/daemon-adapter.ts`、`packages/pi-extension/test/` |
 | OBS-03 | 逐 turn 行与记忆侧统计查询（第 5、6 项，及第 2 项的工具口径） | 无 | `packages/core/migrations/0007_*.sql`、`packages/core/src/storage/`、`packages/core/src/observability/`、`packages/pi-extension/src/input.ts` |
 | OBS-04 | daemon 接口计数与 `GET /v1/stats`（第 2 项的 daemon 口径） | OBS-01 | `packages/daemon/src/service.ts`、`packages/daemon/test/`、`packages/cli/src/` |
