@@ -13,6 +13,11 @@
  * directory interleave without truncating each other, and the writer never
  * throws into a caller. A malformed record is rejected before any I/O and is
  * not counted as a write failure.
+ *
+ * Retention is cooperative: the directory total decides when to trim, but an
+ * instance only ever unlinks segments it opened itself. A second process in the
+ * same directory therefore never deletes the segment another process is
+ * appending to; it trims its own share against the shared total instead.
  */
 
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
@@ -126,6 +131,8 @@ class ObsLogWriter implements ObsLog {
 	private readonly maxBytes: number;
 	private readonly segmentBytes: number;
 	private readonly streams = new Map<string, Segment>();
+	/** Base paths (`<dir>/<name>`) this instance has opened a stream for. */
+	private readonly ownedBases = new Set<string>();
 	private failures = 0;
 	private disabled = false;
 	private closed = false;
@@ -190,6 +197,7 @@ class ObsLogWriter implements ObsLog {
 		const existing = this.streams.get(name);
 		if (existing !== undefined) return existing;
 		const base = join(this.dir, name);
+		this.ownedBases.add(base);
 		this.ensureDir(dirname(base));
 		const index = this.nextSegmentIndex(base);
 		const segment: Segment = {
@@ -231,8 +239,10 @@ class ObsLogWriter implements ObsLog {
 	/**
 	 * Delete whole oldest segments until the directory is at or under the cap.
 	 * The active segment and the newest segment are never removed, so a writer
-	 * cannot delete the file it is appending to. Re-running converges: the scan
-	 * is rebuilt from disk and an already-deleted file is a no-op.
+	 * cannot delete the file it is appending to. Only segments this instance owns
+	 * are candidates, so a concurrent writer in the same directory keeps its own
+	 * active segment. Re-running converges: the scan is rebuilt from disk and an
+	 * already-deleted file is a no-op.
 	 */
 	private enforceCap(protectedPath: string): void {
 		const files = listLogFiles(this.dir);
@@ -244,7 +254,7 @@ class ObsLogWriter implements ObsLog {
 			null,
 		);
 		const candidates = files
-			.filter((file) => file.path !== protectedPath && file.path !== newest?.path)
+			.filter((file) => this.owns(file.path) && file.path !== protectedPath && file.path !== newest?.path)
 			.sort(compareOldest);
 		for (const file of candidates) {
 			if (total <= this.maxBytes) break;
@@ -255,6 +265,15 @@ class ObsLogWriter implements ObsLog {
 				// Idempotent: a segment another actor already removed is simply skipped.
 			}
 		}
+	}
+
+	/** True when `filePath` is a segment of one of this instance's own streams. */
+	private owns(filePath: string): boolean {
+		const relative = filePath.slice(this.dir.length + 1);
+		for (const base of this.ownedBases) {
+			if (parseSegmentIndex(relative, base.slice(this.dir.length + 1)) !== null) return true;
+		}
+		return false;
 	}
 
 	private noteFailure(): void {

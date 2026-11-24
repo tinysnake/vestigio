@@ -85,6 +85,19 @@ describe("createObsLog concurrency", () => {
 		expect(seqs.length).toBe(200);
 		expect(new Set(seqs).size).toBe(200);
 	});
+
+	it("never deletes a segment another writer owns, even under the cap", () => {
+		const dir = tempDir();
+		const foreign = join(dir, "elsewhere.jsonl");
+		writeFileSync(foreign, `${'y'.repeat(3000)}\n`);
+		const log = createObsLog({ dir, kind: "iface", maxBytes: 4096, segmentBytes: 1024 });
+		for (let i = 0; i < 200; i += 1) log.append(snapshot(i, 64));
+		log.close();
+
+		// The foreign segment pushes the directory over the cap, so the writer trims
+		// its own segments aggressively. The file it does not own must survive.
+		expect(readFileSync(foreign, "utf8")).toBe(`${'y'.repeat(3000)}\n`);
+	});
 });
 
 describe("createObsLog validation", () => {
