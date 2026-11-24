@@ -17,6 +17,7 @@
     "./jobs": "./src/jobs/index.ts",
     "./storage": "./src/storage/index.ts",
     "./requests": "./src/requests/index.ts",
+    "./observability": "./src/observability/index.ts",
     "./project": "./src/project/identity.ts"
   },
   "scripts": {
