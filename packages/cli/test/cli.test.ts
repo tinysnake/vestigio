@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { daemonRunning, openDaemon, VestigioClient } from "@vestigio/client";
 import type { LayeredSearchOutcome, MemoryReadOutcome } from "@vestigio/core/retrieval";
 import type { ModelPort } from "@vestigio/core/resolver";
 import { openStore, type MemoryStore, type ProjectReassignment } from "@vestigio/core/storage";
@@ -10,6 +11,8 @@ import { main } from "../src/index.js";
 import { PROJECT_A, captureIo, historyHit, makeHistoryPort, type FakeHistoryOptions, seed, sourceRef, tempDbPath } from "./support.js";
 
 const stores: MemoryStore[] = [];
+
+const daemonStores: string[] = [];
 
 /** Any directory works for unit tests: the history port is faked. */
 const FIXTURE_HOME = "/tmp/vestigio-cli-test-home";
@@ -22,6 +25,13 @@ function track(store: MemoryStore): MemoryStore {
 afterEach(() => {
   while (stores.length > 0) {
     stores.pop()?.close();
+  }
+});
+
+afterEach(async () => {
+  while (daemonStores.length > 0) {
+    const store = daemonStores.pop();
+    if (store !== undefined) await new VestigioClient(store).stop();
   }
 });
 
@@ -657,4 +667,40 @@ describe("cli projects id with settings and a submodule", () => {
 		expect(result.err).toContain(join(brokenDir, ".vestigio", "settings.json"));
 		expect(result.err).not.toContain("Usage:");
 	});
+});
+
+describe("cli --once", () => {
+	it("submit --once stops the daemon it started and prints the terminal record", async () => {
+		const store = join(realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-once-"))), "store.sqlite");
+		const captured = captureIo();
+		const code = await main(
+			[
+				"submit",
+				"--db", store,
+				"--source", "test",
+				"--session-id", "once-1",
+				"--kind", "search",
+				"--input", '{"query":"once"}',
+				"--once",
+				"--json",
+			],
+			captured.io,
+		);
+		expect([0, 1]).toContain(code);
+		const record = JSON.parse(captured.stdout()) as { jobId: string; state: string };
+		expect(record.jobId).toMatch(/^job-/u);
+		expect(["succeeded", "failed", "cancelled"]).toContain(record.state);
+		expect(await daemonRunning(store)).toBe(false);
+	}, 30_000);
+
+	it("does not stop a daemon this invocation did not start", async () => {
+		const store = join(realpathSync(mkdtempSync(join(tmpdir(), "vestigio-cli-once-live-"))), "store.sqlite");
+		await openDaemon(store);
+		daemonStores.push(store);
+		expect(await daemonRunning(store)).toBe(true);
+		const captured = captureIo();
+		const code = await main(["get", "--db", store, "--job", "job-absent", "--once"], captured.io);
+		expect(code).toBe(1);
+		expect(await daemonRunning(store)).toBe(true);
+	}, 30_000);
 });

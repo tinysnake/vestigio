@@ -8,7 +8,17 @@ import { runtimePaths } from "@vestigio/daemon/runtime";
 export type { Accepted, Event, Kind, SessionKey, Submission } from "@vestigio/daemon/protocol";
 
 const startupMs = 8_000;
-const pendingStarts = new Map<string, Promise<Endpoint>>();
+const pendingStarts = new Map<string, Promise<DaemonStart>>();
+
+/**
+ * The result of asking a store for a daemon. `started` is true only when this
+ * call spawned the process, so a caller can stop exactly the daemon it owns
+ * and never one another invocation owns.
+ */
+export type DaemonStart = {
+	endpoint: Endpoint;
+	started: boolean;
+};
 
 async function liveEndpoint(path: string): Promise<Endpoint | undefined> {
 	let endpoint: Endpoint;
@@ -39,9 +49,9 @@ async function liveEndpoint(path: string): Promise<Endpoint | undefined> {
 	return endpoint;
 }
 
-async function start(paths: ReturnType<typeof runtimePaths>): Promise<Endpoint> {
+async function start(paths: ReturnType<typeof runtimePaths>): Promise<DaemonStart> {
 	const existing = await liveEndpoint(paths.endpoint);
-	if (existing) return existing;
+	if (existing) return { endpoint: existing, started: false };
 	mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
 	const log = openSync(paths.log, "a", 0o600);
 	let spawnError: Error | undefined;
@@ -59,23 +69,31 @@ async function start(paths: ReturnType<typeof runtimePaths>): Promise<Endpoint> 
 	while (Date.now() < deadline) {
 		if (spawnError) throw spawnError;
 		const endpoint = await liveEndpoint(paths.endpoint);
-		if (endpoint) return endpoint;
+		if (endpoint) return { endpoint, started: true };
 		await delay(50);
 	}
 	throw new Error(`Vestigio daemon did not become ready. See ${paths.log}`);
 }
 
-export async function ensureDaemon(storePath: string): Promise<Endpoint> {
+export async function openDaemon(storePath: string): Promise<DaemonStart> {
 	const paths = runtimePaths(storePath);
 	const pending = pendingStarts.get(paths.store);
 	if (pending) return pending;
-	const started = start(paths);
-	pendingStarts.set(paths.store, started);
+	const starting = start(paths);
+	pendingStarts.set(paths.store, starting);
 	try {
-		return await started;
+		return await starting;
 	} finally {
 		pendingStarts.delete(paths.store);
 	}
+}
+
+export async function ensureDaemon(storePath: string): Promise<Endpoint> {
+	return (await openDaemon(storePath)).endpoint;
+}
+
+export async function daemonRunning(storePath: string): Promise<boolean> {
+	return (await liveEndpoint(runtimePaths(storePath).endpoint)) !== undefined;
 }
 
 export class DaemonError extends Error {
@@ -88,12 +106,18 @@ export class DaemonError extends Error {
 
 export class VestigioClient {
 	readonly storePath: string;
-	constructor(storePath: string) {
+	private readonly endpoint: Endpoint | undefined;
+	/**
+	 * A pre-resolved endpoint skips per-request discovery, so a one-shot run that
+	 * already owns a daemon keeps talking to that exact instance.
+	 */
+	constructor(storePath: string, endpoint?: Endpoint) {
 		this.storePath = storePath;
+		this.endpoint = endpoint;
 	}
 
 	private async request(path: string, options: RequestInit = {}, endpoint?: Endpoint): Promise<Response> {
-		const active = endpoint ?? await ensureDaemon(this.storePath);
+		const active = endpoint ?? this.endpoint ?? await ensureDaemon(this.storePath);
 		const response = await fetch(`http://127.0.0.1:${active.port}/v1${path}`, {
 			...options,
 			redirect: "error",
