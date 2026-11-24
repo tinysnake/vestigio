@@ -46,3 +46,29 @@ jobs:
           for scenario in new_session stale request search_recovery; do
             node --import ./hook.mjs ./run.mjs --only "$scenario" || exit $?
           done
+
+  # Windows runs only the checks that hold on every platform. `pnpm test` and the
+  # eval gates stay on the ubuntu job: they depend on POSIX fixtures, and today
+  # `pnpm test` has POSIX-only failures here (core 12, source-obelisk 13, daemon 3,
+  # pi-extension 57, cli 16).
+  verify-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Prove deploy leaves a runnable command behind
+        run: node scripts/verify-deploy.mjs
+      - name: Walk the documented daemon path against a temp store
+        run: node scripts/daemon-smoke.mjs
+      - name: Check the install on this platform
+        run: node scripts/verify-doctor.mjs
