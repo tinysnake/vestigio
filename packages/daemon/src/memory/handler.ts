@@ -22,6 +22,8 @@ import {
   type MemoryJobResult,
   type MemoryOp,
 } from "./contract.js";
+import type { AgentName } from "@vestigio/core/resolver";
+import type { ModelInvocationContext } from "@vestigio/core/observability";
 import { runDetectorOp } from "./detector.js";
 import { deferredRef, type DependencyRequest, type OpContext, type OpOutcome } from "./internal.js";
 import { runMaintenanceOp } from "./maintenance.js";
@@ -43,7 +45,7 @@ export function createMemoryJobHandler(runtime: MemoryRuntime): MemoryJobHandler
       session: job.session,
     };
     const turnLeaf = optionalString(input, "turn_leaf", 1024);
-    const op = await execute(input, ctx);
+    const op = await withModelInvocation(input, ctx, () => execute(input, ctx));
     const deferred = await schedule(op.deferred, ctx, control);
     const result: MemoryJobResult = {
       ...(turnLeaf === undefined ? {} : { turnLeaf }),
@@ -67,6 +69,38 @@ function execute(input: MemoryJobInput, ctx: OpContext): Promise<OpOutcome> {
     case "maintenance":
       return runMaintenanceOp(input, ctx);
   }
+}
+
+/** The agent whose model the operation drives; absent when it makes no model call. */
+const MODEL_AGENT_OF_OP: Partial<Record<MemoryOp, AgentName>> = {
+  "memory.resolve": "resolver",
+  "detector.run": "detector",
+  "resolve.persist": "extraction",
+  "repair.memory": "extraction",
+  "repair.memories": "extraction",
+  "nav.run": "nav",
+};
+
+/**
+ * The model log groups calls by the job that issued them. This is the only
+ * place that knows the job identity and the first argument of every operation,
+ * so the resolver's `request_id` (derived from the questions) and every other
+ * agent's job key both land on `<agent>__<job key>.jsonl`.
+ */
+function withModelInvocation<T>(input: MemoryJobInput, ctx: OpContext, fn: () => Promise<T>): Promise<T> {
+  const recorder = ctx.runtime.model_recorder;
+  if (recorder === null) return fn();
+  const agent = MODEL_AGENT_OF_OP[input.op];
+  if (agent === undefined) return fn();
+  const context: ModelInvocationContext = {
+    invocation_id: ctx.job.jobId,
+    agent,
+    project_id: ctx.project_id ?? "",
+    session_id: ctx.session.sessionId,
+    input_id: ctx.job.jobId,
+    question: optionalString(input, "question", 4096) ?? "",
+  };
+  return recorder.run(context, fn);
 }
 
 async function schedule(

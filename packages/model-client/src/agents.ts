@@ -8,7 +8,11 @@
  */
 
 import { AGENT_USER_AGENT, type AgentName, type ModelPort, type ModelRequest, type ModelThinking } from "@vestigio/core/resolver";
+import type { ModelCallObserver } from "@vestigio/core/observability";
+import { observeModelCalls } from "./call-log.js";
 import { createOpenAiCompatibleClient, type OpenAiCompatibleOptions } from "./openai-compatible.js";
+
+export type { ModelCallEvent, ModelCallObserver } from "./call-log.js";
 
 export type AgentModelChoice = {
 	readonly model?: string;
@@ -36,11 +40,15 @@ export function agentOf(request: ModelRequest): AgentName | null {
  * A dedicated client means that agent's model wins: when the choice sets a
  * model, it replaces the request's own `model` field (the daemon passes its
  * default id there), so the call, the client and the failure record agree.
+ *
+ * `onCall`, when given, reports one settled call per `complete`; it is the
+ * only observation the port exposes and it never changes what the caller gets.
  */
 export function createAgentModelPort(
 	base: OpenAiCompatibleOptions,
 	choices: Partial<Record<AgentName, AgentModelChoice>>,
 	create: (options: OpenAiCompatibleOptions) => ModelPort = createOpenAiCompatibleClient,
+	onCall?: ModelCallObserver,
 ): ModelPort {
 	const routes = new Map<AgentName, { port: ModelPort; model?: string; thinking?: ModelThinking }>();
 	for (const [agent, choice] of Object.entries(choices) as [AgentName, AgentModelChoice | undefined][]) {
@@ -56,9 +64,12 @@ export function createAgentModelPort(
 			...(choice.thinking === undefined ? {} : { thinking: choice.thinking }),
 		});
 	}
-	if (routes.size === 0) return create(base);
+	if (routes.size === 0) {
+		const port = create(base);
+		return onCall === undefined ? port : observeModelCalls(port, onCall);
+	}
 	const fallback = create(base);
-	return {
+	const port: ModelPort = {
 		complete(request: ModelRequest) {
 			const agent = agentOf(request);
 			const route = agent === null ? undefined : routes.get(agent);
@@ -73,4 +84,5 @@ export function createAgentModelPort(
 			});
 		},
 	};
+	return onCall === undefined ? port : observeModelCalls(port, onCall);
 }

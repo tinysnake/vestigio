@@ -11,6 +11,7 @@
  */
 
 import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
+import { createModelInvocationRecorder, modelLogFromEnv, type ModelCallObserver, type ModelInvocationRecorder, type ObsLog } from "@vestigio/core/observability";
 import { agentModelSettings } from "@vestigio/config";
 import { createObeliskHistoryPort } from "@vestigio/source-obelisk";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
@@ -38,6 +39,8 @@ export type MemoryRuntime = {
   readonly resolves: ReturnType<typeof openResolveContexts>;
   /** The operations only need the port, so a test or a caller can supply any implementation. */
   readonly model: ModelPort | null;
+  /** The OBS-05 recorder, or null when `VESTIGIO_MODEL_LOG` is off. */
+  readonly model_recorder: ModelInvocationRecorder | null;
   readonly model_id: string;
   readonly history: HistoryPort | null;
   readonly project_id: string | null;
@@ -53,6 +56,7 @@ export type MemoryRuntimeOptions = {
   store?: MemoryStore | undefined;
   model?: ModelPort | null | undefined;
   model_id?: string | undefined;
+  model_log?: ObsLog | null | undefined;
   history?: HistoryPort | null | undefined;
   project_id?: string | null | undefined;
   now?: (() => number) | undefined;
@@ -64,7 +68,7 @@ export type MemoryRuntimeOptions = {
  * The configured model client, or `null` when no base URL is set. This mirrors
  * the extension's "the only configured backend" rule: never guess a URL.
  */
-export function createModelClient(env: RuntimeEnv = process.env): MemoryRuntime["model"] {
+export function createModelClient(env: RuntimeEnv = process.env, onCall?: ModelCallObserver): MemoryRuntime["model"] {
   const base_url = strOrNull(env[MODEL_BASE_URL_ENV]);
   if (base_url === null) return null;
   const options: OpenAiCompatibleOptions = {
@@ -75,7 +79,7 @@ export function createModelClient(env: RuntimeEnv = process.env): MemoryRuntime[
   if (api_key !== null) options.api_key = api_key;
   options.thinking = thinkingOr(env[MODEL_THINKING_ENV], DEFAULT_MODEL_THINKING);
   // Every agent may name its own model; the tag in `user_agent` picks the client.
-  return createAgentModelPort(options, agentModelSettings(env));
+  return createAgentModelPort(options, agentModelSettings(env), undefined, onCall);
 }
 
 export function createHistoryPort(env: RuntimeEnv = process.env): HistoryPort | null {
@@ -99,7 +103,9 @@ export function openMemoryRuntime(storePath: string, options: MemoryRuntimeOptio
       COMMIT;
     `);
   }
-  const model = options.model === undefined ? createModelClient(env) : options.model;
+  const model_log = options.model_log === undefined ? modelLogFromEnv(env, storePath) : options.model_log;
+  const model_recorder = model_log === null ? null : createModelInvocationRecorder(model_log);
+  const model = options.model === undefined ? createModelClient(env, model_recorder?.observer) : options.model;
   const model_id = options.model_id ?? strOrNull(env[MODEL_ID_ENV]) ?? DEFAULT_MODEL_ID;
   const history = options.history === undefined ? createHistoryPort(env) : options.history;
   const configuredProject = options.project_id === undefined ? strOrNull(env[PROJECT_ENV]) : options.project_id;
@@ -110,6 +116,7 @@ export function openMemoryRuntime(storePath: string, options: MemoryRuntimeOptio
     store,
     resolves: openResolveContexts(store.database()),
     model,
+    model_recorder,
     model_id,
     history,
     project_id,
@@ -117,6 +124,7 @@ export function openMemoryRuntime(storePath: string, options: MemoryRuntimeOptio
     mono,
     timestamp: () => new Date(now()).toISOString(),
     close: () => {
+      model_log?.close();
       if (owned) store.close();
     },
   };

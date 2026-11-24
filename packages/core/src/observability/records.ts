@@ -14,7 +14,7 @@ export const OBS_RECORD_VERSION = 1 as const;
 
 export type AgentRunOutcome = "completed" | "aborted" | "error";
 export type ModelCallOutcome = "ok" | "error";
-export type ModelCallPurpose = "judge_expand" | "medium_summary";
+export type ModelCallPurpose = "judge_expand" | "medium_summary" | "detector" | "nav";
 export type ModelInvocationOutcome = "ok" | "sufficient" | "insufficient" | "failed" | "cancelled";
 
 export type AgentRunTokens = {
