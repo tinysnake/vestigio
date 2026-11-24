@@ -134,6 +134,8 @@ turn_events (
 )
 ```
 
+枚举里的 `store_unavailable` 保留但不可达。store 不可用时没有可写的表，该 turn 就不写行（见 2.6），所以它不会出现在任何一行的 `outcome` 里，概率分母也不含这种 turn。
+
 ### 2.5 统计口径
 
 - 注入次数：`usage_events` 中 `kind='hit'` 的行数，按 `channel` 分 `hotspot` / `search`。与 `docs/development-plan.md` §12 已定的 hit/access 口径一致，不新造一份。
