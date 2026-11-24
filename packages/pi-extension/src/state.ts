@@ -58,9 +58,6 @@ export class VestigioState {
 	private sessionId = "unknown";
 	private branchRef = "root";
 	private sessionManager: SessionLike | null = null;
-	private readonly seen: Set<string> = new Set();
-	private readonly backgroundAttempts: Map<string, number> = new Map();
-	private detectorCheckpoint: string | null = null;
 	private userInput: { text: string } | null = null;
 
 	constructor(config: VestigioConfig, log?: DecisionLog, deps: StateDeps = {}) {
@@ -108,8 +105,7 @@ export class VestigioState {
 
 	/**
 	 * Rebind to a session or a moved branch. The ledger is rebuilt from the
-	 * branch, which is what makes fork inherit and revert forget. The detector
-	 * checkpoint and the seen-memory set are per session, so they reset here.
+	 * branch, which is what makes fork inherit and revert forget.
 	 */
 	bindSession(sessionManager: SessionLike): void {
 		this.sessionManager = sessionManager;
@@ -119,20 +115,6 @@ export class VestigioState {
 			this.sessionId = "unknown";
 		}
 		this.branchRef = branchRefFor(sessionManager);
-		this.detectorCheckpoint = null;
-		try {
-			const branch = sessionManager.getBranch();
-			const ids = new Set(branch.map((entry) => entry.id));
-			for (const entry of branch) {
-				if (entry.type === "custom" && entry.customType === "vestigio.detector-checkpoint" && typeof entry.data === "object" && entry.data !== null && "entry_id" in entry.data && typeof entry.data.entry_id === "string" && ids.has(entry.data.entry_id)) {
-					this.detectorCheckpoint = entry.data.entry_id;
-				}
-			}
-		} catch {
-			this.detectorCheckpoint = null;
-		}
-		this.seen.clear();
-		this.backgroundAttempts.clear();
 		try {
 			this.ledger = loadLedger(sessionManager);
 		} catch {
@@ -164,41 +146,6 @@ export class VestigioState {
 
 	get sessionManagerRef(): SessionLike | null {
 		return this.sessionManager;
-	}
-
-	/**
-	 * Remember a memory the agent saw this session (search card, read or
-	 * resolve). The `agent_end` detector only inspects memories the agent
-	 * actually met, plus whatever the store already flags as pending.
-	 */
-	noteMemorySeen(memoryId: string): void {
-		this.seen.add(memoryId);
-	}
-
-	seenMemoryIds(): string[] {
-		return [...this.seen];
-	}
-
-	/**
-	 * How many times the background pass has tried this exact pending set in
-	 * this session. The pass reads the count to cap its own retries and to
-	 * report a memory it can no longer attempt instead of dropping it.
-	 */
-	backgroundAttemptsFor(signature: string): number {
-		return this.backgroundAttempts.get(signature) ?? 0;
-	}
-
-	noteBackgroundAttempt(signature: string): void {
-		this.backgroundAttempts.set(signature, this.backgroundAttemptsFor(signature) + 1);
-	}
-
-	/** The last entry the detector inspected, so a turn is judged once. */
-	get detectorCheckpointId(): string | null {
-		return this.detectorCheckpoint;
-	}
-
-	advanceDetectorCheckpoint(entryId: string | null): void {
-		this.detectorCheckpoint = entryId;
 	}
 
 	/**
