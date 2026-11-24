@@ -1,126 +1,17 @@
-import type { Freshness, MemoryUri, StaleEventSummary } from "@vestigio/core";
-import type { ModelPort, RepairOutcome } from "@vestigio/core/resolver";
-import { repairStaleMemory } from "@vestigio/core/resolver";
+import type { MemoryUri } from "@vestigio/core";
+import type { ModelPort } from "@vestigio/core/resolver";
 import { runDueJobs } from "@vestigio/core/jobs";
 import type { MemoryStore } from "@vestigio/core/storage";
 import { errorText, type VestigioState } from "./state.js";
 
 /**
- * Hard ceiling for one repair attempt, both model calls included. Measured on
- * the live gateway: a repair completion took 20-30 s typically and was still
- * generating at 90 s on one run, which aborted the call and lost the repair.
- * 150 s covers the observed tail; above that the attempt reports
- * `deadline_exceeded` rather than blocking the pass forever.
+ * Hard ceiling for one nav job, the single model call a publication runs.
+ * Measured on the live gateway: a nav completion took 20-30 s typically and was
+ * still generating at 90 s on one run, which aborted the call and lost the
+ * publication. 150 s covers the observed tail; above that the job reports
+ * `deadline_exceeded` rather than blocking the caller forever.
  */
-export const REPAIR_DEADLINE_MS = 150_000;
-
-export type ReadRepairStatus = "repaired" | "nav_pending" | "repair_failed";
-
-export type ReadRepairReport = {
-  status: ReadRepairStatus;
-  /** `null` only for a clean `repaired`. */
-  reason: string | null;
-  /** The revision the read delivered and the repair used as its base. */
-  from_revision: number;
-  /** The head the repair saved, or null when nothing was written. */
-  revision: number | null;
-  acknowledged_event_ids: string[];
-  nav_status: "published" | "pending" | null;
-};
-
-export type ReadRepairInput = {
-  state: VestigioState;
-  store: MemoryStore;
-  uri: MemoryUri;
-  freshness: Freshness;
-  project_id: string;
-  at: string;
-  signal: AbortSignal | undefined;
-};
-
-/**
- * One bounded attempt to fold a stale memory's pending events into the same
- * summary and publish the new head. The `agent_end` background pass owns
- * retries and per-memory budgeting; this function makes exactly one attempt.
- * `deadline_ms` overrides the default ceiling (`REPAIR_DEADLINE_MS`).
- */
-export async function repairStaleMemoryNow(
-  input: ReadRepairInput & { deadline_ms?: number },
-): Promise<ReadRepairReport> {
-  const { state, store, uri, freshness } = input;
-  const memoryId = freshness.memory_id;
-  const pending = freshness.pending.filter((event) => event.event_id.length > 0);
-  const model = state.modelPort();
-  if (model === null) {
-    return {
-      status: "repair_failed",
-      reason: `model_unavailable:${state.modelSkipReason() ?? "unknown"}`,
-      from_revision: freshness.delivered_revision,
-      revision: null,
-      acknowledged_event_ids: [],
-      nav_status: null,
-    };
-  }
-
-  const deadline = AbortSignal.timeout(input.deadline_ms ?? REPAIR_DEADLINE_MS);
-  const signal = input.signal === undefined ? deadline : AbortSignal.any([deadline, input.signal]);
-  const failed = (reason: string): ReadRepairReport => ({
-    status: "repair_failed",
-    reason,
-    from_revision: freshness.delivered_revision,
-    revision: null,
-    acknowledged_event_ids: [],
-    nav_status: null,
-  });
-
-  let repaired: RepairOutcome;
-  try {
-    repaired = await repairStaleMemory({
-      store,
-      card: { uri, revision: freshness.delivered_revision },
-      pending: freshness.pending,
-      // The read has no answer of its own; the pending events are the change.
-      answer: describePending(pending),
-      // The events already carry their saved excerpts; no extra history read.
-      excerpts: [],
-      expected_revision: freshness.delivered_revision,
-      model,
-      model_id: state.config.model_id,
-      signal,
-      at: input.at,
-      project: input.project_id,
-    });
-  } catch (error) {
-    return failed(`repair_threw:${errorText(error)}`);
-  }
-
-  if (repaired.status !== "repaired" || repaired.memory === null) {
-    // A cancellation this repair caused is a deadline, not a signal from the turn.
-    if (repaired.status === "cancelled" && deadline.aborted) return failed("deadline_exceeded");
-    return failed(`repair_${repaired.status}${repaired.reason === null ? "" : `:${repaired.reason}`}`);
-  }
-  const revision = repaired.memory.revision;
-  if (signal.aborted) {
-    return {
-      status: "nav_pending",
-      reason: "deadline_exceeded",
-      from_revision: freshness.delivered_revision,
-      revision,
-      acknowledged_event_ids: repaired.incorporated_event_ids,
-      nav_status: "pending",
-    };
-  }
-
-  const nav = await publishRevision(input, model, memoryId, revision, signal);
-  return {
-    status: nav.published ? "repaired" : "nav_pending",
-    reason: nav.published ? null : (nav.reason ?? "nav_not_published"),
-    from_revision: freshness.delivered_revision,
-    revision,
-    acknowledged_event_ids: repaired.incorporated_event_ids,
-    nav_status: nav.published ? "published" : "pending",
-  };
-}
+const NAV_PUBLISH_DEADLINE_MS = 150_000;
 
 /** The store facts a publication needs; `read-repair` and `memory_resolve`
  * share them, which is why this is not private to the read path. */
@@ -142,7 +33,7 @@ export type PublishRevisionOutcome = {
  * Run the memory's own queued nav job and verify the head is searchable.
  *
  * One attempt, scoped to `memoryId`/`revision`, bounded by
- * `REPAIR_DEADLINE_MS`. A failed nav is not an error the caller hides:
+ * `NAV_PUBLISH_DEADLINE_MS`. A failed nav is not an error the caller hides:
  * the body is saved, the job stays queued, and search cannot find the memory
  * until the nav is bound to this revision. Callers that just wrote the memory
  * use the returned reason instead of claiming it is findable.
@@ -163,7 +54,7 @@ export async function publishRevision(
       memory_id: memoryId,
       revision,
       ...(signal === undefined ? {} : { signal }),
-      deadline_ms: REPAIR_DEADLINE_MS,
+      deadline_ms: NAV_PUBLISH_DEADLINE_MS,
     });
     const result = outcome.results.find((entry) => entry.memory_id === memoryId && entry.revision === revision);
     if (result?.state !== "done") {
@@ -199,13 +90,4 @@ function readHead(store: MemoryStore, uri: MemoryUri): { state: string; revision
   } catch {
     return null;
   }
-}
-
-/**
- * The repair prompt's "question": what the change is that the summary has not
- * absorbed yet. The pending events are already in the evidence list with their
- * excerpts, so this only has to name the task.
- */
-function describePending(pending: readonly StaleEventSummary[]): string {
-  return `This memory was read while ${pending.length} later change(s) were still unabsorbed; fold them into the same summary.`;
 }

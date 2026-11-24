@@ -28,8 +28,7 @@ import { recordMemoryRead, recordSearchHits } from "@vestigio/core/hotspots";
 import { errorText, nowIso, type VestigioState } from "./state.js";
 import { hashQuery } from "./decision-log.js";
 import { publishRevision } from "./read-repair.js";
-import { stripInjectedNote } from "./stale-detector.js";
-import { sessionEntryText, sourceRefForEntry } from "./session-source.js";
+import { sessionEntryText, sourceRefForEntry, stripInjectedNote } from "./session-source.js";
 import { markStaleParameters, readParameters, resolveParameters, searchParameters } from "./tool-parameters.js";
 
 export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): void {
@@ -81,7 +80,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				});
 			}
 			const note = wantHistory && history === null ? state.historySkipReason() : null;
-			for (const card of outcome.result.cards) state.noteMemorySeen(card.memory_id);
 			state.writeDecision({
 				ts: at,
 				kind: "tool_search",
@@ -167,7 +165,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 				});
 			}
 			const historyNote = wantHistory && history === null ? state.historySkipReason() : null;
-			for (const card of outcome.result.cards) state.noteMemorySeen(card.memory_id);
 			state.writeDecision({
 				ts: at,
 				kind: "tool_resolve",
@@ -264,7 +261,6 @@ export function registerMemoryTools(pi: ExtensionAPI, state: VestigioState): voi
 			) {
 				deferredPending = outcome.result.freshness.pending.filter((event) => event.event_id.length > 0).length;
 			}
-			state.noteMemorySeen(ids.memoryId);
 			let recorded: { recorded: boolean; membership: boolean } | null = null;
 			if (outcome.result.status === "resolved" && outcome.result.revision !== null) {
 				const activity = safeActivitySeq(store, projectId);

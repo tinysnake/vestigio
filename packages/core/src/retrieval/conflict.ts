@@ -15,6 +15,7 @@
  */
 
 import type { MemoryCard, Scope } from "../contracts/index.js";
+import { independentTokens, matchTokens } from "../hotspots/match.js";
 
 const SUBJECT_CHARACTER = /[\p{L}\p{N}]/u;
 
@@ -50,6 +51,64 @@ export function subjectsCollide(left: string, right: string): boolean {
     return false;
   }
   return longer.startsWith(shorter);
+}
+
+/**
+ * The composer frames every request title (`Memory about "…"`) and older saves
+ * framed theirs with `关于「…」`. The frame is boilerplate, not the subject: its
+ * `memory` token alone is one independent run, so two framed titles that share
+ * only a wording prefix can look like the same subject. Strip a known frame
+ * before comparing the wording that actually carries the subject.
+ */
+const TITLE_FRAMES: readonly { prefix: string; suffix: string }[] = [
+  { prefix: 'Memory about "', suffix: '"' },
+  { prefix: "关于「", suffix: "」" },
+];
+
+function unframe(title: string): string {
+  for (const { prefix, suffix } of TITLE_FRAMES) {
+    if (title.startsWith(prefix) && title.endsWith(suffix) && title.length >= prefix.length + suffix.length) {
+      return title.slice(prefix.length, title.length - suffix.length);
+    }
+  }
+  return title;
+}
+
+/** Independent runs of adjacent bigrams before a lexical match means a subject. */
+const MIN_SUBJECT_RUNS = 2;
+
+/**
+ * Share of the shorter title's tokens that must match. A single shared wording
+ * run can be incidental (`部署脚本默认端口` vs `部署脚本发布流程` clears the run
+ * bar via the shared `部署脚本`), so the containment floor is what keeps a
+ * differently-worded near neighbour out. It still admits a real paraphrase,
+ * which covers at least half the shorter title (`发布前测试要求` vs
+ * `发布前必须跑全量测试` -> 0.50).
+ */
+const MIN_SUBJECT_CONTAINMENT = 0.5;
+
+/**
+ * Whether two full titles are about the same subject by lexical overlap, for
+ * titles `subjectsCollide` cannot see: the composer's request title is framed,
+ * so it never shares a prefix with an unframed head. The matched tokens must
+ * form at least `MIN_SUBJECT_RUNS` independent runs of adjacent bigrams in each
+ * title and cover at least `MIN_SUBJECT_CONTAINMENT` of the shorter one.
+ */
+export function subjectsOverlap(left: string, right: string): boolean {
+  const leftTokens = matchTokens(unframe(left));
+  const rightTokens = matchTokens(unframe(right));
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return false;
+  }
+  const rightSet = new Set(rightTokens);
+  const matched = leftTokens.filter((token) => rightSet.has(token));
+  if (matched.length / Math.min(leftTokens.length, rightTokens.length) < MIN_SUBJECT_CONTAINMENT) {
+    return false;
+  }
+  return (
+    independentTokens(matched, leftTokens) >= MIN_SUBJECT_RUNS &&
+    independentTokens(matched, rightTokens) >= MIN_SUBJECT_RUNS
+  );
 }
 
 /** Memory ids of every card that shares a subject with another card in scope. */
