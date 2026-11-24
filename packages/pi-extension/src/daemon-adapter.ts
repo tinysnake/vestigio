@@ -6,6 +6,7 @@ import { saveActivity } from "@vestigio/config";
 import { splitMemoryUri } from "@vestigio/core";
 import { resolveProjectId } from "@vestigio/core/project";
 import { requestTitle } from "@vestigio/core/requests";
+import type { TurnOutcome } from "@vestigio/core/storage";
 import { ActivityPanel, clip, formatInjection, formatJobEvent, formatNotInjected, formatToolEvent, line } from "./activity.js";
 import { ACTIVITY_ENV, type VestigioConfig } from "./config.js";
 import { DecisionLog, hashQuery } from "./decision-log.js";
@@ -15,6 +16,7 @@ import { loadLedger, persistLedgerDelta } from "./ledger-store.js";
 import { classifySaveDirective, requestedScope, resolveRequestEvidence } from "./request-consent.js";
 import { evidenceFromEntries, sessionEntryText, sourceRefForEntry } from "./session-source.js";
 import { searchParameters, readParameters, resolveParameters, markStaleParameters, writeParameters, statusParameters } from "./tool-parameters.js";
+import { turnOutcome, TurnLog } from "./turn-log.js";
 import type { CommitResult, InjectionPlan } from "@vestigio/core/hotspots";
 
 type Result = { text: string | null; result: unknown; children?: { result: unknown }[] };
@@ -42,6 +44,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 	const daemon = new PiDaemon(storePath);
 	const log = new DecisionLog(config.decision_log);
 	const panel = new ActivityPanel(config.activity_panel);
+	const turnLog = new TurnLog({ storePath, report });
 	const recorder = registerAgentRunRecorder(pi, {
 		storePath, env: process.env, report, identity: (ctx) => {
 			const identity = capture(ctx, config);
@@ -78,14 +81,32 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 	pi.on("session_shutdown", () => daemon.close());
 
 	async function input(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult> {
+		const inputStarted = performance.now();
 		const id = randomUUID();
 		const context = capture(ctx, config);
 		const base = { kind: "input", ts: new Date().toISOString(), source: event.source,
 			streaming_behavior: event.streamingBehavior ?? null, session_id: context.session_id,
 			branch_ref: context.branch_ref, input_id: id, project_id: context.project_id } as const;
+		// One durable row per real input, delivered or not. The key is the session and
+		// the input id, so a replayed turn rewrites its own row. Telemetry only: a
+		// failed write is reported and never turns a delivery into a continue.
+		const recordTurn = (outcome: TurnOutcome, fields: {
+			reason?: string | null; matched?: number; delivered?: number;
+			estimated_tokens?: number | null; block_bytes?: number | null; elapsed_ms?: number | null;
+		} = {}): void => {
+			turnLog.note({
+				turn_key: `${context.session_id}#${id}`, project_id: context.project_id, session_id: context.session_id,
+				branch_ref: context.branch_ref, input_id: id, at: base.ts, outcome,
+				handler_ms: performance.now() - inputStarted, reason: fields.reason ?? null,
+				matched: fields.matched ?? 0, delivered: fields.delivered ?? 0,
+				estimated_tokens: fields.estimated_tokens ?? null, block_bytes: fields.block_bytes ?? null,
+				elapsed_ms: fields.elapsed_ms ?? null,
+			});
+		};
 		if (event.source === "extension" || event.text.startsWith("/")) {
 			log.write({ ...base, status: "not_injected", reason: event.source === "extension" ? "extension_source" : "slash_command" });
 			recorder.noteInjection("host_command");
+			recordTurn(turnOutcome(null, true), { reason: event.source === "extension" ? "extension_source" : "slash_command" });
 			return { action: "continue" };
 		}
 		currentInput = { id, text: event.text };
@@ -123,6 +144,12 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 				injected: delivered.length, matched: plan?.matched.length ?? 0,
 				stale: delivered.filter((match) => match.freshness.is_stale).length,
 			});
+			recordTurn(text === undefined ? turnOutcome(result.reason ?? null, false) : "delivered", {
+				reason: text === undefined ? (result.reason ?? null) : null,
+				matched: plan?.matched.length ?? 0, delivered: delivered.length,
+				estimated_tokens: plan?.budget.estimated_tokens ?? null, block_bytes: plan?.budget.used_bytes ?? null,
+				elapsed_ms: plan?.elapsed_ms ?? null,
+			});
 			if (text === undefined) {
 				const skipped = formatNotInjected(result.reason ?? null);
 				if (skipped !== null) panel.push(ctx, skipped);
@@ -133,6 +160,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 		} catch (error) {
 			log.write({ ...base, status: "not_injected", reason: "store_error", error: String(error) });
 			recorder.noteInjection("store_error");
+			recordTurn(turnOutcome("store_error", false), { reason: "store_error" });
 			panel.push(ctx, line("error", "injection failed · memory store unavailable"));
 			report(error);
 			return { action: "continue" };
