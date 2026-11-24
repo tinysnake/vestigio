@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
+import { isAbsolute } from "node:path";
+import { createObsLog, OBS_RECORD_VERSION, type IfaceRouteCounts, type IfaceSnapshotRecord, type ObsLog } from "@vestigio/core/observability";
 import { JobStore, JobStoreError } from "./jobs.js";
 import { type Endpoint, type Kind, KINDS, identifier, object, sessionKey, submission } from "./protocol.js";
 import type { MemoryJobControl, MemoryJobInput } from "./memory/contract.js";
@@ -176,16 +178,201 @@ function stream(service: JobService, response: ServerResponse, sessionRef: numbe
 	flush();
 }
 
-export function httpServer(service: JobService, endpoint: Endpoint, stop: () => void) {
-	const { store } = service;
-	return createServer((request, response) => {
-		void route().catch((error) => {
-			if (response.headersSent) return response.destroy();
-			const status = error instanceof HttpError ? error.status : error instanceof TypeError ? 400 :
-				error instanceof JobStoreError ? (error.code === "request_conflict" ? 409 : 400) : 500;
-			if (status === 500) console.error(error);
-			send(response, status, { error: status === 500 ? "Daemon request failed" : (error as Error).message });
+export type IfaceStatsOptions = {
+	/** Directory for `iface.jsonl`. Defaults to `VESTIGIO_OBS_DIR`, else `<store>.observability`. */
+	readonly obsDir?: string;
+	/** Append one per-request detail line. Defaults to `VESTIGIO_IFACE_LOG=1`. */
+	readonly logRequests?: boolean;
+	/** Directory-wide byte cap for the observability log. Defaults to `VESTIGIO_OBS_MAX_BYTES`. */
+	readonly maxBytes?: number;
+};
+
+/** What `GET /v1/stats` returns: the counters and when they started. */
+export type IfaceStatsSummary = {
+	readonly since: string;
+	readonly window_ms: number;
+	readonly scope: string;
+	readonly routes: Readonly<Record<string, IfaceRouteCounts>>;
+	readonly reasons: Readonly<Record<string, number>>;
+};
+
+type RouteCounts = { "2xx": number; "4xx": number; "5xx": number; total: number };
+
+/** Route key for a request that never identified a route (bad version, method or path). */
+const UNMATCHED_ROUTE = "unknown";
+/**
+ * Control endpoints are lifecycle, not memory traffic. Leaving them out keeps a
+ * stats read from changing the counters it reports and lets the shutdown
+ * snapshot match the last read exactly.
+ */
+const UNCOUNTED_ROUTES: ReadonlySet<string> = new Set(["GET /v1/stats", "POST /v1/stop"]);
+/** The rejection causes section 7 asks for; seeded at zero so the shape is stable. */
+const REJECTION_REASONS = ["403_host", "401_token"] as const;
+
+function emptyCounts(): RouteCounts {
+	return { "2xx": 0, "4xx": 0, "5xx": 0, total: 0 };
+}
+
+function statusClass(status: number): "2xx" | "4xx" | "5xx" | undefined {
+	if (status >= 200 && status < 300) return "2xx";
+	if (status >= 400 && status < 500) return "4xx";
+	if (status >= 500 && status < 600) return "5xx";
+	return undefined;
+}
+
+function rejectionReason(status: number): string | undefined {
+	if (status === 403) return "403_host";
+	if (status === 401) return "401_token";
+	return undefined;
+}
+
+function observabilityDir(options: IfaceStatsOptions): string | undefined {
+	if (options.obsDir !== undefined) return options.obsDir;
+	const override = process.env["VESTIGIO_OBS_DIR"];
+	if (override !== undefined && override.length > 0) return override;
+	// The daemon is launched with the store path as its first argument (entry.ts).
+	// It is always absolute, so a stray relative argument is not read as a store.
+	const store = process.argv[2];
+	return store !== undefined && isAbsolute(store) ? `${store}.observability` : undefined;
+}
+
+function observabilityMaxBytes(options: IfaceStatsOptions): number | undefined {
+	if (options.maxBytes !== undefined) return options.maxBytes;
+	const parsed = Number(process.env["VESTIGIO_OBS_MAX_BYTES"]);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function logEveryRequest(options: IfaceStatsOptions): boolean {
+	return options.logRequests ?? (process.env["VESTIGIO_IFACE_LOG"] === "1");
+}
+
+/**
+ * In-process interface counters (OBS-04). Every request that reaches a route
+ * contributes one status class and one route total; a 401/403 also bumps a
+ * reason. Updates are plain synchronous map writes, so concurrent requests
+ * cannot lose one. `GET /v1/stats` and `POST /v1/stop` are not counted.
+ */
+class IfaceStats {
+	private readonly sinceMs = Date.now();
+	private readonly since = new Date(this.sinceMs).toISOString();
+	private readonly routes = new Map<string, RouteCounts>();
+	private readonly reasons = new Map<string, number>();
+	private readonly log: ObsLog | undefined;
+	private readonly logRequests: boolean;
+	private flushed = false;
+
+	constructor(dir: string | undefined, maxBytes: number | undefined, logRequests: boolean) {
+		this.logRequests = logRequests;
+		this.log = dir === undefined ? undefined : createObsLog(maxBytes === undefined ? { dir, kind: "iface" } : { dir, kind: "iface", maxBytes });
+		for (const reason of REJECTION_REASONS) this.reasons.set(reason, 0);
+	}
+
+	record(route: string, status: number, durationMs: number): void {
+		if (UNCOUNTED_ROUTES.has(route)) return;
+		const counts = this.countsFor(route);
+		const bucket = statusClass(status);
+		if (bucket !== undefined) counts[bucket] += 1;
+		counts.total += 1;
+		const reason = rejectionReason(status);
+		if (reason !== undefined) this.reasons.set(reason, (this.reasons.get(reason) ?? 0) + 1);
+		if (this.logRequests && this.log !== undefined) this.log.append(this.requestRecord(route, bucket, reason, durationMs));
+	}
+
+	/** The counters `GET /v1/stats` returns; never carries the token or the store path. */
+	summary(): IfaceStatsSummary {
+		return {
+			since: this.since,
+			window_ms: Date.now() - this.sinceMs,
+			scope: "daemon",
+			routes: this.routesSnapshot(),
+			reasons: this.reasonsSnapshot(),
+		};
+	}
+
+	/** Write the `iface_snapshot` once: the stop route and the process exit share it. */
+	flushSnapshot(): void {
+		if (this.flushed) return;
+		this.flushed = true;
+		if (this.log === undefined) return;
+		this.log.append({
+			type: "iface_snapshot",
+			v: OBS_RECORD_VERSION,
+			at: new Date().toISOString(),
+			since: this.since,
+			window_ms: Date.now() - this.sinceMs,
+			scope: "daemon",
+			routes: this.routesSnapshot(),
+			reasons: this.reasonsSnapshot(),
 		});
+		this.log.close();
+	}
+
+	private countsFor(route: string): RouteCounts {
+		let counts = this.routes.get(route);
+		if (counts === undefined) {
+			counts = emptyCounts();
+			this.routes.set(route, counts);
+		}
+		return counts;
+	}
+
+	/**
+	 * One line per request when `VESTIGIO_IFACE_LOG=1`. It reuses the snapshot
+	 * shape with `scope: "request"` and a one-request `routes` map, so it stays a
+	 * validated record the rotating writer accepts.
+	 */
+	private requestRecord(route: string, bucket: "2xx" | "4xx" | "5xx" | undefined, reason: string | undefined, durationMs: number): IfaceSnapshotRecord {
+		const counts = emptyCounts();
+		if (bucket !== undefined) counts[bucket] = 1;
+		counts.total = 1;
+		const at = Date.now();
+		return {
+			type: "iface_snapshot",
+			v: OBS_RECORD_VERSION,
+			at: new Date(at).toISOString(),
+			since: new Date(at - durationMs).toISOString(),
+			window_ms: durationMs,
+			scope: "request",
+			routes: { [route]: counts },
+			reasons: reason === undefined ? {} : { [reason]: 1 },
+		};
+	}
+
+	private routesSnapshot(): Record<string, IfaceRouteCounts> {
+		const snapshot: Record<string, IfaceRouteCounts> = {};
+		for (const [route, counts] of this.routes) snapshot[route] = { ...counts };
+		return snapshot;
+	}
+
+	private reasonsSnapshot(): Record<string, number> {
+		return Object.fromEntries(this.reasons);
+	}
+}
+
+export function httpServer(service: JobService, endpoint: Endpoint, stop: () => void, options: IfaceStatsOptions = {}) {
+	const { store } = service;
+	const stats = new IfaceStats(observabilityDir(options), observabilityMaxBytes(options), logEveryRequest(options));
+	const server = createServer((request, response) => {
+		const startedAt = Date.now();
+		let routeKey: string = UNMATCHED_ROUTE;
+		const finish = (status: number): void => {
+			stats.record(routeKey, status, Date.now() - startedAt);
+		};
+		void route().then(
+			() => finish(response.statusCode ?? 200),
+			(error) => {
+				if (response.headersSent) {
+					response.destroy();
+					finish(response.statusCode ?? 500);
+					return;
+				}
+				const status = error instanceof HttpError ? error.status : error instanceof TypeError ? 400 :
+					error instanceof JobStoreError ? (error.code === "request_conflict" ? 409 : 400) : 500;
+				if (status === 500) console.error(error);
+				send(response, status, { error: status === 500 ? "Daemon request failed" : (error as Error).message });
+				finish(status);
+			},
+		);
 		async function route() {
 			const address = `${HOST}:${endpoint.port}`;
 			if (request.headers.host !== address || request.headers.origin !== undefined) throw new HttpError(403, "Local daemon request required");
@@ -196,15 +383,26 @@ export function httpServer(service: JobService, endpoint: Endpoint, stop: () => 
 			const method = request.method;
 			if (version !== "v1" || parts.length > 4) throw new HttpError(404, "Unknown daemon route");
 			if (method === "GET" && resource === "health" && key === undefined) {
+				routeKey = "GET /v1/health";
 				return send(response, 200, { version: endpoint.version, instanceId: endpoint.instanceId });
 			}
+			if (method === "GET" && resource === "stats" && key === undefined) {
+				routeKey = "GET /v1/stats";
+				return send(response, 200, stats.summary());
+			}
 			if (method === "POST" && resource === "stop" && key === undefined) {
-				return send(response, 200, { stopped: true }, stop);
+				routeKey = "POST /v1/stop";
+				return send(response, 200, { stopped: true }, () => {
+					stats.flushSnapshot();
+					stop();
+				});
 			}
 			if (method === "POST" && resource === "sessions" && key === undefined) {
+				routeKey = "POST /v1/sessions";
 				return send(response, 200, { sessionRef: store.ensureSession(sessionKey(await body(request))) });
 			}
 			if (method === "POST" && resource === "jobs" && key === undefined) {
+				routeKey = "POST /v1/jobs";
 				const job = submission(await body(request));
 				if (job.requestId.startsWith("@child:")) throw new HttpError(400, "Reserved request identifier");
 				const accepted = store.submit(job.session, job.requestId, job.kind, job.input);
@@ -213,21 +411,25 @@ export function httpServer(service: JobService, endpoint: Endpoint, stop: () => 
 				return;
 			}
 			if (resource === "jobs" && key && method === "GET" && action === undefined) {
+				routeKey = "GET /v1/jobs/:key";
 				store.expire();
 				const job = store.get(key);
 				if (!job) throw new HttpError(404, "Unknown job");
 				return send(response, 200, job);
 			}
 			if (resource === "jobs" && key && method === "POST" && action === "cancel") {
+				routeKey = "POST /v1/jobs/:key/cancel";
 				return send(response, 200, { cancelled: service.cancel(key) });
 			}
 			if (resource === "sessions" && key) {
 				const sessionRef = numberParam(key, 0);
 				if (method === "GET" && action === "jobs") {
+					routeKey = "GET /v1/sessions/:ref/jobs";
 					store.expire();
 					return send(response, 200, store.list(sessionRef, url.searchParams.get("after") ?? undefined, Math.min(numberParam(url.searchParams.get("limit"), 32), 100)));
 				}
 				if (method === "GET" && action === "events") {
+					routeKey = "GET /v1/sessions/:ref/events";
 					if (url.searchParams.has("stream")) return stream(service, response, sessionRef);
 					store.expire();
 					const events = store.pending(sessionRef, Math.min(numberParam(url.searchParams.get("limit"), 16), 100));
@@ -235,6 +437,7 @@ export function httpServer(service: JobService, endpoint: Endpoint, stop: () => 
 					return send(response, 200, events, done);
 				}
 				if (method === "POST" && action === "delivered") {
+					routeKey = "POST /v1/sessions/:ref/delivered";
 					const { eventIds } = object(await body(request));
 					if (!Array.isArray(eventIds) || eventIds.length > 100) throw new HttpError(400, "Invalid event identifiers");
 					const delivered = new Set(eventIds.map((id) => identifier(id, "event id", 128)));
@@ -245,4 +448,8 @@ export function httpServer(service: JobService, endpoint: Endpoint, stop: () => 
 			throw new HttpError(404, "Unknown daemon route");
 		}
 	});
+	const flushOnExit = (): void => stats.flushSnapshot();
+	process.once("exit", flushOnExit);
+	server.once("close", () => process.off("exit", flushOnExit));
+	return server;
 }
