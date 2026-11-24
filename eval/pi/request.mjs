@@ -78,8 +78,10 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 			store.close();
 		}
 	};
+	// The daemon owns the write. The old 5 s window read the row mid-flight under
+	// CI load, so wait long enough for the compose and publish jobs to finish.
 	const waitForRequest = async (predicate) => {
-		const end = Date.now() + 5_000;
+		const end = Date.now() + 30_000;
 		while (!inspect((store) => store.listMemoryRequests().some(predicate)) && Date.now() < end) await delay(25);
 	};
 
