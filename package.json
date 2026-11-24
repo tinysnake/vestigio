@@ -9,7 +9,7 @@
   },
   "scripts": {
     "lint": "node scripts/lint-daemon-lifecycle.mjs",
-    "test": "pnpm -r test && node --test eval/memory/compare.test.mjs",
+    "test": "pnpm -r test && node --test eval/memory/compare.test.mjs eval/observability/audit.test.mjs",
     "typecheck": "pnpm -r typecheck"
   }
 }
