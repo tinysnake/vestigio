@@ -23,6 +23,7 @@ so a call made from pi is recorded as pi, not as `cli` or `mcp`.
 | `search` / `read` / `probe` / `resolve` | unchanged | Direct store reads. They do not write, so they did not need to move. |
 | `projects id` | local | Resolves the canonical project id for one directory (`<path>` or `--dir`, default cwd) through `@vestigio/core/project`. Needs no store and no daemon. The nearest `.vestigio/settings.json` below the repository root can declare `project` (`"repo"`, `"self"`, or a relative path), a submodule resolves under its superproject, and a broken settings file fails instead of printing another id. An id printed here is the only id a store call may use; never construct one from a path. |
 | `jobs run` | daemon maintenance | Submits `nav.run` and waits for its result. Model configuration belongs to the daemon. |
+| `--once` | flag, daemon-backed commands | On `submit`, `get`, `list`, `cancel`, `receive`, `watch` and `jobs run`: after the invocation finishes its work, stop the daemon **this invocation started**, reusing the endpoint it already resolved. A daemon another invocation started is never stopped, so it survives. `submit --once` first waits for the job to reach a terminal state (`succeeded`, `failed`, `cancelled`) and prints the terminal record: stopping right after an accepted response would kill the work. |
 
 ## MCP (`vestigio-mcp`, stdio)
 
