@@ -37,7 +37,7 @@ export type ObsLogOptions = {
 	readonly dir: string;
 	/** Base file name (without extension) of the default stream. */
 	readonly kind: string;
-	/** Directory-wide byte cap. Oldest segments are deleted above it. Default 512 MiB. */
+	/** Directory-wide byte cap. Oldest segments are deleted above it. Default 128 MiB. */
 	readonly maxBytes?: number;
 	/** Cut a new segment once the current one reaches this many bytes. Default 32 MiB. */
 	readonly segmentBytes?: number;
