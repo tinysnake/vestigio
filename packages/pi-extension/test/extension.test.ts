@@ -92,6 +92,12 @@ describe("vestigio extension", () => {
 		expect(handlers.has("before_agent_start")).toBe(true);
 		expect(handlers.has("agent_end")).toBe(true);
 		expect(handlers.has("input")).toBe(true);
+		expect(handlers.has("agent_settled")).toBe(true);
+		expect(handlers.has("turn_start")).toBe(true);
+		expect(handlers.has("turn_end")).toBe(true);
+		expect(handlers.has("message_end")).toBe(true);
+		expect(handlers.has("tool_execution_end")).toBe(true);
+		expect(handlers.has("model_select")).toBe(true);
 		expect(tools).toContain("memory_mark_stale");
 		expect(tools).not.toContain("memory_update");
 		const result = handlers.get("before_agent_start")!({ systemPrompt: "HOST PROMPT" }, { cwd: dir }) as {

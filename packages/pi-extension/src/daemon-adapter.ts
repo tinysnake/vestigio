@@ -10,6 +10,7 @@ import { ActivityPanel, clip, formatInjection, formatJobEvent, formatNotInjected
 import { ACTIVITY_ENV, type VestigioConfig } from "./config.js";
 import { DecisionLog, hashQuery } from "./decision-log.js";
 import { PiDaemon, sessionOf } from "./daemon-client.js";
+import { registerAgentRunRecorder } from "./run-log.js";
 import { loadLedger, persistLedgerDelta } from "./ledger-store.js";
 import { classifySaveDirective, requestedScope, resolveRequestEvidence } from "./request-consent.js";
 import { evidenceFromEntries, sessionEntryText, sourceRefForEntry } from "./session-source.js";
@@ -41,6 +42,13 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 	const daemon = new PiDaemon(storePath);
 	const log = new DecisionLog(config.decision_log);
 	const panel = new ActivityPanel(config.activity_panel);
+	const recorder = registerAgentRunRecorder(pi, {
+		storePath, env: process.env, report, identity: (ctx) => {
+			const identity = capture(ctx, config);
+			return { session_id: identity.session_id, session_file: identity.session_file ?? "",
+				project_id: identity.project_id, project_path: identity.project_path, branch_ref: identity.branch_ref };
+		},
+	});
 	let currentInput: { text: string; id: string } | undefined;
 	const seen = new Set<string>();
 	const checkpoints = new Map<string, string>();
@@ -77,6 +85,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			branch_ref: context.branch_ref, input_id: id, project_id: context.project_id } as const;
 		if (event.source === "extension" || event.text.startsWith("/")) {
 			log.write({ ...base, status: "not_injected", reason: event.source === "extension" ? "extension_source" : "slash_command" });
+			recorder.noteInjection("host_command");
 			return { action: "continue" };
 		}
 		currentInput = { id, text: event.text };
@@ -110,6 +119,10 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 					block_bytes: plan.budget.used_bytes, estimated_tokens: plan.budget.estimated_tokens,
 				}),
 			});
+			recorder.noteInjection(text === undefined ? (result.reason ?? "no_match") : "delivered", {
+				injected: delivered.length, matched: plan?.matched.length ?? 0,
+				stale: delivered.filter((match) => match.freshness.is_stale).length,
+			});
 			if (text === undefined) {
 				const skipped = formatNotInjected(result.reason ?? null);
 				if (skipped !== null) panel.push(ctx, skipped);
@@ -119,6 +132,7 @@ export function connectPi(pi: ExtensionAPI, config: VestigioConfig, storePath: s
 			return text === undefined ? { action: "continue" } : { action: "transform", text };
 		} catch (error) {
 			log.write({ ...base, status: "not_injected", reason: "store_error", error: String(error) });
+			recorder.noteInjection("store_error");
 			panel.push(ctx, line("error", "injection failed · memory store unavailable"));
 			report(error);
 			return { action: "continue" };
