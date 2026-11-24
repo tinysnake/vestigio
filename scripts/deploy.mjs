@@ -26,7 +26,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { SHIM_MARKER, windowsShim } from "./lib/platform.mjs";
+import { SHIM_MARKER, commandFor, windowsShim } from "./lib/platform.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXTENSION_DIR = join(ROOT, "packages", "pi-extension");
@@ -224,7 +224,12 @@ function installExtension(options) {
   }
   if (!existsSync(EXTENSION_DIR)) fail("pi install", `${EXTENSION_DIR} is missing`);
   const source = EXTENSION_DIR;
-  const result = run(options.pi, ["install", source], { dry_run: options.dry_run, timeout: 120_000 });
+  const launcher = commandFor(options.pi, ["install", source]);
+  const result = run(launcher.command, launcher.args, {
+    dry_run: options.dry_run,
+    timeout: 120_000,
+    windowsVerbatimArguments: launcher.windowsVerbatimArguments,
+  });
   if (result.status !== 0) {
     fail("pi install", (result.stderr || result.stdout || "pi install failed").trim());
   }
