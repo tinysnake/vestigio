@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarioStale } from "./stale.mjs";
 import { scenarioRequest } from "./request.mjs";
-import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
+import { stopProbeDaemons } from "../lib/daemon.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HERE = join(ROOT, "eval/pi");
@@ -861,9 +861,9 @@ async function main() {
 		check("perf_full: baseline round trip is recorded", perfEnabled ? baseline.length === 32 : true);
 	} finally {
 		try {
-			await Promise.all([...usedStores].map((path) => new VestigioClient(path).stop()));
+			const leaked = new Set(await stopProbeDaemons([...usedStores]));
 			for (const storePath of usedStores) {
-				check(`daemon stopped for ${storePath}`, !(await daemonRunning(storePath)), storePath);
+				check(`daemon stopped for ${storePath}`, !leaked.has(storePath), storePath);
 			}
 		} finally {
 			await mock.close();

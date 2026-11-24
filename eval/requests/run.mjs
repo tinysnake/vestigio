@@ -30,7 +30,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
+import { stopProbeDaemons } from "../lib/daemon.mjs";
 import { openStore } from "@vestigio/core/storage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -537,12 +537,9 @@ async function main() {
 	const untouched = realObeliskBefore === realObeliskAfter;
 	console.log(`${untouched ? "PASS" : "FAIL"}  operator Obelisk index untouched`);
 	if (!untouched) failures += 1;
-	for (const store of runStores) {
-		await new VestigioClient(store).stop();
-		if (await daemonRunning(store)) {
-			console.log(`  FAIL  leaked daemon: ${store}`);
-			failures += 1;
-		}
+	for (const store of await stopProbeDaemons(runStores)) {
+		console.log(`  FAIL  leaked daemon: ${store}`);
+		failures += 1;
 	}
 	if (!options.keep) rmSync(AGENT_HOME, { recursive: true, force: true });
 	console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
