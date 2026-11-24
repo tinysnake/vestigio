@@ -44,7 +44,7 @@
 
 ### 2.1 agent 运行摘要（`agent-runs.jsonl`，默认开）
 
-一个 run 等于一个 pi 进程对某个 session 的一次使用，从 `session_start` 到 `session_shutdown`。同一 session 被继续时产生多条 run 记录，用 `run_id` 区分。
+一个 run 等于 pi 的一次 agent 运行：从上一轮 settle 之后的第一个 `turn_start` 到 `agent_settled`，pi 每次 agent 运行发一次 `agent_settled`。同一 session 有多轮输入时产生多条 run 记录，用 `run_id` 区分，按 `session_id` 分组即一次进程使用的合计。
 
 ```
 {
@@ -165,7 +165,7 @@ turn_events (
 | OBS-02 | agent 运行摘要（第 3、4 项，含工具与注入分布） | OBS-01 | `packages/pi-extension/src/run-log.ts`、`packages/pi-extension/src/daemon-adapter.ts`、`packages/pi-extension/test/` |
 | OBS-03 | 逐 turn 行与记忆侧统计查询（第 5、6 项，及第 2 项的工具口径） | 无 | `packages/core/migrations/0007_*.sql`、`packages/core/src/storage/`、`packages/core/src/observability/`、`packages/pi-extension/src/input.ts` |
 | OBS-04 | daemon 接口计数与 `GET /v1/stats`（第 2 项的 daemon 口径） | OBS-01 | `packages/daemon/src/service.ts`、`packages/daemon/test/`、`packages/cli/src/` |
-| OBS-05 | 内部模型调用日志（第 1 项，resolver/extraction/detector/nav） | OBS-01 | `packages/model-client/src/`、`packages/model-client/test/`、`packages/core/src/observability/`、`packages/daemon/src/memory/`、`packages/cli/src/index.ts` |
+| OBS-05 | 内部模型调用日志（第 1 项，resolver/extraction/detector/nav） | OBS-01 | `packages/model-client/src/`、`packages/model-client/test/`、`packages/core/src/observability/`、`packages/daemon/src/memory/`、`packages/cli/src/index.ts`、`packages/pi-extension/src/state.ts`、`packages/pi-extension/src/tools.ts` |
 | OBS-06 | 审计脚本与端到端验收（六项汇总） | OBS-01..05 | `eval/observability/`、`scripts/`、`docs/` |
 
 OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-05 等 OBS-01，三者之间互不依赖。OBS-06 等前五个。
@@ -230,7 +230,7 @@ OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-0
 - [ ] 可见结果。开开关后跑一次 `memory_resolve`，`context/model/resolver__<id>.jsonl` 里出现一到四条 `model_call`，`round` 为 0..n，`purpose` 与 `layer` 与该次下探一致，`tokens_in`/`tokens_out` 与工具返回里的 `model calls` 行相符。
 - [ ] 单元验证。`packages/model-client/test/call-log.test.ts`：包一层假 port，断言每次 `complete` 产生一条记录且字段完整；失败结果记 `outcome="failed"` 且仍带 `reason`；`onCall` 抛异常时 `complete` 仍返回原结果；未传 `onCall` 时零开销路径不产生记录。
 - [ ] 真实验证。对一次真实 resolve，把日志里的 `tokens_in`/`tokens_out` 与 `ResolveOutcome.calls[]` 的对应值逐条比较，差值应为 0；再对一次 extraction 与一次 detector 各跑一遍，确认三个 agent 的 invocation 各自成文件。
-- [ ] 性能验证。先量对照：主干上一次 resolve 的墙钟与模型调用耗时。再量开日志后同一输入。要求非模型部分的开销增幅低于 3%。探针为 `packages/model-client/test/` 里对假 port 的计时断言（量装饰层本身），基线在主干先跑。
+- [ ] 性能验证。探针为 `packages/model-client/test/` 里对假 port 的计时断言（量装饰层本身），基线在主干用同一探针先跑。要求非模型开销的绝对增量中位数低于 0.1 ms，且单次调用写入耗时中位数低于 0.5 ms。真实模型下的相对增幅由 OBS-06 的脚本给出，不在本 PR 判定。
 - [ ] 失败条件。日志写入阻塞模型调用或改变超时；日志里的 token 与 `ResolveCallRecord` 不一致；未开开关时仍有文件产生。
 - [ ] 合并前审阅。日志含提示词与记忆候选正文，属外部模型数据边界，需使用者确认默认关闭与保留期。
 
