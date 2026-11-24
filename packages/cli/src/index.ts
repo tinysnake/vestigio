@@ -26,7 +26,7 @@ import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/mo
 import { agentModelSettings } from "@vestigio/config";
 import { formatFreshnessLines, formatProjectIdentityHuman, formatProjectsHuman, formatReadHuman, formatReassignmentHuman, formatSearchHuman, staleCardLine } from "./format.js";
 import { createObeliskHistoryPort, obeliskIndexPath, type ObeliskHistoryOptions } from "@vestigio/source-obelisk";
-import { VestigioClient } from "@vestigio/client";
+import { openDaemon, VestigioClient } from "@vestigio/client";
 import {
   DAEMON_KINDS,
   formatEventHuman,
@@ -36,6 +36,7 @@ import {
   readJobPage,
   resolveSessionRef,
   type DaemonClient,
+  type Event,
   type SessionKey,
   type SessionTarget,
 } from "./daemon.js";
@@ -125,6 +126,9 @@ Daemon jobs (compatibility adapters; the daemon owns scheduling and delivery):
   accepts the full payload, so a failed write leaves it pending for a retry.
   --session-ref is the numeric ref from a previous submit/get; --source and
   --session-id reopen the same session by its stable identity instead.
+  --once stops the daemon this invocation started once its work is done. It
+  never stops a daemon another invocation started. submit --once therefore
+  waits for the job to reach a terminal state before the daemon stops.
 
 --project must be a normalised absolute path: its git repository root (falling
 back to the path itself outside a repository) is the store scope, and the path
@@ -209,7 +213,7 @@ const VALUE_FLAGS = new Set([
   "count",
 ]);
 
-const BOOLEAN_FLAGS = new Set(["global", "archived", "history", "history-read", "json", "help"]);
+const BOOLEAN_FLAGS = new Set(["global", "archived", "history", "history-read", "json", "help", "once"]);
 
 type ParsedArgs = {
   command: string;
@@ -513,40 +517,57 @@ async function runJobs(context: CommandContext): Promise<number> {
   if (flags.some((flag) => context.parsed.flags.has(flag))) {
     throw new UsageError("jobs run uses the daemon's VESTIGIO_MODEL_* configuration");
   }
-  const client = daemonClient(context);
   const limit = integerFlag(context.parsed, "limit", 1, 20);
   const requestId = randomUUID();
-  const { sessionRef } = await client.submit({
-    session: { source: "vestigio-cli", sessionId: requestId },
-    requestId,
-    kind: "maintenance",
-    input: { op: "nav.run", limit },
-  });
-  for (;;) {
-    const [event] = await client.receive(sessionRef, true);
-    if (!event) {
-      await delay(100);
-      continue;
-    }
-    if (event.state !== "succeeded") {
-      const failure = event.result as { error?: string } | undefined;
-      await deliver(context.io, `error: ${failure?.error ?? String(event.resultCode)}\n`);
+  return await withOwnedDaemon(context, async (client) => {
+    const { sessionRef } = await client.submit({
+      session: { source: "vestigio-cli", sessionId: requestId },
+      requestId,
+      kind: "maintenance",
+      input: { op: "nav.run", limit },
+    });
+    for (;;) {
+      const [event] = await client.receive(sessionRef, true);
+      if (!event) {
+        await delay(100);
+        continue;
+      }
+      if (event.state !== "succeeded") {
+        const failure = event.result as { error?: string } | undefined;
+        await deliver(context.io, `error: ${failure?.error ?? String(event.resultCode)}\n`);
+        await client.relayed(sessionRef, [event.eventId]);
+        return 1;
+      }
+      const { result } = event.result as { result: Record<string, unknown> };
+      const output = context.parsed.flags.has("json") ? JSON.stringify(result, null, 2) :
+        `claimed=${String(result.claimed ?? 0)} completed=${String(result.completed ?? 0)} ${String(result.reason ?? "")}`.trim();
+      await deliver(context.io, `${output}\n`);
       await client.relayed(sessionRef, [event.eventId]);
-      return 1;
+      return 0;
     }
-    const { result } = event.result as { result: Record<string, unknown> };
-    const output = context.parsed.flags.has("json") ? JSON.stringify(result, null, 2) :
-      `claimed=${String(result.claimed ?? 0)} completed=${String(result.completed ?? 0)} ${String(result.reason ?? "")}`.trim();
-    await deliver(context.io, `${output}\n`);
-    await client.relayed(sessionRef, [event.eventId]);
-    return 0;
-  }
+  });
 }
 
 function daemonClient(context: CommandContext): DaemonClient {
   const storePath = databasePath(context.parsed);
   const create = context.deps.createClient ?? ((path: string) => new VestigioClient(path));
   return create(storePath);
+}
+
+async function withOwnedDaemon(
+  context: CommandContext,
+  body: (client: DaemonClient) => Promise<number>,
+): Promise<number> {
+  const storePath = databasePath(context.parsed);
+  const create = context.deps.createClient;
+  if (create !== undefined) return await body(create(storePath));
+  const { endpoint, started } = await openDaemon(storePath);
+  const client = new VestigioClient(storePath, endpoint);
+  try {
+    return await body(client);
+  } finally {
+    if (started && context.parsed.flags.get("once") === true) await client.stop();
+  }
 }
 
 function sessionKeyFor(parsed: ParsedArgs, command: string): SessionKey {
@@ -608,49 +629,78 @@ async function deliver(io: CliIo, text: string): Promise<void> {
   io.out(text);
 }
 
+async function awaitTerminalJob(
+  client: DaemonClient,
+  sessionRef: number,
+  jobId: string,
+): Promise<{ job: Record<string, unknown>; state: Event["state"] }> {
+  for (;;) {
+    const [event] = await client.receive(sessionRef, true);
+    if (!event) {
+      await delay(100);
+      continue;
+    }
+    await client.relayed(sessionRef, [event.eventId]);
+    if (event.jobId !== jobId) continue;
+    return { job: await client.get(jobId), state: event.state };
+  }
+}
+
 async function runSubmit(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "submit");
   const kind = DAEMON_KINDS.find((candidate) => candidate === requireFlag(context.parsed, "kind"));
   if (kind === undefined) throw new UsageError(`--kind must be one of ${DAEMON_KINDS.join(", ")}`);
   const requestId = stringFlag(context.parsed, "request-id") ?? randomUUID();
-  const accepted = await daemonClient(context).submit({
-    session: sessionKeyFor(context.parsed, "submit"),
-    requestId,
-    kind,
-    input: readJobInput(context.parsed),
+  const session = sessionKeyFor(context.parsed, "submit");
+  const input = readJobInput(context.parsed);
+  const once = context.parsed.flags.get("once") === true;
+  return await withOwnedDaemon(context, async (client) => {
+    const accepted = await client.submit({ session, requestId, kind, input });
+    if (!once) {
+      emit(
+        context.io,
+        context.parsed,
+        { ...accepted, request_id: requestId },
+        `submitted ${accepted.jobId} session=${accepted.sessionRef}\nrequest_id: ${requestId}\n`,
+      );
+      return 0;
+    }
+    const { job, state } = await awaitTerminalJob(client, accepted.sessionRef, accepted.jobId);
+    emit(context.io, context.parsed, { ...job, request_id: requestId }, formatJobHuman(job));
+    return state === "succeeded" ? 0 : 1;
   });
-  emit(
-    context.io,
-    context.parsed,
-    { ...accepted, request_id: requestId },
-    `submitted ${accepted.jobId} session=${accepted.sessionRef}\nrequest_id: ${requestId}\n`,
-  );
-  return 0;
 }
 
 async function runGet(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "get");
   const jobId = requireFlag(context.parsed, "job");
-  const job = await daemonClient(context).get(jobId);
-  emit(context.io, context.parsed, job, formatJobHuman(job));
-  return 0;
+  return await withOwnedDaemon(context, async (client) => {
+    const job = await client.get(jobId);
+    emit(context.io, context.parsed, job, formatJobHuman(job));
+    return 0;
+  });
 }
 
 async function runList(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "list");
-  const client = daemonClient(context);
-  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "list"));
-  const page = readJobPage(await client.list(sessionRef, stringFlag(context.parsed, "after")));
-  emit(context.io, context.parsed, { sessionRef, ...page }, formatJobListHuman(page));
-  return 0;
+  const target = sessionTargetFor(context.parsed, "list");
+  const after = stringFlag(context.parsed, "after");
+  return await withOwnedDaemon(context, async (client) => {
+    const sessionRef = await resolveSessionRef(client, target);
+    const page = readJobPage(await client.list(sessionRef, after));
+    emit(context.io, context.parsed, { sessionRef, ...page }, formatJobListHuman(page));
+    return 0;
+  });
 }
 
 async function runCancel(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "cancel");
   const jobId = requireFlag(context.parsed, "job");
-  const result = await daemonClient(context).cancel(jobId);
-  emit(context.io, context.parsed, { jobId, ...result }, `cancelled=${result.cancelled} job=${jobId}\n`);
-  return 0;
+  return await withOwnedDaemon(context, async (client) => {
+    const result = await client.cancel(jobId);
+    emit(context.io, context.parsed, { jobId, ...result }, `cancelled=${result.cancelled} job=${jobId}\n`);
+    return 0;
+  });
 }
 
 /**
@@ -659,16 +709,19 @@ async function runCancel(context: CommandContext): Promise<number> {
  */
 async function runReceive(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "receive");
-  const client = daemonClient(context);
-  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "receive"));
-  const events = await client.receive(sessionRef, true);
-  const payload =
-    context.parsed.flags.get("json") === true
-      ? `${JSON.stringify({ sessionRef, events }, null, 2)}\n`
-      : formatEventsHuman(events);
-  await deliver(context.io, payload);
-  await client.relayed(sessionRef, events.map((event) => event.eventId));
-  return 0;
+  const target = sessionTargetFor(context.parsed, "receive");
+  const json = context.parsed.flags.get("json") === true;
+  return await withOwnedDaemon(context, async (client) => {
+    const sessionRef = await resolveSessionRef(client, target);
+    const events = await client.receive(sessionRef, true);
+    const payload =
+      json
+        ? `${JSON.stringify({ sessionRef, events }, null, 2)}\n`
+        : formatEventsHuman(events);
+    await deliver(context.io, payload);
+    await client.relayed(sessionRef, events.map((event) => event.eventId));
+    return 0;
+  });
 }
 
 /**
@@ -677,8 +730,7 @@ async function runReceive(context: CommandContext): Promise<number> {
  */
 async function runWatch(context: CommandContext): Promise<number> {
   noExtraPositionals(context.parsed, "watch");
-  const client = daemonClient(context);
-  const sessionRef = await resolveSessionRef(client, sessionTargetFor(context.parsed, "watch"));
+  const target = sessionTargetFor(context.parsed, "watch");
   const interval = integerFlag(context.parsed, "interval", 50, 3_600_000) ?? 1_000;
   const count = integerFlag(context.parsed, "count", 1, 1_000_000);
   const json = context.parsed.flags.get("json") === true;
@@ -686,20 +738,23 @@ async function runWatch(context: CommandContext): Promise<number> {
   const stop = (): void => controller.abort();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  let delivered = 0;
   try {
-    while (!controller.signal.aborted) {
-      const events = await client.receive(sessionRef, true);
-      for (const event of events) {
-        await deliver(context.io, json ? `${JSON.stringify(event)}\n` : formatEventHuman(event));
-        await client.relayed(sessionRef, [event.eventId]);
-        delivered += 1;
-        if (count !== undefined && delivered >= count) return 0;
+    return await withOwnedDaemon(context, async (client) => {
+      const sessionRef = await resolveSessionRef(client, target);
+      let delivered = 0;
+      while (!controller.signal.aborted) {
+        const events = await client.receive(sessionRef, true);
+        for (const event of events) {
+          await deliver(context.io, json ? `${JSON.stringify(event)}\n` : formatEventHuman(event));
+          await client.relayed(sessionRef, [event.eventId]);
+          delivered += 1;
+          if (count !== undefined && delivered >= count) return 0;
+        }
+        if (controller.signal.aborted) break;
+        await delay(interval);
       }
-      if (controller.signal.aborted) break;
-      await delay(interval);
-    }
-    return 0;
+      return 0;
+    });
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
