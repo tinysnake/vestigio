@@ -26,6 +26,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { SHIM_MARKER, windowsShim } from "./lib/platform.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXTENSION_DIR = join(ROOT, "packages", "pi-extension");
@@ -268,13 +269,62 @@ function writableDirectory(path) {
   }
 }
 
+function onPath(dir) {
+  const separator = process.platform === "win32" ? ";" : ":";
+  const clean = (value) => value.trim().replace(/^"(.*)"$/, "$1").replace(/[\\/]+$/, "").toLowerCase();
+  const wanted = clean(dir);
+  return (process.env.PATH ?? "").split(separator).some((entry) => entry.trim() !== "" && clean(entry) === wanted);
+}
+
 function linkCommand(options) {
   const candidates = options.bin_dir === null
-    ? ["/usr/local/bin", join(homedir(), ".local", "bin")]
+    ? (process.platform === "win32"
+      ? [
+        join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "npm"),
+        join(homedir(), ".local", "bin"),
+      ]
+      : ["/usr/local/bin", join(homedir(), ".local", "bin")])
     : [options.bin_dir];
   const target = candidates.find((dir) => existsSync(dir) && writableDirectory(dir)) ?? null;
   if (target === null) {
     step("vestigio command", "warn", `no writable bin dir among ${candidates.join(", ")}; run ${CLI_ENTRY} directly`);
+    return;
+  }
+  // A step is ok only when the command will resolve; a dir off PATH still needs adding.
+  const placed = (verb, path) => {
+    if (onPath(target)) {
+      step("vestigio command", "ok", `${verb} ${path}`);
+      return;
+    }
+    step("vestigio command", "warn", `${verb} ${path}; ${target} is not on PATH, add it`);
+  };
+  // Windows cannot link a bash wrapper into something cmd runs, so it gets a
+  // written .cmd shim instead.
+  if (process.platform === "win32") {
+    const command = join(target, "vestigio.cmd");
+    const shim = windowsShim(ROOT);
+    if (existsSync(command)) {
+      let current = "";
+      try {
+        current = readFileSync(command, "utf8");
+      } catch {
+        current = "";
+      }
+      if (current === shim) {
+        step("vestigio command", "skip", `${command} already points here`);
+        return;
+      }
+      if (current.trim() !== "" && !current.includes(SHIM_MARKER)) {
+        step("vestigio command", "warn", `${command} exists and is not ours; leaving it alone`);
+        return;
+      }
+    }
+    if (options.dry_run) {
+      step("vestigio command", "ok", `would write ${command}`);
+      return;
+    }
+    writeFileSync(command, shim);
+    placed("wrote", command);
     return;
   }
   const link = join(target, "vestigio");
@@ -298,7 +348,7 @@ function linkCommand(options) {
   }
   chmodSync(CLI_ENTRY, 0o755);
   symlinkSync(CLI_ENTRY, link);
-  step("vestigio command", "ok", `linked ${link}`);
+  placed("linked", link);
 }
 
 // ---- main ----------------------------------------------------------------
