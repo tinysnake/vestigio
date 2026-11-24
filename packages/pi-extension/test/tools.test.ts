@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
@@ -511,6 +511,123 @@ describe("memory_resolve", () => {
 		expect(text).toContain("answer (unresolved): 端口是 18080，但记忆里还写着 8080。");
 		expect(store.countUsageEvents()).toBe(1);
 		store.close();
+	});
+});
+
+/**
+ * The extension is the primary consumer of `memory_resolve`, but it builds its
+ * own model port, so the model log has to be wired here too. With
+ * `VESTIGIO_MODEL_LOG` on, one resolve must produce one invocation file whose
+ * calls carry the same calls and tokens the tool reports; with the switch off,
+ * or with no model call at all, no file may appear.
+ */
+describe("memory_resolve model log", () => {
+	function obsDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "vestigio-model-log-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		return dir;
+	}
+
+	/** Turn the switch on for one log directory, and off when `dir` is null. */
+	function withModelLog(dir: string | null): void {
+		const previousLog = process.env.VESTIGIO_MODEL_LOG;
+		const previousDir = process.env.VESTIGIO_OBS_DIR;
+		cleanups.push(() => {
+			if (previousLog === undefined) delete process.env.VESTIGIO_MODEL_LOG;
+			else process.env.VESTIGIO_MODEL_LOG = previousLog;
+			if (previousDir === undefined) delete process.env.VESTIGIO_OBS_DIR;
+			else process.env.VESTIGIO_OBS_DIR = previousDir;
+		});
+		if (dir === null) {
+			delete process.env.VESTIGIO_MODEL_LOG;
+			delete process.env.VESTIGIO_OBS_DIR;
+			return;
+		}
+		process.env.VESTIGIO_MODEL_LOG = "1";
+		process.env.VESTIGIO_OBS_DIR = dir;
+	}
+
+	it("records the resolver invocation when VESTIGIO_MODEL_LOG is on", async () => {
+		const dir = obsDir();
+		withModelLog(dir);
+		const model = fakeModel([
+			decision({ sufficient: true, answer: "默认端口是 18080。", evidence_ids: ["mem-deploy"] }),
+		]);
+		const { store, state, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-log1", { question: "部署 端口" }, undefined, undefined, ctx);
+		store.close();
+
+		const modelDir = join(dir, "context", "model");
+		const files = readdirSync(modelDir);
+		expect(files).toHaveLength(1);
+		expect(files[0]).toMatch(/^resolver__resolve-[0-9a-f]{16}\.jsonl$/);
+		const records = readFileSync(join(modelDir, files[0]!), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+
+		const start = records[0]!;
+		expect(start.type).toBe("model_invocation_start");
+		expect(start.agent).toBe("resolver");
+		expect(start.project_id).toBe(PROJECT);
+		expect(start.session_id).toBe(state.currentSessionId);
+		expect(start.session_id).not.toBe("");
+		expect(start.input_id).toBe("tool:call-log1");
+		expect(start.question).toBe("部署 端口");
+		expect(`${String(start.agent)}__${String(start.invocation_id)}.jsonl`).toBe(files[0]);
+
+		const calls = records.filter((record) => record.type === "model_call");
+		expect(calls).toHaveLength((result.details.measured as { model_calls: number }).model_calls);
+		const firstCall = calls[0]!;
+		expect(firstCall.round).toBe(0);
+		expect(firstCall.purpose).toBe("judge_expand");
+		expect(firstCall.layer).toBe("active");
+		expect((firstCall.response as { usage: { tokens_in: number } }).usage.tokens_in).toBe(100);
+		expect((firstCall.response as { usage: { tokens_out: number } }).usage.tokens_out).toBe(20);
+
+		const end = records[records.length - 1]!;
+		expect(end.type).toBe("model_invocation_end");
+		expect(end.calls).toBe(calls.length);
+		expect((end.tokens as { in: number }).in).toBe(100);
+		expect((end.tokens as { out: number }).out).toBe(20);
+		expect(end.outcome).toBe("ok");
+	});
+
+	it("writes no log at all when VESTIGIO_MODEL_LOG is unset", async () => {
+		const dir = obsDir();
+		withModelLog(null);
+		const model = fakeModel([
+			decision({ sufficient: true, answer: "默认端口是 18080。", evidence_ids: ["mem-deploy"] }),
+		]);
+		const { store, tools, ctx } = setup({
+			deps: { create_model: () => model.port },
+			env: { VESTIGIO_MODEL_BASE_URL: "http://127.0.0.1:9/v1" },
+		});
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-log2", { question: "部署 端口" }, undefined, undefined, ctx);
+		store.close();
+		// The resolve still ran and called the model; only the log is absent.
+		expect(result.details.status).toBe("resolved");
+		expect(model.requests).toHaveLength(1);
+		expect(existsSync(join(dir, "context"))).toBe(false);
+	});
+
+	it("writes no log file when the resolve makes no model call", async () => {
+		const dir = obsDir();
+		withModelLog(dir);
+		const { store, tools, ctx } = setup();
+		const result = await tools
+			.get("memory_resolve")!
+			.execute("call-log3", { question: "部署 端口" }, undefined, undefined, ctx);
+		store.close();
+		expect(result.details.degraded).toBe(true);
+		expect(existsSync(join(dir, "context"))).toBe(false);
 	});
 });
 

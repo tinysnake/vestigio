@@ -181,7 +181,7 @@ function validateModelCall(o: Dict): string | null {
 		needString(o, "call_id") ??
 		needString(o, "invocation_id") ??
 		needNumber(o, "round") ??
-		needOneOf(o, "purpose", ["judge_expand", "medium_summary"]) ??
+		needOneOf(o, "purpose", ["judge_expand", "medium_summary", "detector", "nav"]) ??
 		needString(o, "layer") ??
 		needString(o, "model") ??
 		needTimestamp(o, "at") ??

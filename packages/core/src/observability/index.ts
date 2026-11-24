@@ -36,3 +36,17 @@ export type {
 } from "./records.js";
 export { validateObsRecord } from "./validate.js";
 export type { ObsRecordParse } from "./validate.js";
+export {
+	createModelInvocationRecorder,
+	modelLogFromEnv,
+	MODEL_LOG_ENV,
+	MODEL_LOG_DIR_ENV,
+	MODEL_LOG_MAX_BYTES_ENV,
+} from "./model-log.js";
+export type {
+	ModelCallEvent,
+	ModelCallObserver,
+	ModelInvocationContext,
+	ModelInvocationRecorder,
+	ModelLogEnv,
+} from "./model-log.js";

@@ -19,7 +19,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { MemoryUri, Scope } from "@vestigio/core";
 import { layeredSearch, readMemoryResult, type HistoryPort } from "@vestigio/core/retrieval";
 import type { ModelPort, ModelThinking, ResolveOutcome } from "@vestigio/core/resolver";
-import { resolveMemory } from "@vestigio/core/resolver";
+import { requestKeyOf, resolveMemory } from "@vestigio/core/resolver";
+import { createModelInvocationRecorder, modelLogFromEnv, type ModelCallObserver } from "@vestigio/core/observability";
 import { openStore, type MemoryStore } from "@vestigio/core/storage";
 import { describeProjectIdentity, resolveProjectId, withProjectAliases } from "@vestigio/core/project";
 import { createAgentModelPort, type OpenAiCompatibleOptions } from "@vestigio/model-client";
@@ -843,7 +844,7 @@ type ModelWiring = {
  * comes from the flag or the environment, and a cost is reported only from an
  * explicit price table. Never prints the key.
  */
-function wireModel(context: CommandContext): ModelWiring {
+function wireModel(context: CommandContext, onCall?: ModelCallObserver): ModelWiring {
   const agents = agentModelSettings(process.env);
   const baseUrl =
     stringFlag(context.parsed, "model-base-url") ?? process.env["VESTIGIO_MODEL_BASE_URL"] ?? null;
@@ -868,6 +869,7 @@ function wireModel(context: CommandContext): ModelWiring {
           },
           agents,
           context.deps.createModel ?? undefined,
+          onCall,
         );
   return {
     model,
@@ -887,8 +889,10 @@ async function runResolve(context: CommandContext): Promise<number> {
   const question = requireFlag(context.parsed, "question");
   const scope = requireScope(context.parsed);
   const store = openDatabase(context);
+  const model_log = modelLogFromEnv(process.env, databasePath(context.parsed));
+  const recorder = model_log === null ? null : createModelInvocationRecorder(model_log);
   try {
-    const wiring = wireModel(context);
+    const wiring = wireModel(context, recorder?.observer);
     const model = wiring.model;
     const home = stringFlag(context.parsed, "obelisk-home");
     const history =
@@ -899,7 +903,25 @@ async function runResolve(context: CommandContext): Promise<number> {
             cli_path: stringFlag(context.parsed, "obelisk-cli"),
             source_instance: stringFlag(context.parsed, "source-instance"),
           });
-    const outcome = await resolveMemory({ store, question, scope: withProjectAliases(scope, store.listProjectIds()), model, history, defer_persistence: true });
+    const run = () =>
+      resolveMemory({ store, question, scope: withProjectAliases(scope, store.listProjectIds()), model, history, defer_persistence: true });
+    // The invocation key is the same one the resolver derives when no explicit
+    // `request_id` is given. With `VESTIGIO_MODEL_LOG` off, `recorder` is null
+    // and this is the plain call with no log touched.
+    const outcome =
+      recorder === null
+        ? await run()
+        : await recorder.run(
+            {
+              invocation_id: requestKeyOf({ scope, question }),
+              agent: "resolver",
+              project_id: scope.kind === "project" ? scope.project_id : "",
+              session_id: "",
+              input_id: requestKeyOf({ scope, question }),
+              question,
+            },
+            run,
+          );
     const modelInfo = {
       ...wiring.info,
       degraded: outcome.measured.degraded,
@@ -916,6 +938,7 @@ async function runResolve(context: CommandContext): Promise<number> {
     );
     return 0;
   } finally {
+    model_log?.close();
     store.close();
   }
 }
