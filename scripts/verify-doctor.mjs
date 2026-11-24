@@ -12,10 +12,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cliCommand, processLines } from "./lib/platform.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CLI = join(ROOT, "packages/cli/bin/vestigio");
-const LOCAL_PI = join(ROOT, "packages/pi-extension/node_modules/.bin/pi");
+const CLI = process.platform === "win32"
+	? join(ROOT, "packages/cli/src/entry.ts")
+	: join(ROOT, "packages/cli/bin/vestigio");
+const LOCAL_PI = join(ROOT, "packages/pi-extension/node_modules/.bin", process.platform === "win32" ? "pi.CMD" : "pi");
 const MIN_NODE = [22, 5];
 
 let failures = 0;
@@ -27,6 +30,8 @@ const fail = (label, detail) => {
 };
 
 const capture = (command, args) => spawnSync(command, args, { encoding: "utf8" });
+// A failed spawn sets `error` and leaves `stderr` undefined, so read whichever exists.
+const firstLine = (result) => (result.error?.message ?? result.stderr ?? result.stdout ?? "no output").trim().split("\n")[0] || "no output";
 
 const [major, minor] = process.versions.node.split(".").map(Number);
 if (major > MIN_NODE[0] || (major === MIN_NODE[0] && minor >= MIN_NODE[1])) {
@@ -39,16 +44,18 @@ const pnpm = capture("pnpm", ["--version"]);
 if (pnpm.status === 0) ok("pnpm", pnpm.stdout.trim());
 else fail("pnpm", pnpm.error?.message ?? pnpm.stderr.trim());
 
-if (existsSync(CLI)) {
-	const help = capture(CLI, ["--help"]);
-	if (help.status === 0) ok("cli", CLI);
-	else fail("cli", help.stderr.trim().split("\n")[0]);
-} else {
-	fail("cli", `missing ${CLI}`);
-}
+const cli = cliCommand(ROOT, ["--help"]);
+const help = capture(cli.command, cli.args);
+if (help.status === 0) ok("cli", CLI);
+else fail("cli", firstLine(help));
 
 const pi = existsSync(LOCAL_PI) ? LOCAL_PI : "pi";
-const version = capture(pi, ["--version"]);
+// spawnSync cannot launch a `.cmd` directly (EINVAL), and Node backslash-escapes
+// an embedded quote unless the argument is passed verbatim; route the Windows
+// shim through cmd the same way a shell would.
+const version = process.platform === "win32" && pi === LOCAL_PI
+	? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${pi}" --version`], { encoding: "utf8", windowsVerbatimArguments: true })
+	: capture(pi, ["--version"]);
 if (version.status === 0) ok("pi", `${version.stdout.trim()}  ${pi}`);
 else fail("pi", version.error?.message ?? version.stderr.trim());
 
@@ -61,15 +68,16 @@ if (!store) {
 	warn("VESTIGIO_STORE", `${store} does not exist yet`);
 }
 
-const processes = capture("ps", ["-axo", "pid=,command="]);
-const lines = processes.status === 0 ? processes.stdout.split("\n").filter(Boolean) : [];
-const daemons = lines
+const lines = processLines();
+if (lines === null) warn("processes", "no process listing on this platform; the daemon and obelisk checks below see nothing");
+const processes = lines ?? [];
+const daemons = processes
 	.map((line) => line.match(/(\S+)\/packages\/daemon\/src\/entry\.ts/))
 	.filter(Boolean)
 	.map((match) => match[1]);
 const checkouts = [...new Set(daemons)];
 if (daemons.length > 0) {
-	const here = checkouts.includes(ROOT.replace(/\/$/, ""));
+	const here = checkouts.includes(ROOT.replace(/\\/g, "/").replace(/\/$/, ""));
 	warn("live daemon", `${daemons.length} process(es) across ${checkouts.length} checkout(s)${here ? ", including this one" : ""}`);
 	for (const root of checkouts.slice(0, 3)) console.log(`      ${root}`);
 	if (checkouts.length > 3) console.log(`      and ${checkouts.length - 3} more`);
@@ -81,7 +89,7 @@ if (store && existsSync(`${store}.daemon/endpoint.json`)) {
 	warn("daemon endpoint", `${store}.daemon/endpoint.json exists; stop it before a clean run`);
 }
 
-const obelisk = lines.filter((line) => /(^|[\s/])obelisk(\s|$)/.test(line) && !/verify-(all|doctor)/.test(line));
+const obelisk = processes.filter((line) => /(^|[\s/])obelisk(\s|$)/.test(line) && !/verify-(all|doctor)/.test(line));
 if (obelisk.length > 0) warn("obelisk running", "the pi harness asserts the real index is untouched; wait for it to exit");
 else ok("obelisk", "idle");
 
