@@ -4,7 +4,9 @@
  * short offer and writes nothing; only the operator's own next message (好)
  * makes the agent call `memory_request_write` and reach one published memory.
  * A self-contained save command is written in the same turn with no question,
- * and a declined or ambiguous next message writes nothing.
+ * and a declined or ambiguous next message writes nothing. A save that
+ * paraphrases a seeded subject folds into that subject instead of opening a
+ * second topic next to it (issue #2).
  *
  * The provider is a local mock. Nothing here can reach the operator's real store
  * or Obelisk home; every check reads the isolated SQLite file the harness owns.
@@ -171,11 +173,11 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 
 	try {
 		const direct = await ask(DIRECT, "direct");
-		await waitForRequest((row) => row.status === "saved" && row.navigation_status === "ready");
+		await waitForRequest((row) => (row.status === "saved" || row.status === "merged") && row.navigation_status === "ready");
 		const first = inspect((store) => ({ requests: store.listMemoryRequests() }));
 		check("request: a self-contained direct command is queued without a dialog", first.requests.length === 1, JSON.stringify(first.requests));
 		check("request: the direct command creates no question in its own turn", !toolResultText(direct.events).includes("Append the question"), toolResultText(direct.events).slice(-300));
-		check("request: the direct request reaches one saved revision", first.requests[0]?.status === "saved" && first.requests[0]?.revision === 1, JSON.stringify(first.requests[0]));
+		check("request: the direct request folds into the seeded subject", first.requests[0]?.status === "merged" && first.requests[0]?.revision === 2 && first.requests[0]?.memory_uri === "memory://vestigio/mem-deploy-port", JSON.stringify(first.requests[0]));
 		const memoryUri = first.requests[0]?.memory_uri;
 		check("request: the saved request names its URI", typeof memoryUri === "string" && memoryUri.startsWith("memory://"));
 		const memory = inspect((store) => (memoryUri === null ? null : store.readMemory(memoryUri)));
@@ -215,10 +217,10 @@ export async function scenarioRequest({ mock, spawnPi, check, storePath, port })
 				pending: memory === null ? [] : store.listPendingStaleEvents(memory.memory_id),
 			};
 		});
-		check("request: an overlapping approved request reuses the same topic", merged.memory?.revision === 2, `r${merged.memory?.revision}`);
-		check("request: one revision absorbs the request and the pending change", merged.memory?.revision === 2 && merged.pending.length === 0, `${merged.pending.length} pending`);
+		check("request: an overlapping approved request reuses the same topic", merged.memory?.revision === 3, `r${merged.memory?.revision}`);
+		check("request: one revision absorbs the request and the pending change", merged.memory?.revision === 3 && merged.pending.length === 0, `${merged.pending.length} pending`);
 		const overlapRequest = merged.requests.find((row) => row.intent.includes("保持"));
-		check("request: the overlap is reported as merged", overlapRequest?.status === "merged" && overlapRequest?.revision === 2, JSON.stringify(overlapRequest));
+		check("request: the overlap is reported as merged", overlapRequest?.status === "merged" && overlapRequest?.revision === 3 && overlapRequest?.memory_uri === memoryUri, JSON.stringify(overlapRequest));
 
 		// Establish the durable conclusion the agent will judge worth saving.
 		await ask(CONTEXT, "context");
