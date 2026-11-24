@@ -12,15 +12,18 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cliCommand } from "./lib/platform.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CLI = join(ROOT, "packages/cli/bin/vestigio");
 const dir = mkdtempSync(join(tmpdir(), "vestigio-smoke-"));
 const store = join(dir, "store.sqlite");
 const project = join(dir, "project");
-const run = (...args) => spawnSync(CLI, args, { encoding: "utf8", env: { ...process.env, VESTIGIO_CONFIG: "" } });
+const run = (...args) => {
+	const { command, args: argv } = cliCommand(ROOT, args);
+	return spawnSync(command, argv, { encoding: "utf8", env: { ...process.env, VESTIGIO_CONFIG: "" } });
+};
 
 try {
 	const search = run("search", "--db", store, "--project", project, "--query", "部署 端口");
