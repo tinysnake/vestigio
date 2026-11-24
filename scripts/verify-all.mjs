@@ -28,6 +28,7 @@ const piFilter = filterIndex >= 0 ? args[filterIndex + 1] : null;
 
 const gate = (name, cwd, command, commandArgs) => ({ name, cwd, command, commandArgs });
 const gates = [
+	gate("lint", ROOT, "pnpm", ["lint"]),
 	gate("typecheck", ROOT, "pnpm", ["typecheck"]),
 	gate("test", ROOT, "pnpm", ["test"]),
 	gate("memory", join(ROOT, "eval/memory"), process.execPath, ["--import", "../pi/hook.mjs", "./run.mjs"]),
