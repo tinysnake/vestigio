@@ -228,8 +228,8 @@ OBS-01 与 OBS-03 互不依赖，都从主线开分支。OBS-02、OBS-04、OBS-0
 - [ ] 文件。仅修改总表中的 OBS-05 路径。
 - [ ] 变更。在 `packages/model-client/src/agents.ts:40` 的 `createAgentModelPort` 上开一个可选的 `onCall` 观察点并加一层装饰器，记录 `ModelRequest`（`packages/core/src/resolver/types.ts:40`）与 `ModelResult`。三处构造点（`packages/daemon/src/memory/runtime.ts:78`、`packages/cli/src/index.ts:861`、`packages/pi-extension/src/state.ts:272`）各传入写入器，默认不传即行为不变。按 2.2 逐调用追加一行 `model_call`，invocation 起止各一行。resolver 的 invocation_id 由该次 resolve 的 request 派生；extraction / detector / nav 各用其 job key。回复正文只在 `VESTIGIO_MODEL_LOG=1` 时写。
 - [ ] 可见结果。开开关后跑一次 `memory_resolve`，`context/model/resolver__<id>.jsonl` 里出现一到四条 `model_call`，`round` 为 0..n，`purpose` 与 `layer` 与该次下探一致，`tokens_in`/`tokens_out` 与工具返回里的 `model calls` 行相符。
-- [ ] 单元验证。`packages/model-client/test/call-log.test.ts`：包一层假 port，断言每次 `complete` 产生一条记录且字段完整；失败结果记 `outcome="failed"` 且仍带 `reason`；`onCall` 抛异常时 `complete` 仍返回原结果；未传 `onCall` 时零开销路径不产生记录。
-- [ ] 真实验证。对一次真实 resolve，把日志里的 `tokens_in`/`tokens_out` 与 `ResolveOutcome.calls[]` 的对应值逐条比较，差值应为 0；再对一次 extraction 与一次 detector 各跑一遍，确认三个 agent 的 invocation 各自成文件。
+- [ ] 单元验证。`packages/model-client/test/call-log.test.ts`：包一层假 port，断言每次 `complete` 产生一条记录且字段完整；失败结果记 `outcome="failed"` 且仍带 `reason`；`onCall` 抛异常时 `complete` 仍返回原结果；未传 `onCall` 时零开销路径不产生记录。`packages/pi-extension/test/tools.test.ts`：开关打开时一次 `memory_resolve` 产生一个 `resolver__resolve-<16hex>.jsonl`，起止记录与 `model_call` 轮数自洽；开关关闭时模型仍被调用一次但不产生文件；没有模型调用时也不产生文件。
+- [ ] 真实验证。对一次真实 resolve，把日志里的 `tokens_in`/`tokens_out` 与 `ResolveOutcome.calls[]` 的对应值逐条比较，差值应为 0；再对一次 extraction 与一次 detector 各跑一遍，确认三个 agent 的 invocation 各自成文件。扩展内那次 resolve 另用真实工具与真实写入器对一次假 model port 再验一遍，确认扩展路径也落文件。
 - [ ] 性能验证。探针为 `packages/model-client/test/` 里对假 port 的计时断言（量装饰层本身），基线在主干用同一探针先跑。要求非模型开销的绝对增量中位数低于 0.1 ms，且单次调用写入耗时中位数低于 0.5 ms。真实模型下的相对增幅由 OBS-06 的脚本给出，不在本 PR 判定。
 - [ ] 失败条件。日志写入阻塞模型调用或改变超时；日志里的 token 与 `ResolveCallRecord` 不一致；未开开关时仍有文件产生。
 - [ ] 合并前审阅。日志含提示词与记忆候选正文，属外部模型数据边界，需使用者确认默认关闭与保留期。
