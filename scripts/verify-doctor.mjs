@@ -40,7 +40,8 @@ if (major > MIN_NODE[0] || (major === MIN_NODE[0] && minor >= MIN_NODE[1])) {
 	fail("node", `${process.versions.node} < ${MIN_NODE.join(".")}`);
 }
 
-const pnpm = capture("pnpm", ["--version"]);
+const pnpmLauncher = commandFor("pnpm", ["--version"]);
+const pnpm = capture(pnpmLauncher.command, pnpmLauncher.args, { windowsVerbatimArguments: pnpmLauncher.windowsVerbatimArguments });
 if (pnpm.status === 0) ok("pnpm", pnpm.stdout.trim());
 else fail("pnpm", pnpm.error?.message ?? pnpm.stderr.trim());
 

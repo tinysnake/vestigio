@@ -6,6 +6,7 @@
 // path runs here with an interpreter that Windows has.
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -29,18 +30,41 @@ export function cliCommand(root, args = []) {
 	return { command: join(root, "packages", "cli", "bin", "vestigio"), args };
 }
 
+const DEFAULT_PATHEXT = [".COM", ".EXE", ".BAT", ".CMD"];
+
 /**
- * The argv that runs `program`. A Windows `.cmd` cannot be spawned directly,
- * so it goes through the command interpreter with the whole line wrapped in
- * quotes: `/s` strips that outer pair and leaves `"<program>" <args>`.
+ * Windows resolves a bare program name through PATH and PATHEXT, while libuv
+ * appends only `.exe`. A tool installed as a `.cmd` shim, which is how pnpm
+ * reaches a CI runner, therefore looks missing until it is resolved here.
  */
-export function commandFor(program, args = []) {
-	if (process.platform !== "win32" || !/\.(cmd|bat)$/i.test(program)) return { command: program, args };
+function findProgram(program, env) {
+	if (/[\\/]/.test(program) || /\.[^\\/.]*$/.test(program)) return program;
+	const extensions = (env.PATHEXT ? env.PATHEXT.split(";") : DEFAULT_PATHEXT).filter((extension) => extension !== "");
+	for (const entry of (env.PATH ?? env.Path ?? "").split(";")) {
+		if (entry.trim() === "") continue;
+		const base = join(entry.trim().replace(/^"(.*)"$/, "$1"), program);
+		for (const extension of extensions) {
+			const candidate = base + extension.toLowerCase();
+			if (existsSync(candidate)) return candidate;
+		}
+	}
+	return program;
+}
+
+/**
+ * The argv that runs `program`, resolved against `env` on Windows. A `.cmd` or
+ * `.bat` cannot be spawned directly, so it goes through the command interpreter
+ * with the whole line wrapped in quotes: `/s` strips that outer pair and leaves
+ * `"<program>" <args>`.
+ */
+export function commandFor(program, args = [], env = process.env) {
+	const resolved = process.platform === "win32" ? findProgram(program, env) : program;
+	if (!/\.(cmd|bat)$/i.test(resolved)) return { command: resolved, args };
 	// Node backslash-escapes an embedded quote unless the arguments reach cmd verbatim.
 	const quote = (value) => (/\s/.test(value) ? `"${value}"` : value);
-	const line = [`"${program}"`, ...args.map(quote)].join(" ");
+	const line = [`"${resolved}"`, ...args.map(quote)].join(" ");
 	return {
-		command: process.env.ComSpec ?? "cmd.exe",
+		command: env.ComSpec ?? process.env.ComSpec ?? "cmd.exe",
 		args: ["/d", "/s", "/c", `"${line}"`],
 		windowsVerbatimArguments: true,
 	};
