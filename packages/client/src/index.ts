@@ -57,7 +57,9 @@ async function start(paths: ReturnType<typeof runtimePaths>): Promise<DaemonStar
 	let spawnError: Error | undefined;
 	try {
 		const child = spawn(process.execPath, [
-			"--import", fileURLToPath(import.meta.resolve("@vestigio/daemon/hook")),
+			// Node rejects a bare Windows path ("D:\\...") for --import: only a
+			// file:// URL is accepted there, and the URL form works on every platform.
+			"--import", import.meta.resolve("@vestigio/daemon/hook"),
 			fileURLToPath(import.meta.resolve("@vestigio/daemon/entry")), paths.store,
 		], { stdio: ["ignore", log, log], detached: true, windowsHide: true });
 		child.once("error", (error) => { spawnError = error; });
