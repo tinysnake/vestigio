@@ -7,6 +7,7 @@ Layered memory for coding agents in [pi](https://github.com/earendil-works/pi). 
 - Node 22.5 or newer. Built-in `node:sqlite` provides FTS5, so there is no database dependency.
 - pnpm.
 - pi 1.5.2, the version this repository is pinned to and tested against. The range is frozen in [docs/contracts.md](docs/contracts.md).
+- Windows, macOS or Linux. The install, the CLI and the daemon run on all three. On Windows the `vestigio` command is a `vestigio.cmd` shim (see Install).
 
 ## Install
 
@@ -19,7 +20,7 @@ node scripts/deploy.mjs --model-base-url http://127.0.0.1:11434/v1 --model-id de
 
 Then restart pi.
 
-`deploy.mjs` runs `pnpm install --frozen-lockfile`, writes `~/.vestigio/config.json` while keeping keys you already set, installs the extension with `pi install packages/pi-extension` and confirms it landed in the pi settings, and links the `vestigio` command into `/usr/local/bin` or `~/.local/bin`. Each step reports `ok`, `skip`, `warn` or `FAIL`. Add `--dry-run` to print the plan without changing anything. `--config`, `--pi-settings` and `--bin-dir` point the script at another layout. `--skip-install` and `--skip-link` drop a step.
+`deploy.mjs` runs `pnpm install --frozen-lockfile`, writes `~/.vestigio/config.json` while keeping keys you already set, installs the extension with `pi install packages/pi-extension` and confirms it landed in the pi settings, and links the `vestigio` command into `/usr/local/bin` or `~/.local/bin`. Each step reports `ok`, `skip`, `warn` or `FAIL`. Add `--dry-run` to print the plan without changing anything. `--config`, `--pi-settings` and `--bin-dir` point the script at another layout, and `--pi` names the pi launcher to run, such as `%USERPROFILE%\.pi\agent\bin\pi.cmd`. `--skip-install` and `--skip-link` drop a step. On Windows it writes a `vestigio.cmd` shim into `%APPDATA%\npm` or `~/.local/bin` instead of linking the bash wrapper, which `cmd.exe` cannot run.
 
 `--model-base-url` and `--model-id` are optional, but a memory saved without a model has no navigation text and cannot be found later. Staleness detection and cold-search recovery also stay off. Search, read and save still run.
 
@@ -30,6 +31,8 @@ node scripts/daemon-smoke.mjs
 ```
 
 The script creates a temporary store, proves `search` starts the daemon, and proves `stop` removes the endpoint file. A pass ends with `daemon smoke passed: <store>` and exit code 0.
+
+The same check runs on Windows. There the `vestigio` command resolves through the `vestigio.cmd` shim, and `node scripts/verify-deploy.mjs` proves that shim in a throwaway layout.
 
 ### Try it without installing
 
