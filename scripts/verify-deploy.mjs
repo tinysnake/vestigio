@@ -89,6 +89,24 @@ try {
 	assert.doesNotMatch(routed.stdout + routed.stderr, /EINVAL/, "the launcher was spawned instead of run");
 	assert.match(routed.stdout, /^FAIL\s+pi install/m, routed.stdout);
 
+	// pi and pnpm arrive as `.cmd` shims on a Windows runner, and a bare name
+	// does not reach one: Node only appends `.exe` when it searches PATH.
+	if (process.platform === "win32") {
+		const shimDir = join(dir, "shim only");
+		mkdirSync(shimDir, { recursive: true });
+		const shimMarker = join(dir, "shim-ran.txt");
+		writeFileSync(join(shimDir, "vestigio-probe.cmd"), `@echo off\r\necho ran > "${shimMarker}"\r\n`);
+
+		const shim = commandFor("vestigio-probe", ["--version"], { PATH: shimDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" });
+		const shimRun = spawnSync(shim.command, shim.args, {
+			encoding: "utf8",
+			windowsVerbatimArguments: shim.windowsVerbatimArguments,
+		});
+
+		assert.ok(existsSync(shimMarker), `a .cmd on PATH did not run: ${shimRun.error?.message ?? shimRun.stdout ?? shimRun.stderr}`);
+		assert.equal(shimRun.status, 0);
+	}
+
 	console.log(`deploy checks passed: ${command}`);
 } catch (error) {
 	console.error(error instanceof Error ? error.message : error);
