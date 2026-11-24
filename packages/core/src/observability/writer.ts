@@ -3,9 +3,9 @@
  *
  * One `createObsLog` instance owns a directory: the default stream is
  * `<dir>/<kind>.jsonl`, `openRun(name)` adds an independent named stream, and
- * all streams share the directory-wide byte cap. Segments are cut at
- * `segmentBytes` (`<kind>.<n>.jsonl` for n >= 1); once the directory exceeds
- * `maxBytes` the oldest segments are deleted until it is back under the cap.
+ * the cap is measured over the segments this instance owns. Segments are cut at
+ * `segmentBytes` (`<kind>.<n>.jsonl` for n >= 1); once its own total exceeds
+ * `maxBytes` the oldest of its segments are deleted until it is back under.
  *
  * Failure policy mirrors `packages/pi-extension/src/decision-log.ts`: failures
  * are counted, and after more than five the writer degrades to a no-op and
@@ -14,10 +14,11 @@
  * throws into a caller. A malformed record is rejected before any I/O and is
  * not counted as a write failure.
  *
- * Retention is cooperative: the directory total decides when to trim, but an
- * instance only ever unlinks segments it opened itself. A second process in the
- * same directory therefore never deletes the segment another process is
- * appending to; it trims its own share against the shared total instead.
+ * Retention is per writer: the cap is the sum of the segments this instance
+ * opened, so the directory is bounded by writers times `maxBytes`. A second
+ * process in the same directory is invisible here, so this one can never delete
+ * the segment that process is appending to, and a stalled writer's leftovers
+ * cannot make a live one delete its own segments to stay under a shared total.
  */
 
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
@@ -25,7 +26,7 @@ import { dirname, join } from "node:path";
 import type { ObsRecord } from "./records.js";
 import { validateObsRecord } from "./validate.js";
 
-export const DEFAULT_OBS_MAX_BYTES = 512 * 1024 * 1024;
+export const DEFAULT_OBS_MAX_BYTES = 128 * 1024 * 1024;
 export const DEFAULT_OBS_SEGMENT_BYTES = 32 * 1024 * 1024;
 
 const SEGMENT_EXTENSION = ".jsonl";
@@ -237,25 +238,18 @@ class ObsLogWriter implements ObsLog {
 	}
 
 	/**
-	 * Delete whole oldest segments until the directory is at or under the cap.
-	 * The active segment and the newest segment are never removed, so a writer
-	 * cannot delete the file it is appending to. Only segments this instance owns
-	 * are candidates, so a concurrent writer in the same directory keeps its own
-	 * active segment. Re-running converges: the scan is rebuilt from disk and an
-	 * already-deleted file is a no-op.
+	 * Delete whole oldest owned segments until this instance's own total is at or
+	 * under the cap. The cap covers only segments this instance opened, so a
+	 * concurrent writer in the same directory is not a candidate and the segment
+	 * just written is never removed. Re-running converges: the scan is rebuilt
+	 * from disk and an already-deleted file is a no-op.
 	 */
 	private enforceCap(protectedPath: string): void {
-		const files = listLogFiles(this.dir);
+		const owned = listLogFiles(this.dir).filter((file) => this.owns(file.path));
 		let total = 0;
-		for (const file of files) total += file.size;
+		for (const file of owned) total += file.size;
 		if (total <= this.maxBytes) return;
-		const newest = files.reduce<LogFile | null>(
-			(best, file) => (best === null || compareOldest(file, best) > 0 ? file : best),
-			null,
-		);
-		const candidates = files
-			.filter((file) => this.owns(file.path) && file.path !== protectedPath && file.path !== newest?.path)
-			.sort(compareOldest);
+		const candidates = owned.filter((file) => file.path !== protectedPath).sort(compareOldest);
 		for (const file of candidates) {
 			if (total <= this.maxBytes) break;
 			try {

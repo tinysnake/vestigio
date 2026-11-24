@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createObsLog } from "../../src/observability/index.js";
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("createObsLog retention", () => {
-	it("deletes the oldest segments once the directory exceeds the cap", () => {
+	it("deletes the oldest segments once its own total exceeds the cap", () => {
 		const dir = tempDir();
 		const log = createObsLog({ dir, kind: "iface", maxBytes: 4096, segmentBytes: 1024 });
 		for (let i = 0; i < 200; i += 1) log.append(snapshot(i, 64));
@@ -86,17 +86,21 @@ describe("createObsLog concurrency", () => {
 		expect(new Set(seqs).size).toBe(200);
 	});
 
-	it("never deletes a segment another writer owns, even under the cap", () => {
+	it("caps its own total and leaves a much larger foreign file alone", () => {
 		const dir = tempDir();
 		const foreign = join(dir, "elsewhere.jsonl");
-		writeFileSync(foreign, `${'y'.repeat(3000)}\n`);
+		writeFileSync(foreign, `${'y'.repeat(1 << 20)}\n`);
 		const log = createObsLog({ dir, kind: "iface", maxBytes: 4096, segmentBytes: 1024 });
 		for (let i = 0; i < 200; i += 1) log.append(snapshot(i, 64));
 		log.close();
 
-		// The foreign segment pushes the directory over the cap, so the writer trims
-		// its own segments aggressively. The file it does not own must survive.
-		expect(readFileSync(foreign, "utf8")).toBe(`${'y'.repeat(3000)}\n`);
+		// The foreign file is a megabyte in a directory whose writer is capped at
+		// 4 KiB. The writer must ignore it and hold its own total under the cap,
+		// instead of deleting everything it writes and still being over.
+		expect(readFileSync(foreign, "utf8")).toBe(`${'y'.repeat(1 << 20)}\n`);
+		const own = segmentPaths(dir).filter((path) => !path.endsWith("elsewhere.jsonl"));
+		expect(own.length).toBeGreaterThanOrEqual(2);
+		expect(own.reduce((sum, path) => sum + statSync(path).size, 0)).toBeLessThanOrEqual(4096);
 	});
 });
 
