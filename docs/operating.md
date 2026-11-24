@@ -66,14 +66,16 @@ node eval/observability/audit.mjs [--store <path>] [--obs-dir <dir>] [--json]
 
 | # | Item | Question | Source |
 | --- | --- | --- | --- |
-| 1 | Agent runs | How many runs, how long, how many turns, which models | `agent-runs.jsonl` |
-| 2 | Interface calls | Which routes the daemon served, what share succeeded, why it refused | `iface.jsonl` |
-| 3 | Token spend | What the main agent and each internal agent spent | `agent-runs.jsonl`, `model.jsonl` |
-| 4 | Duration | Wall time per run and per internal invocation | `agent-runs.jsonl`, `model.jsonl` |
-| 5 | Memory injection | How often a memory reached a turn, and over which denominator | `turn_events`, `injection_receipts`, `project_activity`, `usage_events` |
-| 6 | Memory and pool | Head revisions by state, the temporary ones, per-project occupancy | `memory_heads`, `memories`, `hotspot_memberships` |
+| 1 | Agent runs（agent 运行记录） | How many runs, how long, how many turns, which models | `agent-runs.jsonl` |
+| 2 | Interface calls（接口调用） | Which routes the daemon served, what share succeeded, why it refused | `iface.jsonl` |
+| 3 | Token spend（token 消耗，主 agent 与内部 agent 分开） | What the main agent and each internal agent spent | `agent-runs.jsonl`, `model.jsonl` |
+| 4 | Duration（运行耗时） | Wall time per run and per internal invocation | `agent-runs.jsonl`, `model.jsonl` |
+| 5 | Memory injection（memory 注入） | How often a memory reached a turn, and over which denominator | `turn_events`, `injection_receipts`, `project_activity`, `usage_events` |
+| 6 | Memory and pool（记忆与临时池） | Head revisions by state, the temporary ones, per-project occupancy | `memory_heads`, `memories`, `hotspot_memberships` |
 
 Item 5 prints two probabilities. The turn-scoped one is `delivered / (turns - host_command)` for the rows the filters selected. The legacy one is `receipt_inputs / activity_seq` over the whole store, and it reads lower because the activity counter counts every input, including the ones deduped or unmatched. `--project` narrows the seq to the project.
+
+Item 6 counts the latest head revision of every memory by state, how many of them are temporary (`medium_ready`), and each project's occupancy as `members / capacity`, where the capacity is the one the store recorded or, when it recorded none, the value from `--capacity` (default 32).
 
 `--since` reaches `agent-runs.jsonl`, `iface.jsonl`, `model.jsonl`, `turn_events` and `usage_events`. `injection_receipts` has no project column and `project_activity` has no time column, and item 6 is a snapshot. The report names every place a filter cannot reach in its notes block, so read those before comparing two filtered runs.
 
