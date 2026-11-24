@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliCommand, processLines } from "./lib/platform.mjs";
+import { cliCommand, commandFor, processLines } from "./lib/platform.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = process.platform === "win32"
@@ -29,7 +29,7 @@ const fail = (label, detail) => {
 	console.log(`fail  ${label}${detail ? `  ${detail}` : ""}`);
 };
 
-const capture = (command, args) => spawnSync(command, args, { encoding: "utf8" });
+const capture = (command, args, options = {}) => spawnSync(command, args, { encoding: "utf8", ...options });
 // A failed spawn sets `error` and leaves `stderr` undefined, so read whichever exists.
 const firstLine = (result) => (result.error?.message ?? result.stderr ?? result.stdout ?? "no output").trim().split("\n")[0] || "no output";
 
@@ -50,12 +50,8 @@ if (help.status === 0) ok("cli", CLI);
 else fail("cli", firstLine(help));
 
 const pi = existsSync(LOCAL_PI) ? LOCAL_PI : "pi";
-// spawnSync cannot launch a `.cmd` directly (EINVAL), and Node backslash-escapes
-// an embedded quote unless the argument is passed verbatim; route the Windows
-// shim through cmd the same way a shell would.
-const version = process.platform === "win32" && pi === LOCAL_PI
-	? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${pi}" --version`], { encoding: "utf8", windowsVerbatimArguments: true })
-	: capture(pi, ["--version"]);
+const launcher = commandFor(pi, ["--version"]);
+const version = capture(launcher.command, launcher.args, { windowsVerbatimArguments: launcher.windowsVerbatimArguments });
 if (version.status === 0) ok("pi", `${version.stdout.trim()}  ${pi}`);
 else fail("pi", version.error?.message ?? version.stderr.trim());
 

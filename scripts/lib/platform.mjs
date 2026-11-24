@@ -1,5 +1,5 @@
-// Cross-platform access to the CLI and the process table, so the verification
-// scripts do not assume bash, symlinks or `ps`.
+// Cross-platform access to the CLI, the process table and the way a program
+// must be spawned, so the scripts do not assume bash, symlinks or `ps`.
 //
 // The Windows CLI command needs no bash wrapper: `node --import <hook URL>
 // <entry>` is exactly what `packages/cli/bin/vestigio` execs, so the same code
@@ -27,6 +27,23 @@ export function cliCommand(root, args = []) {
 		};
 	}
 	return { command: join(root, "packages", "cli", "bin", "vestigio"), args };
+}
+
+/**
+ * The argv that runs `program`. A Windows `.cmd` cannot be spawned directly,
+ * so it goes through the command interpreter with the whole line wrapped in
+ * quotes: `/s` strips that outer pair and leaves `"<program>" <args>`.
+ */
+export function commandFor(program, args = []) {
+	if (process.platform !== "win32" || !/\.(cmd|bat)$/i.test(program)) return { command: program, args };
+	// Node backslash-escapes an embedded quote unless the arguments reach cmd verbatim.
+	const quote = (value) => (/\s/.test(value) ? `"${value}"` : value);
+	const line = [`"${program}"`, ...args.map(quote)].join(" ");
+	return {
+		command: process.env.ComSpec ?? "cmd.exe",
+		args: ["/d", "/s", "/c", `"${line}"`],
+		windowsVerbatimArguments: true,
+	};
 }
 
 /** The bytes of the `vestigio.cmd` shim deploy.mjs writes on Windows. */
