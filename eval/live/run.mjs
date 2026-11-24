@@ -528,45 +528,6 @@ function storeSnapshot(storePath, memoryId) {
 }
 
 /**
- * The `agent_end` background pass records one `vestigio.background-repair`
- * custom entry per session. Reading it back is how a report tells a repair the
- * pass performed from a repair that never happened, and how it measures the
- * pass without a turn to attribute the time to.
- */
-function readBackgroundRepair(sessionDir) {
-	if (!existsSync(sessionDir)) return null;
-	const files = readdirSync(sessionDir).sort().reverse();
-	for (const file of files) {
-		let lines = [];
-		try {
-			lines = readFileSync(join(sessionDir, file), "utf8").split("\n");
-		} catch {
-			continue;
-		}
-		for (const line of lines.reverse()) {
-			if (!line.includes("vestigio.background-repair")) continue;
-			let data = null;
-			try {
-				const parsed = JSON.parse(line);
-				data = parsed?.data ?? parsed;
-			} catch {
-				continue;
-			}
-			if (data === null || !Array.isArray(data.entries)) continue;
-			return {
-				candidates: data.candidates ?? null,
-				attempted: data.attempted ?? null,
-				repaired: data.repaired ?? null,
-				deadline_exceeded: data.deadline_exceeded ?? null,
-				entries: data.entries,
-				elapsed_ms: data.entries.reduce((sum, entry) => sum + (entry.elapsed_ms ?? 0), 0),
-			};
-		}
-	}
-	return null;
-}
-
-/**
  * Compose the memory body from the corpus title, facts, context and stable
  * strings. The length band is real: a corpus whose composed body falls outside
  * 500-1000 non-whitespace code points is invalid, so the failure names the
@@ -1357,7 +1318,6 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 	let failure = null;
 	let session2Record = null;
 	let session1After = null;
-	let backgroundRepair = null;
 	let stderrTail = "";
 	try {
 		for (let index = 0; index < corpus.turns.length; index += 1) {
@@ -1512,7 +1472,6 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 			}
 		}
 		session1After = storeSnapshot(storePath, memoryId);
-		backgroundRepair = readBackgroundRepair(sessionDir);
 		if (corpus.session2 !== undefined && failure === null && !budget.exceeded) {			stderrTail = client.stderr;
 			exitCode = await client.close();
 			client = null;
@@ -1560,7 +1519,7 @@ async function runRepeat({ corpus, repeat, config, key, proxy, budget, runDir, s
 		mkdirSync(join(runDir, "failures"), { recursive: true });
 		writeJson(join(runDir, "failures", `${label}.json`), { failure, stderr: stderrTail.slice(-8000) });
 	}
-	return { corpus: corpus.name, repeat, exit_code: exitCode, stderr_tail: exitCode === 0 ? null : stderrTail.slice(-2000), turns, tool_names: toolNames, attempted_tool_names: attemptedToolNames, blocked_tool_names: blockedToolNames, tool_outcomes: toolOutcomes, head_at_start: headAtStart, session1_after: session1After, background_repair: backgroundRepair, session2: session2Record };
+	return { corpus: corpus.name, repeat, exit_code: exitCode, stderr_tail: exitCode === 0 ? null : stderrTail.slice(-2000), turns, tool_names: toolNames, attempted_tool_names: attemptedToolNames, blocked_tool_names: blockedToolNames, tool_outcomes: toolOutcomes, head_at_start: headAtStart, session1_after: session1After, session2: session2Record };
 }
 
 const FALSE_LABELS = new Set(["READ", "CONFIRM", "HYPOTHESIS", "FAILED", "UNRELATED", "OLD_SOURCE", "INJECTION"]);
@@ -1636,7 +1595,6 @@ function scoreRepeat(result, corpus) {
 	const session2 = result.session2 ?? null;
 	const f5 = session2 === null ? null : session2.deterministic;
 	const session1 = result.session1_after ?? null;
-	const background = result.background_repair ?? null;
 	const s1Repaired =
 		session1 === null || session1.head_revision === null || result.head_at_start === undefined
 			? null
@@ -1703,7 +1661,6 @@ function scoreRepeat(result, corpus) {
 		published_after: repairWindow("published_after"),
 		searchable_after_repair: repairWindow("searchable_after_repair"),
 		repair_window_state_after: repairWindow("state_after"),
-		f5_repair_ms: background === null ? null : background.elapsed_ms,
 		s2_search_query: f5 === null ? null : f5.search_query_s2,
 		judge_pass: session2 === null ? null : session2.judge.pass,
 		repair_window_body_char_count: repairWindow("body_char_count"),
@@ -1790,7 +1747,6 @@ function printTable(metricsByCorpus, variantName) {
 			["s1_pending_drained", ...block.repeats.map((item) => formatBool(item.s1_pending_drained)), passRate(block, "s1_pending_drained")],
 			["s1_repaired", ...block.repeats.map((item) => formatBool(item.s1_repaired)), passRate(block, "s1_repaired")],
 			["repair_window_state_after", ...block.repeats.map((item) => String(item.repair_window_state_after ?? "n/a")), String(block.distribution.repair_window_state_after ?? "n/a")],
-			["f5_repair_ms", ...block.repeats.map((item) => (item.f5_repair_ms === null ? "n/a" : String(item.f5_repair_ms))), block.distribution.f5_repair_ms === null ? "n/a" : String(block.distribution.f5_repair_ms)],
 			["repair_window_body_chars", ...block.repeats.map((item) => formatMetric(item.repair_window_body_char_count)), formatMetric(median(block.repeats.map((item) => item.repair_window_body_char_count).filter((value) => value !== null)))],
 		];
 		const allRows = [...f1Rows, ...f5Rows];
@@ -2009,9 +1965,6 @@ async function main() {
 		distribution.tokens_out = median(repeats.map((item) => item.cost.tokens_out));
 		distribution.detector_calls = median(repeats.map((item) => item.cost.detector_calls));
 		distribution.wall_ms = median(repeats.map((item) => item.cost.wall_ms));
-		distribution.f5_repair_ms = median(
-			repeats.map((item) => item.f5_repair_ms).filter((value) => value !== null),
-		);
 		metricsByCorpus[corpus.name] = {
 			corpus: corpus.name,
 			repeats,
