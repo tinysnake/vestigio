@@ -38,8 +38,12 @@ import type { ModelPort } from "../resolver/types.js";
 import { buildTitle, formationKeywords } from "../resolver/persist.js";
 import type { MemoryRequest, MemoryRequestEvidence } from "./queue.js";
 
-/** The prompt and JSON envelope need room beyond the body itself. */
-export const REQUEST_MAX_OUTPUT_TOKENS = 4096;
+/**
+ * The prompt and JSON envelope need room beyond the body itself. A reasoning
+ * model spends part of this ceiling on reasoning before it writes the envelope,
+ * so it has to cover that too: at 4096 a reasoning model could answer nothing.
+ */
+export const REQUEST_MAX_OUTPUT_TOKENS = 16_384;
 export const REQUEST_MAX_CORRECTIONS = 1;
 export const REQUEST_MAX_SOURCES = 32;
 
