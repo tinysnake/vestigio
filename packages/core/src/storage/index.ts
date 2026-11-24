@@ -22,6 +22,10 @@ export type {
   SearchHit,
   SearchOptions,
   SummaryUpdateOutcome,
+  TurnEvent,
+  TurnEventFilter,
+  TurnOutcome,
+  TurnOutcomeCount,
   UpdateSummaryInput,
 } from "./store.js";
 export type {

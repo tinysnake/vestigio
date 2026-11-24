@@ -1,4 +1,4 @@
-import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { DatabaseSync, type SQLOutputValue, type StatementSync } from "node:sqlite";
 import {
   deserializeSourceRef,
   fail,
@@ -15,6 +15,7 @@ import {
   parseStaleProducer,
   parseStoreId,
   parseTimestamp,
+  parseUsageChannel,
   parseUsageEvent,
   serializeSourceRef,
   splitMemoryUri,
@@ -34,7 +35,9 @@ import {
   type SourceRef,
   type StaleEventSummary,
   type StaleProducer,
+  type UsageChannel,
   type UsageEvent,
+  type UsageEventKind,
 } from "../contracts/index.js";
 import { scopeProjectIds } from "../project/identity.js";
 import { enqueueSummaryJob, type SummaryJob } from "../jobs/queue.js";
@@ -190,6 +193,30 @@ function projectIdArgument(value: string, path: string): string {
   return scope.project_id;
 }
 
+/** The `WHERE` clause and parameters for a turn_events read, one AND per field. */
+function turnEventWhere(filter: TurnEventFilter): { sql: string; parameters: SQLOutputValue[] } {
+  const clauses: string[] = [];
+  const parameters: SQLOutputValue[] = [];
+  if (filter.project_id !== undefined) {
+    clauses.push("project_id = ?");
+    parameters.push(filter.project_id);
+  }
+  if (filter.session_id !== undefined) {
+    clauses.push("session_id = ?");
+    parameters.push(filter.session_id);
+  }
+  if (filter.outcome !== undefined) {
+    clauses.push("outcome = ?");
+    parameters.push(filter.outcome);
+  }
+  return { sql: clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`, parameters };
+}
+
+/** A `COUNT(*) AS n` row, or zero when the projection returned nothing. */
+function countOf(row: Row | undefined): number {
+  return row === undefined ? 0 : num(row, "n");
+}
+
 /**
  * What a project-scope move changed. Returned instead of a boolean so a caller
  * can report the move and tell "nothing matched" from "already done".
@@ -211,15 +238,89 @@ export type ProjectMemoryCount = {
 };
 
 /**
+ * The coarse bucket a turn row records. `reason` keeps the fine-grained
+ * injection reason when it differs, so this stays the set the audit counts.
+ */
+export type TurnOutcome =
+  | "delivered"
+  | "no_match"
+  | "all_deduped"
+  | "over_budget"
+  | "timeout"
+  | "host_command"
+  | "store_unavailable"
+  | "store_error";
+
+/** One durable per-turn row, keyed by `turn_key` so a rewrite is idempotent. */
+export type TurnEvent = {
+  turn_key: string;
+  project_id: string;
+  session_id: string;
+  branch_ref: string;
+  input_id: string;
+  at: string;
+  outcome: TurnOutcome;
+  reason: string | null;
+  matched: number;
+  delivered: number;
+  estimated_tokens: number | null;
+  block_bytes: number | null;
+  handler_ms: number | null;
+  elapsed_ms: number | null;
+};
+
+/** Which rows a turn_events read counts; every set field is an AND. */
+export type TurnEventFilter = {
+  project_id?: string;
+  session_id?: string;
+  outcome?: TurnOutcome;
+};
+
+/** One outcome bucket and how many turn rows landed in it. */
+export type TurnOutcomeCount = {
+  outcome: TurnOutcome;
+  count: number;
+};
+
+/**
  * One SQLite file, its migrations, and every read/write path over them. No
  * caller writes SQL: all access goes through these methods, which keep the row
  * state and the disjoint Active/Archived FTS indexes in one transaction.
  */
+/**
+ * The turn-row upsert, as one statement. It sits at module scope so the write
+ * on the turn hot path does not rebuild this SQL text on every turn.
+ */
+const TURN_EVENT_UPSERT_SQL = `INSERT INTO turn_events
+  (turn_key, project_id, session_id, branch_ref, input_id, at, outcome, reason,
+   matched, delivered, estimated_tokens, block_bytes, handler_ms, elapsed_ms)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(turn_key) DO UPDATE SET
+  project_id = excluded.project_id,
+  session_id = excluded.session_id,
+  branch_ref = excluded.branch_ref,
+  input_id = excluded.input_id,
+  at = excluded.at,
+  outcome = excluded.outcome,
+  reason = excluded.reason,
+  matched = excluded.matched,
+  delivered = excluded.delivered,
+  estimated_tokens = excluded.estimated_tokens,
+  block_bytes = excluded.block_bytes,
+  handler_ms = excluded.handler_ms,
+  elapsed_ms = excluded.elapsed_ms`;
+
 export class MemoryStore {
   readonly storeId: string;
   readonly path: string;
   private readonly db: DatabaseSync;
   private closed = false;
+  /**
+   * The turn upsert is the one write on the per-turn hot path, so it is compiled
+   * once per store instead of on every turn. Nothing else is cached: the other
+   * writes run far less often than the input path they sit behind.
+   */
+  private turnEventUpsert: StatementSync | null = null;
 
   constructor(db: DatabaseSync, storeId: string, path: string) {
     this.db = db;
@@ -560,6 +661,19 @@ export class MemoryStore {
   }
 
   /**
+   * Every state that has at least one head revision, with its count. States with
+   * no head are absent rather than zero, so a caller that needs a fixed set of
+   * buckets fills the gaps.
+   */
+  countMemoriesByState(): { state: MemoryState; memories: number }[] {
+    this.assertOpen();
+    return this.db
+      .prepare("SELECT state, COUNT(*) AS memories FROM memory_heads GROUP BY state ORDER BY state ASC")
+      .all()
+      .map((row) => ({ state: parseMemoryState(str(row, "state")), memories: num(row, "memories") }));
+  }
+
+  /**
    * The heads each project id owns, counted without loading a single body. A
    * store that predates the repository-root identity holds one id per worktree,
    * so this is the list a migration starts from.
@@ -824,6 +938,20 @@ export class MemoryStore {
   }
 
   /**
+   * Usage rows of one kind per channel. Injection counts are `kind = 'hit'`;
+   * the channel split is what tells a hotspot delivery from a search one.
+   */
+  countUsageEventsByChannel(kind: UsageEventKind): { channel: UsageChannel; count: number }[] {
+    this.assertOpen();
+    return this.db
+      .prepare(
+        "SELECT channel, COUNT(*) AS n FROM usage_events WHERE kind = ? GROUP BY channel ORDER BY channel ASC",
+      )
+      .all(kind)
+      .map((row) => ({ channel: parseUsageChannel(str(row, "channel")), count: num(row, "n") }));
+  }
+
+  /**
    * Record a delivered injection. The uniqueness key is
    * (store_id, session_id, branch_ref, input_id, memory_id): a duplicate at the
    * same freshness snapshot is a hard failure. When the memory's freshness
@@ -921,6 +1049,16 @@ export class MemoryStore {
     this.assertOpen();
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM injection_receipts").get();
     return row === undefined ? 0 : num(row, "n");
+  }
+
+  /**
+   * Distinct delivered inputs, the numerator's other denominator. One input may
+   * deliver several memories (or a revised one), so the probability divides by
+   * this rather than by the receipt count.
+   */
+  countInjectionReceiptInputs(): number {
+    this.assertOpen();
+    return countOf(this.db.prepare("SELECT COUNT(DISTINCT input_id) AS n FROM injection_receipts").get());
   }
 
   /**
@@ -1157,6 +1295,74 @@ export class MemoryStore {
       activity_seq: num(row, "activity_seq"),
       last_input_at: str(row, "last_input_at"),
     };
+  }
+
+  /**
+   * Every project with a logical clock, for the activity denominator and for a
+   * stats reader that has to look at projects the current one did not touch.
+   */
+  listProjectActivity(): ProjectActivity[] {
+    this.assertOpen();
+    return this.db
+      .prepare("SELECT project_id, activity_seq, last_input_at FROM project_activity ORDER BY project_id ASC")
+      .all()
+      .map((row) => ({
+        project_id: str(row, "project_id"),
+        activity_seq: num(row, "activity_seq"),
+        last_input_at: str(row, "last_input_at"),
+      }));
+  }
+
+  /**
+   * Write one turn row, or rewrite the row its `turn_key` already owns. The
+   * upsert is what makes a replayed turn idempotent: the same session and input
+   * id can only ever contribute one row, so the probability denominator cannot
+   * be inflated by a retry.
+   */
+  recordTurnEvent(event: TurnEvent): void {
+    this.assertOpen();
+    this.write(() => {
+      this.turnEventUpsert ??= this.db.prepare(TURN_EVENT_UPSERT_SQL);
+      this.turnEventUpsert.run(
+        event.turn_key,
+        event.project_id,
+        event.session_id,
+        event.branch_ref,
+        event.input_id,
+        event.at,
+        event.outcome,
+        event.reason,
+        event.matched,
+        event.delivered,
+        event.estimated_tokens,
+        event.block_bytes,
+        event.handler_ms,
+        event.elapsed_ms,
+      );
+    });
+  }
+
+  /** How many turn rows match every field `filter` sets. */
+  countTurnEvents(filter: TurnEventFilter = {}): number {
+    this.assertOpen();
+    const where = turnEventWhere(filter);
+    return countOf(this.db.prepare(`SELECT COUNT(*) AS n FROM turn_events${where.sql}`).get(...where.parameters));
+  }
+
+  /**
+   * Turn rows per outcome, for one project or for the whole store. This is the
+   * injection probability's denominator: a caller divides the `delivered`
+   * bucket by the total minus `host_command`, and the old activity_seq-based
+   * denominator stays visible as the per-outcome split.
+   */
+  turnOutcomeCounts(projectId?: string): TurnOutcomeCount[] {
+    this.assertOpen();
+    const filter: TurnEventFilter = projectId === undefined ? {} : { project_id: projectId };
+    const where = turnEventWhere(filter);
+    return this.db
+      .prepare(`SELECT outcome, COUNT(*) AS n FROM turn_events${where.sql} GROUP BY outcome ORDER BY outcome ASC`)
+      .all(...where.parameters)
+      .map((row) => ({ outcome: str(row, "outcome") as TurnOutcome, count: num(row, "n") }));
   }
 
   upsertHotspotMembership(membership: HotspotMembership): void {

@@ -14,10 +14,40 @@
 
 import type { ExtensionContext, InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
 import { commitInjection, planInjection, recordProjectInput } from "@vestigio/core/hotspots";
-import type { CommitResult, InjectionPlan } from "@vestigio/core/hotspots";
+import type { CommitResult, InjectionPlan, InjectionReason } from "@vestigio/core/hotspots";
+import type { TurnEvent, TurnOutcome } from "@vestigio/core/storage";
 import type { LedgerEntryHost } from "./ledger-store.js";
 import { hashQuery } from "./decision-log.js";
 import { errorText, nowIso, type VestigioState } from "./state.js";
+
+/**
+ * The plan's fine-grained reason as the coarse bucket a turn row records. The
+ * row keeps `reason` too, so this only coarsens what the audit counts.
+ */
+function turnOutcome(reason: InjectionReason | null, hostCommand: boolean): TurnOutcome {
+	if (hostCommand) return "host_command";
+	switch (reason) {
+		case "empty_input":
+		case "no_pool_members":
+		case "no_match":
+			return "no_match";
+		case "all_deduped":
+			return "all_deduped";
+		case "over_budget":
+			return "over_budget";
+		case "timeout":
+			return "timeout";
+		case "store_unavailable":
+			return "store_unavailable";
+		case "store_error":
+			return "store_error";
+		case "slash_command":
+			return "host_command";
+		case "extension_source":
+		case null:
+			return "no_match";
+	}
+}
 
 export function handleInput(
 	state: VestigioState,
@@ -65,6 +95,41 @@ export function handleInput(
 	const projectId = state.projectId(ctx.cwd);
 	const inputId = state.nextInputId();
 	const at = nowIso();
+	const hostCommand = event.text.startsWith("/");
+
+	// One durable row per real input, delivered or not. The key is the session
+	// and the input id, so a replayed turn rewrites its own row. Telemetry only:
+	// a failed write is swallowed and never turns a delivery into a `continue`.
+	const writeTurn = (
+		outcome: TurnOutcome,
+		fields: Partial<
+			Omit<
+				TurnEvent,
+				"turn_key" | "project_id" | "session_id" | "branch_ref" | "input_id" | "at" | "outcome"
+			>
+		> = {},
+	): void => {
+		try {
+			store.recordTurnEvent({
+				turn_key: `${state.currentSessionId}#${inputId}`,
+				project_id: projectId,
+				session_id: state.currentSessionId,
+				branch_ref: state.currentBranchRef,
+				input_id: inputId,
+				at,
+				outcome,
+				reason: fields.reason ?? null,
+				matched: fields.matched ?? 0,
+				delivered: fields.delivered ?? 0,
+				estimated_tokens: fields.estimated_tokens ?? null,
+				block_bytes: fields.block_bytes ?? null,
+				handler_ms: fields.handler_ms ?? null,
+				elapsed_ms: fields.elapsed_ms ?? null,
+			});
+		} catch {
+			// Observability, not delivery: losing this row is not the turn's failure.
+		}
+	};
 
 	let activitySeq = 0;
 	try {
@@ -79,6 +144,7 @@ export function handleInput(
 			project_id: projectId,
 			error: errorText(error),
 		});
+		writeTurn("store_error", { reason: "store_error", handler_ms: performance.now() - handlerStarted });
 		return { action: "continue" };
 	}
 
@@ -95,7 +161,7 @@ export function handleInput(
 			streaming_behavior: streaming,
 			// pi checks its own commands first and expands skills/templates before
 			// the model sees the input, so a leading slash is never plain text.
-			host_command: event.text.startsWith("/"),
+			host_command: hostCommand,
 			ledger: state.currentLedger,
 			budget_bytes: state.config.budget_bytes,
 			max_memories: state.config.max_memories,
@@ -114,6 +180,7 @@ export function handleInput(
 			elapsed_ms: performance.now() - handlerStarted,
 			error: errorText(error),
 		});
+		writeTurn("store_error", { reason: "store_error", handler_ms: performance.now() - handlerStarted });
 		return { action: "continue" };
 	}
 
@@ -126,6 +193,14 @@ export function handleInput(
 			input_id: inputId,
 			project_id: projectId,
 			matched: plan.matched.length,
+			elapsed_ms: plan.elapsed_ms,
+			handler_ms: performance.now() - handlerStarted,
+		});
+		writeTurn(turnOutcome(plan.reason, hostCommand), {
+			reason: plan.reason,
+			matched: plan.matched.length,
+			estimated_tokens: plan.budget.estimated_tokens,
+			block_bytes: plan.budget.used_bytes,
 			elapsed_ms: plan.elapsed_ms,
 			handler_ms: performance.now() - handlerStarted,
 		});
@@ -154,6 +229,14 @@ export function handleInput(
 			handler_ms: performance.now() - handlerStarted,
 			error: errorText(error),
 		});
+		writeTurn("store_error", {
+			reason: "commit_failed",
+			matched: plan.matched.length,
+			estimated_tokens: plan.budget.estimated_tokens,
+			block_bytes: plan.budget.used_bytes,
+			elapsed_ms: plan.elapsed_ms,
+			handler_ms: performance.now() - handlerStarted,
+		});
 		return { action: "continue" };
 	}
 
@@ -175,6 +258,14 @@ export function handleInput(
 			elapsed_ms: plan.elapsed_ms,
 			handler_ms: performance.now() - handlerStarted,
 			error: commit.errors.length === 0 ? null : commit.errors.join("; "),
+		});
+		writeTurn("store_error", {
+			reason: "receipt_failed",
+			matched: plan.matched.length,
+			estimated_tokens: plan.budget.estimated_tokens,
+			block_bytes: plan.budget.used_bytes,
+			elapsed_ms: plan.elapsed_ms,
+			handler_ms: performance.now() - handlerStarted,
 		});
 		return { action: "continue" };
 	}
@@ -204,6 +295,14 @@ export function handleInput(
 		ledger_added: commit.ledger_added.length,
 		// Statistics failures are worth showing but did not stop the delivery.
 		error: commit.errors.length === 0 ? null : commit.errors.join("; "),
+	});
+	writeTurn("delivered", {
+		matched: plan.matched.length,
+		delivered: commit.delivered.length,
+		estimated_tokens: plan.budget.estimated_tokens,
+		block_bytes: plan.budget.used_bytes,
+		elapsed_ms: plan.elapsed_ms,
+		handler_ms: performance.now() - handlerStarted,
 	});
 
 	return { action: "transform", text: plan.text };

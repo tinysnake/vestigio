@@ -244,3 +244,64 @@ describe("handleInput", () => {
 		expect(last?.error ?? last?.reason).toBeTruthy();
 	});
 });
+
+describe("turn records", () => {
+	it("writes one durable row for a delivered turn", () => {
+		const { store, state, host, ctx } = setup();
+		const result = handleInput(state, input("部署 端口 要改一下"), ctx as never, host);
+
+		expect(result).toMatchObject({ action: "transform" });
+		expect(store.countTurnEvents({ project_id: PROJECT })).toBe(1);
+		expect(store.turnOutcomeCounts(PROJECT)).toEqual([{ outcome: "delivered", count: 1 }]);
+		// A delivered row is not a host command, so it stays in the denominator.
+		expect(store.countTurnEvents({ outcome: "host_command" })).toBe(0);
+	});
+
+	it("marks a host command and writes no second row for the same input", () => {
+		const { store, state, host, ctx } = setup();
+		const result = handleInput(state, input("/skill:probe-skill 部署 端口"), ctx as never, host);
+
+		expect(result).toEqual({ action: "continue" });
+		expect(store.countTurnEvents({ outcome: "host_command" })).toBe(1);
+		expect(store.turnOutcomeCounts(PROJECT)).toEqual([{ outcome: "host_command", count: 1 }]);
+		// `host_command` is the one outcome the probability denominator drops.
+		expect(store.countTurnEvents() - store.countTurnEvents({ outcome: "host_command" })).toBe(0);
+	});
+
+	it("records the not-delivered path and one row per real input", () => {
+		const { store, state, host, ctx } = setup();
+		handleInput(state, input("部署 端口 要改一下"), ctx as never, host);
+		const second = handleInput(state, input("部署 端口 再确认一次"), ctx as never, host);
+
+		expect(second).toEqual({ action: "continue" });
+		expect(store.countTurnEvents({ project_id: PROJECT })).toBe(2);
+		expect(store.turnOutcomeCounts(PROJECT)).toEqual([
+			{ outcome: "all_deduped", count: 1 },
+			{ outcome: "delivered", count: 1 },
+		]);
+	});
+
+	it("records store_error when the store throws and still continues", () => {
+		const { store, state, host, ctx } = setup();
+		store.readProjectActivity = () => {
+			throw new Error("database is locked");
+		};
+		const result = handleInput(state, input("部署 端口 要改一下"), ctx as never, host);
+
+		expect(result).toEqual({ action: "continue" });
+		expect(store.turnOutcomeCounts(PROJECT)).toEqual([{ outcome: "store_error", count: 1 }]);
+	});
+
+	it("delivers even when the turn row cannot be written", () => {
+		const { store, state, host, ctx } = setup();
+		store.recordTurnEvent = () => {
+			throw new Error("disk full");
+		};
+		const result = handleInput(state, input("部署 端口 要改一下"), ctx as never, host);
+
+		// Telemetry only: the row is lost, the delivery is not.
+		expect(result).toMatchObject({ action: "transform" });
+		expect(host.entries).toHaveLength(1);
+		expect(store.countTurnEvents()).toBe(0);
+	});
+});

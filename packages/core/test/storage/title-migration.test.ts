@@ -16,11 +16,13 @@ function legacyTitle(inner: string): string {
 /**
  * Forget the title and hash migrations, so the next open rewrites the titles a
  * store written by the old code held and then reseals their hashes, exactly as
- * a store that ran 5 before 6 existed is repaired.
+ * a store that ran 5 before 6 existed is repaired. Named one by one, not
+ * "everything since 5": a migration added after this pair must stay applied so
+ * the reopen does not try to create its table twice.
  */
 function forgetTitleMigration(path: string): void {
   const db = new DatabaseSync(path);
-  db.exec("DELETE FROM schema_migrations WHERE version >= 5");
+  db.exec("DELETE FROM schema_migrations WHERE version IN (5, 6)");
   db.close();
 }
 
@@ -45,7 +47,7 @@ describe("memory title migration", () => {
 
     const store = openStore({ path });
     try {
-      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(store.listMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
       expect(store.readMemory(legacy.uri)?.title).toBe(buildTitle(inner));
       expect(store.readMemory(current.uri)?.title).toBe(buildTitle("新格式标题"));
       expect(store.integrityCheck()).toEqual({
