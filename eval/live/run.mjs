@@ -48,7 +48,7 @@ import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { layeredSearch } from "@vestigio/core/retrieval";
 import { resolveMemory } from "@vestigio/core/resolver";
 import { openStore } from "@vestigio/core/storage";
-import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
+import { stopProbeDaemons } from "../lib/daemon.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolvePath(HERE, "../..");
@@ -2077,11 +2077,7 @@ async function run() {
 	} catch (error) {
 		console.error("live harness error:", error);
 	}
-	const leakedStores = [];
-	for (const store of liveStores) {
-		await new VestigioClient(store).stop();
-		if (await daemonRunning(store)) leakedStores.push(store);
-	}
+	const leakedStores = await stopProbeDaemons(liveStores);
 	if (leakedStores.length > 0) {
 		console.error(`leaked daemon(s) for: ${leakedStores.join(", ")}`);
 		code = 1;

@@ -15,7 +15,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codePointCount, nonWhitespaceCodePointCount } from "@vestigio/core";
 import { openStore } from "@vestigio/core/storage";
-import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
+import { stopProbeDaemons } from "../lib/daemon.mjs";
 import {
 	PiClient,
 	appendJsonl,
@@ -919,12 +919,9 @@ async function run() {
 	} catch (error) {
 		console.error("conflict harness error:", error);
 	} finally {
-		for (const store of conflictStores) {
-			await new VestigioClient(store).stop();
-			if (await daemonRunning(store)) {
-				console.error(`leaked daemon for: ${store}`);
-				code = 1;
-			}
+		for (const store of await stopProbeDaemons(conflictStores)) {
+			console.error(`leaked daemon for: ${store}`);
+			code = 1;
 		}
 		if (AGENT_HOME !== null) rmSync(AGENT_HOME, { recursive: true, force: true });
 	}

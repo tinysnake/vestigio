@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { daemonRunning, VestigioClient } from "../../packages/client/src/index.ts";
+import { stopProbeDaemons } from "../lib/daemon.mjs";
 import { openStore } from "@vestigio/core/storage";
 import { markTimeoutStaleAgain, PROJECT, seedStore } from "./catalog.mjs";
 import { seedPortConflictSuperseded } from "./catalog.mjs";
@@ -479,16 +479,7 @@ const shouldRecall = rows.filter((row) => row.expect === "query");
 const shouldStayQuiet = rows.filter((row) => row.expect === "no_query");
 const rate = (count, total) => (total === 0 ? null : count / total);
 
-async function stopRunDaemons(stores) {
-	const leaked = [];
-	for (const store of stores) {
-		await new VestigioClient(store).stop();
-		if (await daemonRunning(store)) leaked.push(store);
-	}
-	return leaked;
-}
-
-const leaked = await stopRunDaemons(turnStores);
+const leaked = await stopProbeDaemons(turnStores);
 if (leaked.length > 0) {
 	console.error(`leaked daemon(s) for: ${leaked.join(", ")}`);
 	process.exitCode = 1;

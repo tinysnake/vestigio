@@ -1,61 +1,113 @@
 #!/usr/bin/env node
 /**
- * Fails a file that can start a vestigio daemon without also stopping one.
- * Production `src/` is out of scope: a library may build a client it does not own.
+ * Fails a file that can start a vestigio daemon without also closing one.
+ *
+ * Scope is the whole tree rather than a list of probe directories, because a
+ * throwaway probe left in an unscanned corner is exactly how a detached daemon
+ * outlives its run: the probe owns the process, nothing reaps it, and `ps` then
+ * shows a node process nobody can name.
+ *
+ * A file can start one through the client helpers, a raw spawn of the daemon
+ * entry or its `--import` hook, or a CLI invocation that runs a subcommand
+ * ensuring a daemon (`--help` does not). A shell script counts when it runs
+ * such a subcommand directly.
+ *
+ * The closer may be `.stop()`, a CLI `stop`, or `--once`: `--once` stops the
+ * daemon that invocation started and never one another invocation started.
+ * Alongside it the file must prove the daemon is gone, with `daemonRunning(`
+ * or a check on the endpoint file. A probe that delegates to
+ * `eval/lib/daemon.mjs`'s `stopProbeDaemons()` gets both halves from that call:
+ * it stops every store it is handed and returns the stores still running.
+ *
+ * Production `packages/<name>/src` stays out of scope: a library may build or
+ * return a client it does not own. Its tests are in scope.
+ *
+ *   node scripts/lint-daemon-lifecycle.mjs [--root <dir>]
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".ts"]);
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".sh"]);
+const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "out", "coverage", ".git", ".t3", ".next", ".turbo"]);
+/** Files whose daemon-looking strings are fixtures or the patterns themselves. */
+const EXEMPT_FILES = new Set(["scripts/lint-daemon-lifecycle.mjs", "scripts/lint-daemon-lifecycle.test.mjs"]);
 
 const STARTER_PATTERNS = [
-	/ensureDaemon\(/,
-	/openDaemon\(/,
-	/new VestigioClient\(/,
-	/daemon\/src\/entry\.ts/,
+	{ pattern: /ensureDaemon\(/, label: "ensureDaemon(" },
+	{ pattern: /openDaemon\(/, label: "openDaemon(" },
+	{ pattern: /new VestigioClient\(/, label: "new VestigioClient(" },
+	{ pattern: /daemon\/src\/entry\.ts/, label: "spawns the daemon entry" },
+	{ pattern: /daemon\/hook\.mjs/, label: "spawns the daemon through its import hook" },
 ];
+
+/** A CLI invocation only starts a daemon for a subcommand that needs one. */
+const CLI_BUILDER_PATTERN = /cliCommand\(/;
+const CLI_SUBCOMMAND_PATTERN = /["'`](search|gc|submit|stats|prune|get|projects|daemon)["'`]/;
+
+const SHELL_STARTER_PATTERNS = [
+	{ pattern: /\bvestigio\s+daemon\s+start\b/, label: "vestigio daemon start" },
+	{ pattern: /\bvestigio\s+(search|gc|submit|stats|prune|get|projects)\b/, label: "a CLI subcommand that ensures a daemon" },
+];
+
 const EXTENSION_STORE_PATTERN = /VESTIGIO_STORE/;
 const EXTENSION_SOURCE_PATTERN = /src\/extension\.|pi-extension\/src\/extension/;
 
-const STOP_PATTERN = /\.stop\(\)/;
-const RUNNING_PATTERN = /daemonRunning\(/;
+const CLOSER_PATTERNS = [
+	{ pattern: /\.stop\(\)/, label: ".stop()" },
+	{ pattern: /["'`]stop["'`]/, label: "the CLI stop subcommand" },
+	{ pattern: /\bdaemon\s+stop\b/, label: "daemon stop" },
+	{ pattern: /--once\b/, label: "--once" },
+];
 
-const SKIP_DIRECTORIES = new Set(["node_modules", "out", ".git", "dist", "coverage"]);
+const PROOF_PATTERNS = [
+	{ pattern: /daemonRunning\(/, label: "daemonRunning(" },
+	{ pattern: /endpoint\.json/, label: "an endpoint-file check" },
+];
 
-function collectFiles(directory, files) {
+/**
+ * The one helper a probe may delegate to. It stops every daemon it is handed
+ * and reports the survivors, so calling it both closes a probe and proves the
+ * close happened.
+ */
+const SHARED_STOP_PATTERN = { pattern: /stopProbeDaemons\(/, label: "stopProbeDaemons(" };
+
+function rootFromArguments(argv) {
+	const index = argv.indexOf("--root");
+	if (index === -1) return resolve(REPO_ROOT);
+	const value = argv[index + 1];
+	if (value === undefined) {
+		console.error("--root needs a directory");
+		process.exit(2);
+	}
+	return resolve(value);
+}
+
+/** Display paths use forward slashes, so the rules do not depend on the platform separator. */
+function displayPath(root, path) {
+	return relative(root, path).split(sep).join("/");
+}
+
+function isProductionSource(display) {
+	return /^packages\/[^/]+\/src\//.test(display);
+}
+
+function collectFiles(directory, files, root) {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
-		if (entry.name.startsWith(".")) continue;
+		if (SKIP_DIRECTORIES.has(entry.name)) continue;
 		const path = join(directory, entry.name);
+		const display = displayPath(root, path);
+		if (isProductionSource(display)) continue;
 		if (entry.isDirectory()) {
-			if (SKIP_DIRECTORIES.has(entry.name)) continue;
-			collectFiles(path, files);
+			collectFiles(path, files, root);
 			continue;
 		}
-		if (entry.isFile() && SOURCE_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf(".")))) {
-			files.push(path);
-		}
-	}
-}
-
-function scanRoots() {
-	const root = resolve(ROOT);
-	const files = [];
-	for (const entry of readdirSync(join(root, "packages"), { withFileTypes: true })) {
-		if (!entry.isDirectory()) continue;
-		collectIfDirectory(join(root, "packages", entry.name, "test"), files);
-	}
-	for (const name of ["eval", "scripts"]) collectIfDirectory(join(root, name), files);
-	return files;
-}
-
-function collectIfDirectory(directory, files) {
-	try {
-		if (statSync(directory).isDirectory()) collectFiles(directory, files);
-	} catch (error) {
-		if (error.code !== "ENOENT") throw error;
+		if (!entry.isFile()) continue;
+		const extension = entry.name.slice(entry.name.lastIndexOf("."));
+		if (SOURCE_EXTENSIONS.has(extension)) files.push(path);
 	}
 }
 
@@ -67,55 +119,75 @@ function locations(lines, pattern) {
 	return found;
 }
 
-function starterLinesFor(lines, text) {
-	const starterLines = [];
-	for (const pattern of STARTER_PATTERNS) {
-		for (const line of locations(lines, pattern)) starterLines.push({ line, pattern });
+function startersFor(file, lines, text) {
+	const starters = [];
+	const shell = file.endsWith(".sh");
+	const patterns = shell ? [...STARTER_PATTERNS, ...SHELL_STARTER_PATTERNS] : [...STARTER_PATTERNS];
+	for (const { pattern, label } of patterns) {
+		for (const line of locations(lines, pattern)) starters.push({ line, label });
 	}
-	if (EXTENSION_STORE_PATTERN.test(text) && EXTENSION_SOURCE_PATTERN.test(text)) {
-		for (const line of locations(lines, EXTENSION_STORE_PATTERN)) {
-			starterLines.push({ line, pattern: EXTENSION_STORE_PATTERN });
-		}
+	if (!shell && CLI_BUILDER_PATTERN.test(text) && CLI_SUBCOMMAND_PATTERN.test(text)) {
+		for (const line of locations(lines, CLI_BUILDER_PATTERN)) starters.push({ line, label: "runs the CLI, which ensures a daemon" });
 	}
-	return starterLines;
+	if (!shell && EXTENSION_STORE_PATTERN.test(text) && EXTENSION_SOURCE_PATTERN.test(text)) {
+		for (const line of locations(lines, EXTENSION_STORE_PATTERN)) starters.push({ line, label: "binds the extension to a store" });
+	}
+	return starters.sort((a, b) => a.line - b.line);
 }
 
 function main() {
-	const files = scanRoots().sort();
+	const root = rootFromArguments(process.argv.slice(2));
+	if (!existsSync(root) || !statSync(root).isDirectory()) {
+		console.error(`not a directory: ${root}`);
+		return 2;
+	}
+
+	const files = [];
+	collectFiles(root, files, root);
+	files.sort();
+
 	const offenders = [];
-	let filesScanned = 0;
+	let scanned = 0;
 	let starters = 0;
 
 	for (const file of files) {
-		filesScanned += 1;
+		const display = displayPath(root, file);
+		if (EXEMPT_FILES.has(display)) continue;
+		scanned += 1;
+
 		const lines = readFileSync(file, "utf8").split("\n");
 		const text = lines.join("\n");
-		const starterLines = starterLinesFor(lines, text);
-		if (starterLines.length === 0) continue;
-		starters += starterLines.length;
+		const startersHere = startersFor(file, lines, text);
+		if (startersHere.length === 0) continue;
+		starters += startersHere.length;
+
+		const shared = SHARED_STOP_PATTERN.pattern.test(text);
+		const closer = shared ? SHARED_STOP_PATTERN : CLOSER_PATTERNS.find((entry) => entry.pattern.test(text));
+		const proof = shared ? SHARED_STOP_PATTERN : PROOF_PATTERNS.find((entry) => entry.pattern.test(text));
 
 		const missing = [];
-		if (!STOP_PATTERN.test(text)) missing.push(".stop()");
-		if (!RUNNING_PATTERN.test(text)) missing.push("daemonRunning(");
+		if (closer === undefined) missing.push("a stop (.stop(), a CLI stop, --once, or stopProbeDaemons())");
+		if (proof === undefined) missing.push("daemonRunning(), an endpoint-file check, or stopProbeDaemons()");
 		if (missing.length === 0) continue;
-		const path = relative(fileURLToPath(new URL("..", import.meta.url)), file);
-		offenders.push({ path, starterLines: starterLines.sort((a, b) => a.line - b.line), missing });
+
+		offenders.push({ display, startersHere, missing });
 	}
 
 	if (offenders.length > 0) {
 		console.error("daemon lifecycle lint failed:");
 		for (const offender of offenders) {
-			for (const starter of offender.starterLines) {
-				console.error(`  ${offender.path}:${starter.line}  starts a daemon (${starter.pattern.source})  missing ${offender.missing.join(" and ")}`);
+			for (const starter of offender.startersHere) {
+				console.error(`  ${offender.display}:${starter.line}  starts a daemon (${starter.label})  missing ${offender.missing.join(" and ")}`);
 			}
 		}
 		console.error("");
-		console.error("Every file that can start a daemon must also call .stop() on the client");
-		console.error("it created and assert daemonRunning(store) is false afterwards.");
+		console.error("Every file that can start a daemon must stop the one it started and assert it is gone");
+		console.error("(daemonRunning(store) is false, or the endpoint file removed). `--once` counts as the stop");
+		console.error("for a CLI invocation that owns the daemon.");
 		return 1;
 	}
 
-	console.log(`${filesScanned} files scanned, ${starters} starters, all closed`);
+	console.log(`${scanned} files scanned, ${starters} starters, all closed`);
 	return 0;
 }
 
