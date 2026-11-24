@@ -18,8 +18,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { nonWhitespaceCodePointCount } from "@vestigio/core";
 import type { Scope, SourceRef } from "@vestigio/core";
 import type { MemoryRequestEvidence as Evidence } from "@vestigio/core/requests";
-import { sessionEntryText, sourceRefForEntry, type EntrySourceContext } from "./session-source.js";
-import { stripInjectedNote } from "./stale-detector.js";
+import { sessionEntryText, sourceRefForEntry, stripInjectedNote, type EntrySourceContext } from "./session-source.js";
 
 export const MAX_REQUEST_EVIDENCE = 8;
 export const MAX_REQUEST_EXCERPT_POINTS = 2000;

@@ -21,6 +21,7 @@ import { readConfig } from "../src/config.js";
 import { DecisionLog } from "../src/decision-log.js";
 import { VestigioState, type StateDeps } from "../src/state.js";
 import { registerMemoryTools } from "../src/tools.js";
+import { evidenceFromEntries, stripInjectedNote } from "../src/session-source.js";
 import type { ModelPort } from "@vestigio/core/resolver";
 
 const AT = "2026-11-17T12:00:00.000Z";
@@ -510,5 +511,44 @@ describe("memory_resolve", () => {
 		expect(text).toContain("answer (unresolved): 端口是 18080，但记忆里还写着 8080。");
 		expect(store.countUsageEvents()).toBe(1);
 		store.close();
+	});
+});
+
+/**
+ * Moved from the removed legacy detector suite. `stripInjectedNote` is a live
+ * `session-source` export, and `evidenceFromEntries` is the live evidence builder
+ * that keeps the hygiene rule the detector once applied: a vestigio control entry
+ * is never offered as operator evidence.
+ */
+describe("session-source evidence hygiene", () => {
+	it("strips an injected memory note from a turn's text", () => {
+		const raw =
+			"帮我看看端口。\n<vestigio_memory_note>\n[1] 记忆 URI：memory://x/y\n</vestigio_memory_note>";
+		expect(stripInjectedNote(raw)).toBe("帮我看看端口。\n");
+	});
+
+	it("never offers a vestigio control entry as evidence", () => {
+		const control = {
+			type: "custom_message" as const,
+			id: "c-1",
+			parentId: null,
+			timestamp: AT,
+			customType: "vestigio.injection-ledger",
+			content: "ledger payload",
+			display: true,
+		};
+		const operator = {
+			type: "message" as const,
+			id: "e-1",
+			parentId: null,
+			timestamp: AT,
+			message: { role: "user", content: [{ type: "text", text: "真实内容。" }], timestamp: AT },
+		};
+		const rows = evidenceFromEntries(
+			[control as never, operator as never],
+			{ session_id: "s-tools", session_file: null, project_id: PROJECT },
+			10,
+		);
+		expect(rows.map((row) => row.entry_id)).toEqual(["e-1"]);
 	});
 });
