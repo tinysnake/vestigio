@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 /**
- * Proves deploy.mjs leaves a runnable `vestigio` command behind, against a
- * throwaway layout: a temp bin dir, config and pi settings only. No network,
- * no pi, no model. On Windows this is the repro for the symlink-based link
- * step, which cannot link a bash wrapper into a runnable command.
+ * Proves deploy.mjs leaves a runnable `vestigio` command behind and can start
+ * its pi launcher, against a throwaway layout: a temp bin dir, config and pi
+ * settings only. No network, no real pi, no model. On Windows this is the
+ * repro for the symlink-based link step, which cannot link a bash wrapper into
+ * a runnable command.
  *
  *   node scripts/verify-deploy.mjs
  */
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { commandFor } from "./lib/platform.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vestigio-deploy-"));
@@ -33,14 +35,14 @@ const deploy = () => spawnSync(process.execPath, [
 	"--pi-settings", settings,
 ], { cwd: ROOT, encoding: "utf8", env: deployEnv });
 
-const runCommand = () => (process.platform === "win32"
-	// A .cmd cannot be spawned directly (EINVAL), and the quotes must reach cmd verbatim.
-	? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${command}" --help`], {
+const runCommand = () => {
+	const launcher = commandFor(command, ["--help"]);
+	return spawnSync(launcher.command, launcher.args, {
 		encoding: "utf8",
-		windowsVerbatimArguments: true,
+		windowsVerbatimArguments: launcher.windowsVerbatimArguments,
 		env: { ...process.env, VESTIGIO_CONFIG: "" },
-	})
-	: spawnSync(command, ["--help"], { encoding: "utf8", env: { ...process.env, VESTIGIO_CONFIG: "" } }));
+	});
+};
 
 try {
 	mkdirSync(binDir, { recursive: true });
@@ -60,7 +62,34 @@ try {
 	assert.equal(second.status, 0, second.stdout + second.stderr);
 	assert.match(second.stdout, /^skip\s+vestigio command/m, second.stdout);
 
-	console.log(`deploy link passed: ${command}`);
+	// deploy spawns whatever --pi names, and on Windows that is usually a .cmd
+	// launcher Node cannot spawn directly. The fake launcher writes a marker, then
+	// deploy reports that it did not register the extension.
+	const piDir = join(dir, "fake pi");
+	mkdirSync(piDir, { recursive: true });
+	const fakePi = join(piDir, process.platform === "win32" ? "pi.cmd" : "pi");
+	const marker = join(dir, "launcher-ran.txt");
+	writeFileSync(fakePi, process.platform === "win32"
+		? `@echo off\r\necho ran > "${marker}"\r\n`
+		: `#!/bin/sh\necho ran > "${marker}"\n`);
+	if (process.platform !== "win32") chmodSync(fakePi, 0o755);
+	const unregistered = join(dir, "unregistered.json");
+	writeFileSync(unregistered, "{}\n");
+
+	const routed = spawnSync(process.execPath, [
+		"scripts/deploy.mjs",
+		"--skip-install",
+		"--skip-link",
+		"--pi", fakePi,
+		"--config", config,
+		"--pi-settings", unregistered,
+	], { cwd: ROOT, encoding: "utf8" });
+
+	assert.ok(existsSync(marker), `the --pi launcher did not run: ${routed.stdout}${routed.stderr}`);
+	assert.doesNotMatch(routed.stdout + routed.stderr, /EINVAL/, "the launcher was spawned instead of run");
+	assert.match(routed.stdout, /^FAIL\s+pi install/m, routed.stdout);
+
+	console.log(`deploy checks passed: ${command}`);
 } catch (error) {
 	console.error(error instanceof Error ? error.message : error);
 	process.exitCode = 1;
