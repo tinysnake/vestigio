@@ -20,6 +20,7 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	realpathSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -43,6 +44,23 @@ const AGENT_SRC = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi/agent"
 const AGENT_HOME = join(TMP, "agent");
 const runStores = new Set();
 const TURN_TIMEOUT_MS = 180_000;
+/**
+ * The daemon owns the write, so a finished turn does not mean a finished
+ * request. A request whose composition failed is retried after
+ * `MEMORY_REQUEST_RETRY_MS`, so the window has to cover a first attempt, the
+ * retry delay and a second attempt; the wait returns as soon as the row settles.
+ */
+const REQUEST_SETTLE_TIMEOUT_MS = 180_000;
+/** How often to re-read the store while the daemon finishes a request. */
+const REQUEST_SETTLE_POLL_MS = 250;
+/** A status the daemon will not move again. */
+const TERMINAL_REQUEST_STATUSES = new Set(["saved", "merged", "failed", "rejected"]);
+/**
+ * pi reports display-only UI calls (`notify`, `setWidget`, `setStatus`,
+ * `setTitle`) through the same channel as questions. Only these ask the
+ * operator for an answer.
+ */
+const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 const DEFAULTS = {
 	provider: "magpie",
@@ -278,7 +296,7 @@ async function runTurn(client, id, message, dialogs, toolCalls) {
 	client.send({ id, type: "prompt", message });
 	await client.waitFor(
 		(event) => {
-			if (event.type === "extension_ui_request") dialogs.push(event);
+			if (event.type === "extension_ui_request" && DIALOG_METHODS.has(event.method)) dialogs.push(event);
 			if (event.type === "tool_execution_start") toolCalls.push(event.toolName ?? event.name ?? "");
 			return event.type === "agent_settled";
 		},
@@ -292,8 +310,12 @@ async function runCase(testCase, options, model, repeat) {
 	const runDir = join(TMP, "runs", label);
 	rmSync(runDir, { recursive: true, force: true });
 	mkdirSync(join(runDir, "sessions"), { recursive: true });
-	const projectDir = join(TMP, "projects", label);
-	mkdirSync(projectDir, { recursive: true });
+	const projectDirPath = join(TMP, "projects", label);
+	mkdirSync(projectDirPath, { recursive: true });
+	// The product canonicalizes a project id with realpath, and /tmp is a symlink
+	// on macOS, so the seeded memory and the session have to name the project by
+	// the same resolved path.
+	const projectDir = realpathSync(projectDirPath);
 	const storePath = join(runDir, "store.sqlite");
 	runStores.add(storePath);
 	const obeliskHome = join(runDir, "obelisk-home");
@@ -337,7 +359,6 @@ async function runCase(testCase, options, model, repeat) {
 				VESTIGIO_MODEL_ID: options.extension_model,
 				VESTIGIO_MODEL_API_KEY: model.key,
 				VESTIGIO_MODEL_THINKING: options.thinking,
-				VESTIGIO_REPAIR_MODE: "background",
 			},
 		},
 	);
@@ -362,7 +383,7 @@ async function runCase(testCase, options, model, repeat) {
 	} finally {
 		exitCode = await client.close();
 	}
-	const after = inspectStore(storePath, projectDir, seed);
+	const after = await waitForSettledRequests(storePath, projectDir, seed);
 	const record = {
 		case: testCase.id,
 		repeat,
@@ -380,6 +401,21 @@ async function runCase(testCase, options, model, repeat) {
 	writeFileSync(join(runDir, "record.json"), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 	const checks = score(testCase, after, dialogs, mid, replies);
 	return { ...record, checks };
+}
+
+/**
+ * A turn can end while the daemon still owns the request, so the final
+ * snapshot waits for every row to reach a terminal status first. A row that
+ * never settles is reported instead of being read as a failed save.
+ */
+async function waitForSettledRequests(storePath, projectId, seed, timeoutMs = REQUEST_SETTLE_TIMEOUT_MS) {
+	const deadline = Date.now() + timeoutMs;
+	let snapshot = inspectStore(storePath, projectId, seed);
+	while (Date.now() < deadline && snapshot.requests.some((row) => !TERMINAL_REQUEST_STATUSES.has(row.status))) {
+		await new Promise((resolvePoll) => setTimeout(resolvePoll, REQUEST_SETTLE_POLL_MS));
+		snapshot = inspectStore(storePath, projectId, seed);
+	}
+	return snapshot;
 }
 
 function inspectStore(storePath, projectId, seed) {
@@ -442,15 +478,25 @@ function score(testCase, after, dialogs, mid, replies) {
 	add(
 		"no confirmation dialog",
 		dialogs.length === 0,
-		`${dialogs.length} dialogs`,
+		dialogs.map((dialog) => dialog.method).join(",") || "none",
+	);
+	const unsettled = after.requests.filter((row) => !TERMINAL_REQUEST_STATUSES.has(row.status));
+	add(
+		"requests settled",
+		unsettled.length === 0,
+		unsettled.length === 0
+			? `${after.requests.length} request(s), all settled`
+			: `unsettled: ${unsettled.map((row) => `${row.status}:${row.request_id}`).join(",")}`,
 	);
 	if (expected.proactive === true) {
 		const rowsAfterOffer = mid === null ? 0 : mid.request_count;
 		add("no request on the offer turn", rowsAfterOffer === 0, `${rowsAfterOffer} row(s) after turn 1 (want 0)`);
 	}
 	if (expected.same_turn === true) {
-		const savedAfterFirst = mid === null ? 0 : mid.saved.length;
-		add("saved on the same turn", savedAfterFirst >= 1, `${savedAfterFirst} saved after turn 1 (want >= 1)`);
+		// The daemon writes the memory, so the same-turn promise is the queued
+		// request: the operator sees no question and needs no second turn.
+		const rowsAfterFirst = mid === null ? 0 : mid.request_count;
+		add("request written on the same turn", rowsAfterFirst >= 1, `${rowsAfterFirst} row(s) after turn 1 (want >= 1)`);
 	}
 	if (expected.reply_turns !== undefined) {
 		add("operator reply turns", replies.length === expected.reply_turns, `${replies.length} (want ${expected.reply_turns})`);

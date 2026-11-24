@@ -46,10 +46,8 @@ node --import ../pi/hook.mjs ./run.mjs --only f5b --probe-only
 
 A repair happens at the end of the session that left pending events, so both
 `f1f2` and `f5b` are run once, not once per timing: a stale read inside a session
-returns the stored body with `repair: deferred` and the pass repairs the memory
-at `agent_end`, which is still before that session settles.
-`f5_repair_ms` value then covers the end-of-session pass rather than the read tool
-call.
+returns the stored body with `repair: deferred` and the daemon repairs the
+memory after `agent_end`, before the next session reads it.
 
 It does not start a mock provider. It runs real `pi` processes in `--mode rpc`
 with `--provider magpie --model auto/deepseek-v4.1-flash --thinking low`,
@@ -274,10 +272,6 @@ was scored in.
   ends `published` and a plain `layeredSearch` on the same store finds it. Both
   are `null` when no repair happened, because an already-published memory says
   nothing about what the repair left behind.
-- `f5_repair_ms` — wall time of the end-of-session pass, read from the
-  `vestigio.background-repair` session entry's `elapsed_ms`. Reported so the cost
-  of a repair is made from a measured distribution rather than the deadline
-  constant.
 - `repair_source` — `background` when the first session's `agent_end` pass
   advanced the head, `none` when it did not.
 - `s1_pending_drained` and `s1_repaired` — the state of the store after the
@@ -393,7 +387,6 @@ That flag is gone; the harness now always scores this window.
 | `published_after` | true | true | true |
 | `searchable_after_repair` | true | true | true |
 | `judge_pass` | true | true | true |
-| `f5_repair_ms` | 25310 | 23519 | 25168 |
 
 `retrieval_drove_repair` is `false` in every repeat by construction: the pass
 repairs before session 2 reads. Across runs the background pass scored
