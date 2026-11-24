@@ -26,7 +26,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -86,6 +86,11 @@ function rootFromArguments(argv) {
 	return resolve(value);
 }
 
+/** Display paths use forward slashes, so the rules do not depend on the platform separator. */
+function displayPath(root, path) {
+	return relative(root, path).split(sep).join("/");
+}
+
 function isProductionSource(display) {
 	return /^packages\/[^/]+\/src\//.test(display);
 }
@@ -94,7 +99,7 @@ function collectFiles(directory, files, root) {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (SKIP_DIRECTORIES.has(entry.name)) continue;
 		const path = join(directory, entry.name);
-		const display = relative(root, path);
+		const display = displayPath(root, path);
 		if (isProductionSource(display)) continue;
 		if (entry.isDirectory()) {
 			collectFiles(path, files, root);
@@ -146,7 +151,7 @@ function main() {
 	let starters = 0;
 
 	for (const file of files) {
-		const display = relative(root, file);
+		const display = displayPath(root, file);
 		if (EXEMPT_FILES.has(display)) continue;
 		scanned += 1;
 
