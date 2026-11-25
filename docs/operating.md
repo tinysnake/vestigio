@@ -109,8 +109,8 @@ stops the daemon, starts it again from HEAD, and records the outcome in
 the same commit does nothing, and a failed restart never fails the git operation.
 
 ```sh
-node --import packages/cli/hook.mjs scripts/restart-local-vestigio.mjs            # restart now
-node --import packages/cli/hook.mjs scripts/restart-local-vestigio.mjs --dry-run  # say what it would do
+node --import ./packages/cli/hook.mjs scripts/restart-local-vestigio.mjs            # restart now
+node --import ./packages/cli/hook.mjs scripts/restart-local-vestigio.mjs --dry-run  # say what it would do
 ```
 
 ## Uninstall
