@@ -13,6 +13,15 @@ import { pathToFileURL } from "node:url";
 export const SHIM_MARKER = "REM vestigio command (written by scripts/deploy.mjs)";
 
 /**
+ * The specifier `node --import` needs for this checkout's CLI hook. A bare
+ * `packages/cli/hook.mjs` reads as a package name, and an absolute path reads as
+ * an unknown URL scheme, so the file URL is the only form that loads everywhere.
+ */
+export function hookUrl(root) {
+	return pathToFileURL(join(root, "packages", "cli", "hook.mjs")).href;
+}
+
+/**
  * How to run this checkout's CLI. POSIX keeps the bash wrapper (it is exercised
  * as-is); Windows runs Node directly on the hook and entry files.
  */
@@ -21,7 +30,7 @@ export function cliCommand(root, args = []) {
 		return {
 			command: process.execPath,
 			args: [
-				"--import", pathToFileURL(join(root, "packages", "cli", "hook.mjs")).href,
+				"--import", hookUrl(root),
 				join(root, "packages", "cli", "src", "entry.ts"),
 				...args,
 			],
@@ -72,7 +81,7 @@ export function commandFor(program, args = [], env = process.env) {
 
 /** The bytes of the `vestigio.cmd` shim deploy.mjs writes on Windows. */
 export function windowsShim(root) {
-	const hook = pathToFileURL(join(root, "packages", "cli", "hook.mjs")).href;
+	const hook = hookUrl(root);
 	const entry = join(root, "packages", "cli", "src", "entry.ts");
 	return `@echo off\r\n${SHIM_MARKER}\r\nnode --import "${hook}" "${entry}" %*\r\n`;
 }

@@ -15,6 +15,8 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { hookUrl } from "./platform.mjs";
+
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCRIPTS = join(REPO_ROOT, "scripts");
 /** This file names the patterns it looks for, so it never scans itself. */
@@ -66,4 +68,11 @@ test("every --import argument in scripts/ is a specifier Node accepts", () => {
 		}
 	}
 	assert.deepEqual(offenders, []);
+});
+
+test("hookUrl is the file URL for this checkout's CLI hook", () => {
+	const url = hookUrl(REPO_ROOT);
+	assert.match(url, /^file:\/\//);
+	assert.ok(url.endsWith("/packages/cli/hook.mjs"), url);
+	assert.doesNotMatch(url, /\\/);
 });

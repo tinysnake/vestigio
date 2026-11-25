@@ -14,7 +14,7 @@
  * keeps a repeated checkout from restarting it twice and still heals a daemon
  * that died.
  *
- *   node --import packages/cli/hook.mjs scripts/restart-local-vestigio.mjs
+ *   node --import ./packages/cli/hook.mjs scripts/restart-local-vestigio.mjs
  *   … --store <path>   target another store
  *   … --hook           never exit nonzero; a git operation must not fail here
  *   … --dry-run        print what it would do and touch nothing

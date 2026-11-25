@@ -21,6 +21,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { hookUrl } from "./lib/platform.mjs";
 
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes(name);
@@ -106,7 +107,7 @@ function main() {
 		say(`no ${restart}; the pull landed but no daemon was restarted`);
 		return 0;
 	}
-	const args = ["--import", join(root, "packages/cli/hook.mjs"), restart, "--hook"];
+	const args = ["--import", hookUrl(root), restart, "--hook"];
 	if (store !== undefined) args.push("--store", store);
 	execFileSync(process.execPath, args, { cwd: root, stdio: "inherit" });
 	return 0;
